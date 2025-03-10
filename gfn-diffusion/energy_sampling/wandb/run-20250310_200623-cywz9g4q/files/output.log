@@ -1,0 +1,82 @@
+GFN(
+  (t_model): TimeEncoding(
+    (t_model): Sequential(
+      (0): Linear(in_features=128, out_features=64, bias=True)
+      (1): GELU(approximate='none')
+      (2): Linear(in_features=64, out_features=64, bias=True)
+      (3): GELU(approximate='none')
+    )
+  )
+  (s_model): StateEncoding(
+    (x_model): Sequential(
+      (0): Linear(in_features=2, out_features=64, bias=True)
+      (1): GELU(approximate='none')
+      (2): Linear(in_features=64, out_features=64, bias=True)
+      (3): GELU(approximate='none')
+    )
+  )
+  (joint_model): JointPolicy(
+    (model): Sequential(
+      (0): Linear(in_features=128, out_features=64, bias=True)
+      (1): GELU(approximate='none')
+      (2): Linear(in_features=64, out_features=64, bias=True)
+      (3): GELU(approximate='none')
+      (4): Linear(in_features=64, out_features=4, bias=True)
+    )
+  )
+  (langevin_scaling_model): LangevinScalingModel(
+    (model): Sequential(
+      (0): Linear(in_features=128, out_features=64, bias=True)
+      (1): GELU(approximate='none')
+      (2): Linear(in_features=64, out_features=64, bias=True)
+      (3): GELU(approximate='none')
+      (4): Linear(in_features=64, out_features=1, bias=True)
+    )
+  )
+)
+  0%|                                                                                                                                                                                                                                                                              | 0/25001 [00:15<?, ?it/s]
+> /Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/gflownet_losses.py(54)db()
+-> with torch.no_grad():
+tensor([[ 0.8641,  0.8380,  0.7073,  ..., -0.0080,  0.1151,  0.1731],
+        [-0.2795,  1.0601,  1.1164,  ..., -0.4463,  1.1489, -0.1772],
+        [ 1.1060,  1.1493,  0.7410,  ...,  1.0313, -1.6239, -1.1232],
+        ...,
+        [ 0.8075, -0.5039,  0.5857,  ...,  0.7008,  0.6128,  0.8543],
+        [ 0.4334,  0.6272, -0.4095,  ...,  0.8577, -1.2656,  1.1552],
+        [-0.3611, -1.3761,  0.7143,  ..., -0.4608,  0.8899, -0.7649]],
+       grad_fn=<CopySlices>)
+torch.Size([300, 100])
+tensor([[ 0.0000,  1.6258,  0.8483,  ...,  0.0368,  0.1874,  0.2457],
+        [ 0.0000,  1.1579,  1.0818,  ..., -0.5878,  1.1453, -0.1442],
+        [ 0.0000,  1.8191,  1.2341,  ...,  1.0637, -1.5590, -0.9745],
+        ...,
+        [ 0.0000,  1.3933,  1.3858,  ...,  0.7904,  0.5938,  0.8799],
+        [ 0.0000,  1.2470,  1.2302,  ...,  0.8466, -1.1787,  1.1626],
+        [ 0.0000,  1.1249, -0.1221,  ..., -0.1415,  1.0497, -1.4972]])
+torch.Size([300, 100])
+torch.Size([300, 2])
+Traceback (most recent call last):
+  File "/Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/train.py", line 346, in <module>
+    train()
+  File "/Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/train.py", line 312, in train
+    metrics['train/loss'] = train_step(energy, gfn_model, gfn_optimizer, i, args.exploratory,
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/train.py", line 242, in train_step
+    loss = fwd_train_step(energy, gfn_model, exploration_std)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/train.py", line 251, in fwd_train_step
+    loss = get_gfn_forward_loss(args.mode_fwd, init_state, gfn_model, energy.log_reward, coeff_matrix,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/utils.py", line 85, in get_gfn_forward_loss
+    loss = db(init_state, gfn_model, log_reward, exploration_std)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/gflownet_losses.py", line 54, in db
+    with torch.no_grad():
+         ^^^^^
+  File "/Users/shchoi/.pyenv/versions/3.11.11/lib/python3.11/bdb.py", line 90, in trace_dispatch
+    return self.dispatch_line(frame)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shchoi/.pyenv/versions/3.11.11/lib/python3.11/bdb.py", line 115, in dispatch_line
+    if self.quitting: raise BdbQuit
+                      ^^^^^^^^^^^^^
+bdb.BdbQuit

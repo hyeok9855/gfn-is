@@ -1,0 +1,23 @@
+2025-03-10 20:06:23,413 INFO    MainThread:73757 [wandb_setup.py:_flush():67] Current SDK version is 0.19.8
+2025-03-10 20:06:23,413 INFO    MainThread:73757 [wandb_setup.py:_flush():67] Configure stats pid to 73757
+2025-03-10 20:06:23,414 INFO    MainThread:73757 [wandb_setup.py:_flush():67] Loading settings from /Users/shchoi/.config/wandb/settings
+2025-03-10 20:06:23,414 INFO    MainThread:73757 [wandb_setup.py:_flush():67] Loading settings from /Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/wandb/settings
+2025-03-10 20:06:23,414 INFO    MainThread:73757 [wandb_setup.py:_flush():67] Loading settings from environment variables
+2025-03-10 20:06:23,414 INFO    MainThread:73757 [wandb_init.py:setup_run_log_directory():647] Logging user logs to /Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/wandb/run-20250310_200623-cywz9g4q/logs/debug.log
+2025-03-10 20:06:23,414 INFO    MainThread:73757 [wandb_init.py:setup_run_log_directory():648] Logging internal logs to /Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/wandb/run-20250310_200623-cywz9g4q/logs/debug-internal.log
+2025-03-10 20:06:23,414 INFO    MainThread:73757 [wandb_init.py:init():761] calling init triggers
+2025-03-10 20:06:23,414 INFO    MainThread:73757 [wandb_init.py:init():766] wandb.init called with sweep_config: {}
+config: {'lr_policy': 0.001, 'lr_flow': 0.01, 'lr_back': 0.001, 'hidden_dim': 64, 's_emb_dim': 64, 't_emb_dim': 64, 'harmonics_dim': 64, 'batch_size': 300, 'epochs': 25000, 'buffer_size': 600000, 'T': 100, 'subtb_lambda': 2, 't_scale': 5.0, 'log_var_range': 4.0, 'energy': '9gmm', 'mode_fwd': 'db', 'mode_bwd': 'tb', 'both_ways': False, 'local_search': False, 'max_iter_ls': 200, 'burn_in': 100, 'ls_cycle': 100, 'ld_step': 0.001, 'ld_schedule': False, 'target_acceptance_rate': 0.574, 'beta': 1.0, 'rank_weight': 0.01, 'prioritized': 'rank', 'bwd': False, 'exploratory': False, 'sampling': 'buffer', 'langevin': False, 'langevin_scaling_per_dimension': False, 'conditional_flow_model': False, 'learn_pb': False, 'pb_scale_range': 0.1, 'learned_variance': False, 'partial_energy': False, 'exploration_factor': 0.1, 'exploration_wd': False, 'clipping': False, 'lgv_clip': 100.0, 'gfn_clip': 10000.0, 'zero_init': False, 'pis_architectures': False, 'lgv_layers': 3, 'joint_layers': 2, 'seed': 12345, 'weight_decay': 1e-07, 'use_weight_decay': False, 'eval': False, 'Experiment': '{args.energy}', '_wandb': {}}
+2025-03-10 20:06:23,414 INFO    MainThread:73757 [wandb_init.py:init():784] starting backend
+2025-03-10 20:06:23,414 INFO    MainThread:73757 [wandb_init.py:init():788] sending inform_init request
+2025-03-10 20:06:23,440 INFO    MainThread:73757 [backend.py:_multiprocessing_setup():101] multiprocessing start_methods=spawn,fork,forkserver, using: spawn
+2025-03-10 20:06:23,440 INFO    MainThread:73757 [wandb_init.py:init():798] backend started and connected
+2025-03-10 20:06:23,444 INFO    MainThread:73757 [wandb_init.py:init():891] updated telemetry
+2025-03-10 20:06:23,446 INFO    MainThread:73757 [wandb_init.py:init():915] communicating run to backend with 90.0 second timeout
+2025-03-10 20:06:24,120 INFO    MainThread:73757 [wandb_init.py:init():990] starting run threads in backend
+2025-03-10 20:06:24,171 INFO    MainThread:73757 [wandb_run.py:_console_start():2375] atexit reg
+2025-03-10 20:06:24,171 INFO    MainThread:73757 [wandb_run.py:_redirect():2227] redirect: wrap_raw
+2025-03-10 20:06:24,171 INFO    MainThread:73757 [wandb_run.py:_redirect():2292] Wrapping output streams.
+2025-03-10 20:06:24,171 INFO    MainThread:73757 [wandb_run.py:_redirect():2315] Redirects installed.
+2025-03-10 20:06:24,172 INFO    MainThread:73757 [wandb_init.py:init():1032] run started, returning control to user process
+2025-03-10 20:06:40,459 INFO    MsgRouterThr:73757 [mailbox.py:close():129] Closing mailbox, abandoning 1 handles.

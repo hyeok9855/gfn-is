@@ -1,0 +1,50 @@
+GFN(
+  (t_model): TimeEncoding(
+    (t_model): Sequential(
+      (0): Linear(in_features=128, out_features=64, bias=True)
+      (1): GELU(approximate='none')
+      (2): Linear(in_features=64, out_features=64, bias=True)
+      (3): GELU(approximate='none')
+    )
+  )
+  (s_model): StateEncoding(
+    (x_model): Sequential(
+      (0): Linear(in_features=2, out_features=64, bias=True)
+      (1): GELU(approximate='none')
+      (2): Linear(in_features=64, out_features=64, bias=True)
+      (3): GELU(approximate='none')
+    )
+  )
+  (joint_model): JointPolicy(
+    (model): Sequential(
+      (0): Linear(in_features=128, out_features=64, bias=True)
+      (1): GELU(approximate='none')
+      (2): Linear(in_features=64, out_features=64, bias=True)
+      (3): GELU(approximate='none')
+      (4): Linear(in_features=64, out_features=4, bias=True)
+    )
+  )
+  (langevin_scaling_model): LangevinScalingModel(
+    (model): Sequential(
+      (0): Linear(in_features=128, out_features=64, bias=True)
+      (1): GELU(approximate='none')
+      (2): Linear(in_features=64, out_features=64, bias=True)
+      (3): GELU(approximate='none')
+      (4): Linear(in_features=64, out_features=1, bias=True)
+    )
+  )
+)
+  0%|                                                                                                                                                                                                                                                                              | 0/25001 [00:03<?, ?it/s]
+Traceback (most recent call last):
+  File "/Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/train.py", line 346, in <module>
+    train()
+  File "/Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/train.py", line 318, in train
+    images = plot_step(energy, gfn_model, name)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/train.py", line 189, in plot_step
+    return {"visualization/contour": wandb.Image(fig_to_image(fig_contour)),
+                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/utils.py", line 54, in fig_to_image
+    "RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb()
+                                          ^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'FigureCanvasMac' object has no attribute 'tostring_rgb'

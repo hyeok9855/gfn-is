@@ -1,0 +1,47 @@
+{
+  "os": "macOS-15.3.1-arm64-arm-64bit",
+  "python": "CPython 3.11.11",
+  "startedAt": "2025-03-10T11:06:57.356274Z",
+  "args": [
+    "--mode_fwd",
+    "tb"
+  ],
+  "program": "/Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling/train.py",
+  "codePath": "gfn-diffusion/energy_sampling/train.py",
+  "git": {
+    "remote": "https://github.com/hyeok9855/gfn-is.git"
+  },
+  "email": "sanghyeok.choi@kaist.ac.kr",
+  "root": "/Users/shchoi/Workspace/gfn-is/gfn-diffusion/energy_sampling",
+  "host": "Sanghyeoks-MacBook-Pro.local",
+  "executable": "/Users/shchoi/Workspace/gfn-is/.venv/bin/python",
+  "codePathLocal": "train.py",
+  "cpu_count": 12,
+  "cpu_count_logical": 12,
+  "disk": {
+    "/": {
+      "total": "494384795648",
+      "used": "127895191552"
+    },
+    "/System/Volumes/Data": {
+      "total": "494384795648",
+      "used": "127895191552"
+    }
+  },
+  "memory": {
+    "total": "25769803776"
+  },
+  "cpu": {
+    "count": 12,
+    "countLogical": 12
+  },
+  "apple": {
+    "name": "Apple M4 Pro",
+    "ecpuCores": 4,
+    "pcpuCores": 8,
+    "gpuCores": 16,
+    "memoryGb": 24,
+    "swapTotalBytes": "2147483648",
+    "ramTotalBytes": "25769803776"
+  }
+}
