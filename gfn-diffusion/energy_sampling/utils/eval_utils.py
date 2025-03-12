@@ -1,22 +1,25 @@
 import math
-from typing import Union
 from functools import partial
-from typing import Optional
+from typing import Optional, cast
 
 import numpy as np
-import torch
 import ot as pot
+import torch
 
-min_var_est = 1e-8
+from energies import BaseEnergy
+from models import GFN
+from utils.misc_utils import logmeanexp
+
+MIN_VAR_EST = 1e-8
 
 
 def wasserstein(
-        x0: torch.Tensor,
-        x1: torch.Tensor,
-        method: Optional[str] = None,
-        reg: float = 0.05,
-        power: int = 2,
-        **kwargs,
+    x0: torch.Tensor,
+    x1: torch.Tensor,
+    method: Optional[str] = None,
+    reg: float = 0.05,
+    power: int = 2,
+    **kwargs,
 ) -> float:
     assert power == 1 or power == 2
     # ot_fn should take (a, b, M) as arguments where a, b are marginals and
@@ -35,8 +38,8 @@ def wasserstein(
         x1 = x1.reshape(x1.shape[0], -1)
     M = torch.cdist(x0, x1)
     if power == 2:
-        M = M ** 2
-    ret = ot_fn(a, b, M.detach().cpu().numpy(), numItermax=1e7)
+        M = M**2
+    ret = cast(float, ot_fn(a, b, M.detach().cpu().numpy(), numItermax=10_000_000))
     if power == 2:
         ret = math.sqrt(ret)
     return ret
@@ -86,9 +89,9 @@ def _mix_rbf_kernel(X, Y, sigma_list):
     Z_norm_sqr = diag_ZZT.expand_as(ZZT)
     exponent = Z_norm_sqr - 2 * ZZT + Z_norm_sqr.t()
 
-    K = 0.0
+    K = torch.zeros_like(exponent)
     for sigma in sigma_list:
-        gamma = 1.0 / (2 * sigma ** 2)
+        gamma = 1.0 / (2 * sigma**2)
         K += torch.exp(-gamma * exponent)
 
     return K[:m, :m], K[:m, m:], K[m:, m:], len(sigma_list)
@@ -134,26 +137,16 @@ def _mmd2(K_XX, K_XY, K_YY, const_diagonal=False, biased=False):
     K_XY_sum = K_XY_sums_0.sum()  # e^T * K_{XY} * e
 
     if biased:
-        mmd2 = (
-                (Kt_XX_sum + sum_diag_X) / (m * m)
-                + (Kt_YY_sum + sum_diag_Y) / (m * m)
-                - 2.0 * K_XY_sum / (m * m)
-        )
+        mmd2 = (Kt_XX_sum + sum_diag_X) / (m * m) + (Kt_YY_sum + sum_diag_Y) / (m * m) - 2.0 * K_XY_sum / (m * m)
     else:
-        mmd2 = (
-                Kt_XX_sum / (m * (m - 1))
-                + Kt_YY_sum / (m * (m - 1))
-                - 2.0 * K_XY_sum / (m * m)
-        )
+        mmd2 = Kt_XX_sum / (m * (m - 1)) + Kt_YY_sum / (m * (m - 1)) - 2.0 * K_XY_sum / (m * m)
 
     return mmd2
 
 
 def _mmd2_and_ratio(K_XX, K_XY, K_YY, const_diagonal=False, biased=False):
-    mmd2, var_est = _mmd2_and_variance(
-        K_XX, K_XY, K_YY, const_diagonal=const_diagonal, biased=biased
-    )
-    loss = mmd2 / torch.sqrt(torch.clamp(var_est, min=min_var_est))
+    mmd2, var_est = _mmd2_and_variance(K_XX, K_XY, K_YY, const_diagonal=const_diagonal, biased=biased)
+    loss = mmd2 / torch.sqrt(torch.clamp(var_est, min=MIN_VAR_EST))
     return loss, mmd2, var_est
 
 
@@ -165,7 +158,7 @@ def _mmd2_and_variance(K_XX, K_XY, K_YY, const_diagonal=False, biased=False):
     if const_diagonal is not False:
         diag_X = diag_Y = const_diagonal
         sum_diag_X = sum_diag_Y = m * const_diagonal
-        sum_diag2_X = sum_diag2_Y = m * const_diagonal ** 2
+        sum_diag2_X = sum_diag2_Y = m * const_diagonal**2
     else:
         diag_X = torch.diag(K_XX)  # (m,)
         diag_Y = torch.diag(K_YY)  # (m,)
@@ -183,48 +176,26 @@ def _mmd2_and_variance(K_XX, K_XY, K_YY, const_diagonal=False, biased=False):
     Kt_YY_sum = Kt_YY_sums.sum()  # e^T * \tilde{K}_YY * e
     K_XY_sum = K_XY_sums_0.sum()  # e^T * K_{XY} * e
 
-    Kt_XX_2_sum = (K_XX ** 2).sum() - sum_diag2_X  # \| \tilde{K}_XX \|_F^2
-    Kt_YY_2_sum = (K_YY ** 2).sum() - sum_diag2_Y  # \| \tilde{K}_YY \|_F^2
-    K_XY_2_sum = (K_XY ** 2).sum()  # \| K_{XY} \|_F^2
+    Kt_XX_2_sum = (K_XX**2).sum() - sum_diag2_X  # \| \tilde{K}_XX \|_F^2
+    Kt_YY_2_sum = (K_YY**2).sum() - sum_diag2_Y  # \| \tilde{K}_YY \|_F^2
+    K_XY_2_sum = (K_XY**2).sum()  # \| K_{XY} \|_F^2
 
     if biased:
-        mmd2 = (
-                (Kt_XX_sum + sum_diag_X) / (m * m)
-                + (Kt_YY_sum + sum_diag_Y) / (m * m)
-                - 2.0 * K_XY_sum / (m * m)
-        )
+        mmd2 = (Kt_XX_sum + sum_diag_X) / (m * m) + (Kt_YY_sum + sum_diag_Y) / (m * m) - 2.0 * K_XY_sum / (m * m)
     else:
-        mmd2 = (
-                Kt_XX_sum / (m * (m - 1))
-                + Kt_YY_sum / (m * (m - 1))
-                - 2.0 * K_XY_sum / (m * m)
-        )
+        mmd2 = Kt_XX_sum / (m * (m - 1)) + Kt_YY_sum / (m * (m - 1)) - 2.0 * K_XY_sum / (m * m)
 
     var_est = (
-            2.0
-            / (m ** 2 * (m - 1.0) ** 2)
-            * (
-                    2 * Kt_XX_sums.dot(Kt_XX_sums)
-                    - Kt_XX_2_sum
-                    + 2 * Kt_YY_sums.dot(Kt_YY_sums)
-                    - Kt_YY_2_sum
-            )
-            - (4.0 * m - 6.0)
-            / (m ** 3 * (m - 1.0) ** 3)
-            * (Kt_XX_sum ** 2 + Kt_YY_sum ** 2)
-            + 4.0
-            * (m - 2.0)
-            / (m ** 3 * (m - 1.0) ** 2)
-            * (K_XY_sums_1.dot(K_XY_sums_1) + K_XY_sums_0.dot(K_XY_sums_0))
-            - 4.0 * (m - 3.0) / (m ** 3 * (m - 1.0) ** 2) * (K_XY_2_sum)
-            - (8 * m - 12) / (m ** 5 * (m - 1)) * K_XY_sum ** 2
-            + 8.0
-            / (m ** 3 * (m - 1.0))
-            * (
-                    1.0 / m * (Kt_XX_sum + Kt_YY_sum) * K_XY_sum
-                    - Kt_XX_sums.dot(K_XY_sums_1)
-                    - Kt_YY_sums.dot(K_XY_sums_0)
-            )
+        2.0
+        / (m**2 * (m - 1.0) ** 2)
+        * (2 * Kt_XX_sums.dot(Kt_XX_sums) - Kt_XX_2_sum + 2 * Kt_YY_sums.dot(Kt_YY_sums) - Kt_YY_2_sum)
+        - (4.0 * m - 6.0) / (m**3 * (m - 1.0) ** 3) * (Kt_XX_sum**2 + Kt_YY_sum**2)
+        + 4.0 * (m - 2.0) / (m**3 * (m - 1.0) ** 2) * (K_XY_sums_1.dot(K_XY_sums_1) + K_XY_sums_0.dot(K_XY_sums_0))
+        - 4.0 * (m - 3.0) / (m**3 * (m - 1.0) ** 2) * (K_XY_2_sum)
+        - (8 * m - 12) / (m**5 * (m - 1)) * K_XY_sum**2
+        + 8.0
+        / (m**3 * (m - 1.0))
+        * (1.0 / m * (Kt_XX_sum + Kt_YY_sum) * K_XY_sum - Kt_XX_sums.dot(K_XY_sums_1) - Kt_YY_sums.dot(K_XY_sums_0))
     )
     return mmd2, var_est
 
@@ -237,7 +208,7 @@ def compute_distances(pred, true):
     return mse, me, mae
 
 
-def compute_distribution_distances(pred: torch.Tensor, true: Union[torch.Tensor, list], final_eval: bool):
+def compute_distribution_distances(pred: torch.Tensor, true: torch.Tensor | list):
     """computes distances between distributions.
     pred: [batch, times, dims] tensor
     true: [batch, times, dims] tensor or list[batch[i], dims] of length times
@@ -262,9 +233,7 @@ def compute_distribution_distances(pred: torch.Tensor, true: Union[torch.Tensor,
     dists = []
     to_return = []
     names = []
-    filtered_names = [
-        name for name in NAMES if not is_jagged or not name.endswith("MMD")
-    ]
+    filtered_names = [name for name in NAMES if not is_jagged or not name.endswith("MMD")]
     ts = len(pred) if pred_is_jagged else pred.shape[1]
     for t in np.arange(ts):
         if pred_is_jagged:
@@ -283,15 +252,11 @@ def compute_distribution_distances(pred: torch.Tensor, true: Union[torch.Tensor,
             mmd_poly = poly_mmd2(a, b, d=2, alpha=1.0, c=2.0).item()
             mmd_rbf = mix_rbf_mmd2(a, b, sigma_list=[0.01, 0.1, 1, 10, 100]).item()
         mean_dists = compute_distances(torch.mean(a, dim=0), torch.mean(b, dim=0))
-        median_dists = compute_distances(
-            torch.median(a, dim=0)[0], torch.median(b, dim=0)[0]
-        )
+        median_dists = compute_distances(torch.median(a, dim=0)[0], torch.median(b, dim=0)[0])
         if pred_is_jagged or is_jagged:
             dists.append((w1, w2, *mean_dists, *median_dists))
         else:
-            dists.append(
-                (w1, w2, mmd_linear, mmd_poly, mmd_rbf, *mean_dists, *median_dists)
-            )
+            dists.append((w1, w2, mmd_linear, mmd_poly, mmd_rbf, *mean_dists, *median_dists))
         # For multipoint datasets add timepoint specific distances
         if ts > 1:
             names.extend([f"t{t + 1}/{name}" for name in filtered_names])
@@ -300,10 +265,50 @@ def compute_distribution_distances(pred: torch.Tensor, true: Union[torch.Tensor,
     to_return.extend(np.array(dists).mean(axis=0))
     names.extend(filtered_names)
     metrics = dict()
-    if final_eval:
-        for name, to_return in zip(names, to_return):
-            metrics[f'final_eval/{name}'] = to_return
-    else:
-        for name, to_return in zip(names, to_return):
-            metrics[name] = to_return
+    for name, to_return in zip(names, to_return):
+        metrics[name] = to_return
     return metrics
+
+
+def eval_step(
+    eval_batch_size: int,
+    gt_xs: torch.Tensor | None,
+    gfn_model: GFN,
+    target_energy: BaseEnergy,
+    pis: bool = False,
+    final_eval: bool = False,
+) -> tuple[torch.Tensor, dict]:
+    init_state = torch.zeros(eval_batch_size, target_energy.ndim).to(gfn_model.device)
+    with torch.no_grad():
+        model_trajs, log_pfs, log_pbs, log_fs = gfn_model.get_trajectory_fwd(
+            init_state, 0.0, target_energy.log_reward, pis=pis
+        )
+        sample_xs = model_trajs[:, -1]
+        log_rewards = target_energy.log_reward(sample_xs)
+    log_weights = log_rewards + log_pbs.sum(-1) - log_pfs.sum(-1)
+
+    log_Z = logmeanexp(log_weights)
+    log_Z_lb = log_weights.mean()
+    log_Z_learned = log_fs[:, 0].mean()
+
+    metrics = {"log_Z": log_Z.item(), "log_Z_learned": log_Z_learned.item(), "elbo": log_Z_lb.item()}
+
+    try:
+        metrics.update({"Δ_log_Z": (log_Z - target_energy.gt_logz()).abs()})
+    except NotImplementedError:
+        pass
+
+    if gt_xs is not None:
+        with torch.no_grad():
+            _, gt_log_pfs, gt_log_pbs, _ = gfn_model.get_trajectory_bwd(gt_xs, target_energy.log_reward)
+            gt_log_rewards = target_energy.log_reward(gt_xs)
+        eubo = (gt_log_rewards + gt_log_pbs.sum(-1) - gt_log_pfs.sum(-1)).mean()
+        metrics.update({"eubo": eubo})
+
+        metrics.update(compute_distribution_distances(sample_xs.unsqueeze(1), gt_xs.unsqueeze(1)))
+        # "1-Wasserstein", "2-Wasserstein", "Linear_MMD", "Poly_MMD", "RBF_MMD",
+        # "Mean_MSE", "Mean_L2", "Mean_L1", "Median_MSE", "Median_L2", "Median_L1"
+
+    metrics = {f"{'final_' if final_eval else ''}eval/{k}": v for k, v in metrics.items()}
+
+    return model_trajs, metrics

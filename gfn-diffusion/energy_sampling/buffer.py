@@ -1,5 +1,7 @@
 import torch
 import numpy as np
+
+
 class SampleDataset(torch.utils.data.Dataset):
     def __init__(self, sample):
         super(SampleDataset, self).__init__()
@@ -79,7 +81,6 @@ def collate(data_list):
 
     return sample_data, reward_data
 
-    
 
 class ReplayBuffer():
     def __init__(self, buffer_size, device, log_reward, batch_size, data_ndim=2, beta=1.0, rank_weight=1e-2, prioritized=None):
@@ -95,6 +96,7 @@ class ReplayBuffer():
         self.beta = beta
         self.rank_weight = rank_weight
         self.beta = beta
+
     def add(self, samples,log_r):
         if self.reward_dataset is None:
             self.reward_dataset = RewardDataset(log_r.detach())
@@ -105,11 +107,10 @@ class ReplayBuffer():
             self.sample_dataset.update(samples.detach())
             self.reward_dataset.update(log_r.detach())
 
-
-        
         if self.reward_dataset.__len__() > self.buffer_size:
             self.reward_dataset.deque(self.reward_dataset.__len__() - self.buffer_size)
             self.sample_dataset.deque(self.sample_dataset.__len__() - self.buffer_size)
+
         if self.prioritized == 'rank':
             self.scores_np = self.reward_dataset.get_tsrs().detach().cpu().view(-1).numpy()
             ranks = np.argsort(np.argsort(-1 * self.scores_np))
@@ -139,7 +140,7 @@ class ReplayBuffer():
                 batch_size=self.batch_size, 
                 collate_fn=collate,
                 drop_last=True
-                )
+            )
         # check if we have any additional samples before updating the buffer and the scorer!
 
 

@@ -1,9 +1,14 @@
 import random
-import numpy as np
 import math
-import PIL
 
-from gflownet_losses import *
+import numpy as np
+import PIL
+import torch
+
+from gflownet_losses import (
+    bwd_mle, bwd_tb, bwd_tb_avg, db, fwd_tb, fwd_tb_avg, subtb
+)
+from models import GFN
 
 
 def set_seed(seed):
@@ -14,6 +19,10 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     np.random.seed(seed)
+
+
+def logmeanexp(x, dim=0):
+    return x.logsumexp(dim) - math.log(x.shape[dim])
 
 
 def cal_subtb_coef_matrix(lamda, N):
@@ -34,49 +43,43 @@ def cal_subtb_coef_matrix(lamda, N):
     return coef
 
 
-def logmeanexp(x, dim=0):
-    return x.logsumexp(dim) - math.log(x.shape[dim])
+def get_gfn_optimizer(
+    gfn_model: GFN,
+    lr_policy,
+    lr_flow,
+    lr_back,
+    back_model=False,
+    conditional_flow_model=False,
+    use_weight_decay=False,
+    weight_decay=1e-7,
+):
+    param_groups = [
+        {'params': gfn_model.t_model.parameters()},
+        {'params': gfn_model.s_model.parameters()},
+        {'params': gfn_model.joint_model.parameters()},
+    ]
+    if gfn_model.langevin_scaling_model is not None:
+        param_groups += [{'params': gfn_model.langevin_scaling_model.parameters()}]
 
-
-def dcp(tensor):
-    return tensor.detach().cpu()
-
-
-def gaussian_params(tensor):
-    mean, logvar = torch.chunk(tensor, 2, dim=-1)
-    return mean, logvar
-
-
-def fig_to_image(fig):
-    fig.canvas.draw()
-
-    return PIL.Image.frombytes(
-        "RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb()
-    )
-
-
-def get_gfn_optimizer(gfn_model, lr_policy, lr_flow, lr_back, back_model=False, conditional_flow_model=False, use_weight_decay=False, weight_decay=1e-7):
-    param_groups = [ {'params': gfn_model.t_model.parameters()},
-                     {'params': gfn_model.s_model.parameters()},
-                     {'params': gfn_model.joint_model.parameters()},
-                     {'params': gfn_model.langevin_scaling_model.parameters()} ]
     if conditional_flow_model:
-        param_groups += [ {'params': gfn_model.flow_model.parameters(), 'lr': lr_flow} ]
+        assert isinstance(gfn_model.flow_model, torch.nn.Module)
+        param_groups += [{'params': gfn_model.flow_model.parameters(), 'lr': lr_flow}]
     else:
-        param_groups += [ {'params': [gfn_model.flow_model], 'lr': lr_flow} ]
+        param_groups += [{'params': [gfn_model.flow_model], 'lr': lr_flow} ]
 
     if back_model:
-        param_groups += [ {'params': gfn_model.back_model.parameters(), 'lr': lr_back} ]
+        assert gfn_model.back_model is not None
+        param_groups += [{'params': gfn_model.back_model.parameters(), 'lr': lr_back}]
 
     if use_weight_decay:
         gfn_optimizer = torch.optim.Adam(param_groups, lr_policy, weight_decay=weight_decay)
     else:
         gfn_optimizer = torch.optim.Adam(param_groups, lr_policy)
+
     return gfn_optimizer
 
 
-
-def get_gfn_forward_loss(mode, init_state, gfn_model, log_reward, coeff_matrix, exploration_std=None, return_exp=False):
+def get_gfn_forward_loss(mode, init_state, gfn_model, log_reward, coeff_matrix, exploration_std=0.0, return_exp=False):
     if mode == 'tb':
         loss = fwd_tb(init_state, gfn_model, log_reward, exploration_std, return_exp=return_exp)
     elif mode == 'tb-avg':
@@ -88,26 +91,24 @@ def get_gfn_forward_loss(mode, init_state, gfn_model, log_reward, coeff_matrix, 
     return loss
 
 
-
-def get_gfn_backward_loss(mode, samples, gfn_model, log_reward, exploration_std=None):
+def get_gfn_backward_loss(mode, samples, gfn_model, log_reward):
     if mode == 'tb':
-        loss = bwd_tb(samples, gfn_model, log_reward, exploration_std)
+        loss = bwd_tb(samples, gfn_model, log_reward)
     elif mode == 'tb-avg':
-        loss = bwd_tb_avg(samples, gfn_model, log_reward, exploration_std)
+        loss = bwd_tb_avg(samples, gfn_model, log_reward)
     elif mode == 'mle':
-        loss = bwd_mle(samples, gfn_model, log_reward, exploration_std)
+        loss = bwd_mle(samples, gfn_model, log_reward)
     return loss
 
 
-def get_exploration_std(iter, exploratory, exploration_factor=0.1, exploration_wd=False):
+def get_exploration_std(iter, exploratory, exploration_factor=0.1, exploration_wd=False) -> float:
     if exploratory is False:
-        return None
+        return 0.0
     if exploration_wd:
         exploration_std = exploration_factor * max(0, 1. - iter / 5000.)
     else:
         exploration_std = exploration_factor
-    expl = lambda x: exploration_std
-    return expl
+    return exploration_std
 
 
 def get_name(args):

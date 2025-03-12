@@ -1,1 +1,1 @@
-from .gfn import *
+from .gfn import GFN

@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 
+
 def adjust_ld_step(current_ld_step, current_acceptance_rate, target_acceptance_rate=0.574, adjustment_factor=0.01):
     """
     Adjust the Langevin dynamics step size based on the current acceptance rate.
