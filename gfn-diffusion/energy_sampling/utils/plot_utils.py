@@ -120,7 +120,7 @@ def viz_gmm(
 ) -> list:
     lim = energy.plot_bound
     out = []
-    for i in range(0, min(energy.dim, 8), 2):
+    for i in range(0, min(energy.ndim, 8), 2):
         out.extend(
             viz_2d_slice(
                 energy, (i, i + 1), samples, lim=lim, n_contour_levels=n_contour_levels, clamp_min=clamp_min, kde=False

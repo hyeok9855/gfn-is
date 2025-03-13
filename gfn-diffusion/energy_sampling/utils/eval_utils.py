@@ -270,45 +270,110 @@ def compute_distribution_distances(pred: torch.Tensor, true: torch.Tensor | list
     return metrics
 
 
+def estimate_partition_function(
+    log_pfs: torch.Tensor,
+    log_pbs: torch.Tensor,
+    log_fs: torch.Tensor,
+    log_rewards: torch.Tensor,
+    gt_log_pfs: torch.Tensor | None = None,
+    gt_log_pbs: torch.Tensor | None = None,
+    gt_log_rewards: torch.Tensor | None = None,
+    gt_log_Z: float | None = None,
+) -> dict:
+    log_weights = log_rewards + log_pbs.sum(-1) - log_pfs.sum(-1)
+    log_Z = logmeanexp(log_weights).item()
+    log_Z_learned = log_fs[:, 0].mean().item()
+    elbo = log_weights.mean().item()
+    if gt_log_rewards is not None:
+        assert (gt_log_pfs is not None) and (gt_log_pbs is not None)
+        eubo = (gt_log_rewards + gt_log_pbs.sum(-1) - gt_log_pfs.sum(-1)).mean().item()
+    else:
+        eubo = float("nan")
+    err = log_weights - log_fs[:, 0]
+    ess = 1.0 / (err.softmax(0) ** 2).sum().item()
+    metrics = {
+        "log_Z": log_Z,
+        "Δ_log_Z": abs(log_Z - gt_log_Z) if gt_log_Z is not None else float("nan"),
+        "log_Z_learned": log_Z_learned,
+        "elbo": elbo,
+        "eubo": eubo,
+        "ess": ess,
+    }
+    return metrics
+
+
+def resample_trajectory(batch_size, model_trajs, log_pfs, log_pbs, log_fs, log_rewards):
+    err = - (log_fs[:, 0] + log_pfs.sum(-1) - log_rewards - log_pbs.sum(-1))
+    weights = err.softmax(0)
+    sampled_idx = torch.distributions.Categorical(weights).sample((batch_size,))
+    return (
+        model_trajs[sampled_idx],
+        log_pfs[sampled_idx],
+        log_pbs[sampled_idx],
+        log_fs[sampled_idx],
+        log_rewards[sampled_idx],
+    )
+
+
 def eval_step(
-    eval_batch_size: int,
+    batch_size: int,
     gt_xs: torch.Tensor | None,
     gfn_model: GFN,
     target_energy: BaseEnergy,
     pis: bool = False,
     final_eval: bool = False,
-) -> tuple[torch.Tensor, dict]:
-    init_state = torch.zeros(eval_batch_size, target_energy.ndim).to(gfn_model.device)
+    resample: bool = False,
+) -> tuple[dict, torch.Tensor, torch.Tensor | None]:
+    metrics = {}
+
+    init_state = torch.zeros(batch_size, target_energy.ndim).to(gfn_model.device)
     with torch.no_grad():
         model_trajs, log_pfs, log_pbs, log_fs = gfn_model.get_trajectory_fwd(
             init_state, 0.0, target_energy.log_reward, pis=pis
         )
         sample_xs = model_trajs[:, -1]
         log_rewards = target_energy.log_reward(sample_xs)
-    log_weights = log_rewards + log_pbs.sum(-1) - log_pfs.sum(-1)
 
-    log_Z = logmeanexp(log_weights)
-    log_Z_lb = log_weights.mean()
-    log_Z_learned = log_fs[:, 0].mean()
-
-    metrics = {"log_Z": log_Z.item(), "log_Z_learned": log_Z_learned.item(), "elbo": log_Z_lb.item()}
-
-    try:
-        metrics.update({"Δ_log_Z": (log_Z - target_energy.gt_logz()).abs()})
-    except NotImplementedError:
-        pass
-
-    if gt_xs is not None:
-        with torch.no_grad():
+        if gt_xs is not None:
             _, gt_log_pfs, gt_log_pbs, _ = gfn_model.get_trajectory_bwd(gt_xs, target_energy.log_reward)
             gt_log_rewards = target_energy.log_reward(gt_xs)
-        eubo = (gt_log_rewards + gt_log_pbs.sum(-1) - gt_log_pfs.sum(-1)).mean()
-        metrics.update({"eubo": eubo})
+        else:
+            gt_log_pfs = gt_log_pbs = gt_log_rewards = None
 
-        metrics.update(compute_distribution_distances(sample_xs.unsqueeze(1), gt_xs.unsqueeze(1)))
+    try:
+        gt_log_Z = target_energy.gt_logz()
+    except NotImplementedError:
+        gt_log_Z = None
+
+    metrics.update(
+        estimate_partition_function(
+            log_pfs,
+            log_pbs,
+            log_fs,
+            log_rewards,
+            gt_log_pfs=gt_log_pfs,
+            gt_log_pbs=gt_log_pbs,
+            gt_log_rewards=gt_log_rewards,
+            gt_log_Z=gt_log_Z,
+        )
+    )
+    if gt_xs is not None:
         # "1-Wasserstein", "2-Wasserstein", "Linear_MMD", "Poly_MMD", "RBF_MMD",
         # "Mean_MSE", "Mean_L2", "Mean_L1", "Median_MSE", "Median_L2", "Median_L1"
+        metrics.update(compute_distribution_distances(sample_xs.unsqueeze(1), gt_xs.unsqueeze(1)))
 
     metrics = {f"{'final_' if final_eval else ''}eval/{k}": v for k, v in metrics.items()}
 
-    return model_trajs, metrics
+    model_trajs_r = None
+    if resample:
+        model_trajs_r, log_pfs_r, log_pbs_r, log_fs_r, log_rewards_r = resample_trajectory(
+            batch_size, model_trajs, log_pfs, log_pbs, log_fs, log_rewards
+        )
+        sample_xs_r = model_trajs_r[:, -1]
+        metrics_r = estimate_partition_function(log_pfs_r, log_pbs_r, log_fs_r, log_rewards_r, gt_log_Z=gt_log_Z)
+        if gt_xs is not None:
+            metrics_r.update(compute_distribution_distances(sample_xs_r.unsqueeze(1), gt_xs.unsqueeze(1)))
+        metrics_r = {f"{'final_' if final_eval else ''}eval_resample/{k}": v for k, v in metrics_r.items()}
+        metrics.update(metrics_r)
+
+    return metrics, model_trajs, model_trajs_r
