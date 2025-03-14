@@ -16,9 +16,10 @@ MIN_VAR_EST = 1e-8
 def wasserstein(
     x0: torch.Tensor,
     x1: torch.Tensor,
-    method: Optional[str] = None,
+    method: str | None = None,
     reg: float = 0.05,
     power: int = 2,
+    weights: torch.Tensor | None = None,
     **kwargs,
 ) -> float:
     assert power == 1 or power == 2
@@ -31,7 +32,8 @@ def wasserstein(
     else:
         raise ValueError(f"Unknown method: {method}")
 
-    a, b = pot.unif(x0.shape[0]), pot.unif(x1.shape[0])
+    a = pot.unif(x0.shape[0]) if weights is None else weights.cpu().numpy()
+    b = pot.unif(x1.shape[0])
     if x0.dim() > 2:
         x0 = x0.reshape(x0.shape[0], -1)
     if x1.dim() > 2:
@@ -208,9 +210,13 @@ def compute_distances(pred, true):
     return mse, me, mae
 
 
-def compute_distribution_distances(pred: torch.Tensor, true: torch.Tensor | list):
+def compute_distribution_distances(
+    pred: torch.Tensor,
+    true: torch.Tensor | list,
+    weights: torch.Tensor | None = None,
+):
     """computes distances between distributions.
-    pred: [batch, times, dims] tensor
+    pred: [batch, times, dims] tensor or list[batch[i], dims] of length times
     true: [batch, times, dims] tensor or list[batch[i], dims] of length times
 
     This handles jagged times as a list of tensors.
@@ -245,8 +251,8 @@ def compute_distribution_distances(pred: torch.Tensor, true: torch.Tensor | list
         else:
             b = true[:, t, :]
 
-        w1 = wasserstein(a, b, power=1)
-        w2 = wasserstein(a, b, power=2)
+        w1 = wasserstein(a, b, power=1, weights=weights)
+        w2 = wasserstein(a, b, power=2, weights=weights)
         if not pred_is_jagged and not is_jagged:
             mmd_linear = linear_mmd2(a, b).item()
             mmd_poly = poly_mmd2(a, b, d=2, alpha=1.0, c=2.0).item()
@@ -302,19 +308,6 @@ def estimate_partition_function(
     return metrics
 
 
-def resample_trajectory(batch_size, model_trajs, log_pfs, log_pbs, log_fs, log_rewards):
-    err = - (log_fs[:, 0] + log_pfs.sum(-1) - log_rewards - log_pbs.sum(-1))
-    weights = err.softmax(0)
-    sampled_idx = torch.distributions.Categorical(weights).sample((batch_size,))
-    return (
-        model_trajs[sampled_idx],
-        log_pfs[sampled_idx],
-        log_pbs[sampled_idx],
-        log_fs[sampled_idx],
-        log_rewards[sampled_idx],
-    )
-
-
 def eval_step(
     batch_size: int,
     gt_xs: torch.Tensor | None,
@@ -323,7 +316,8 @@ def eval_step(
     pis: bool = False,
     final_eval: bool = False,
     resample: bool = False,
-) -> tuple[dict, torch.Tensor, torch.Tensor | None]:
+    reweight: bool = False,
+) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor | None]:
     metrics = {}
 
     init_state = torch.zeros(batch_size, target_energy.ndim).to(gfn_model.device)
@@ -364,16 +358,39 @@ def eval_step(
 
     metrics = {f"{'final_' if final_eval else ''}eval/{k}": v for k, v in metrics.items()}
 
-    model_trajs_r = None
-    if resample:
-        model_trajs_r, log_pfs_r, log_pbs_r, log_fs_r, log_rewards_r = resample_trajectory(
-            batch_size, model_trajs, log_pfs, log_pbs, log_fs, log_rewards
-        )
-        sample_xs_r = model_trajs_r[:, -1]
-        metrics_r = estimate_partition_function(log_pfs_r, log_pbs_r, log_fs_r, log_rewards_r, gt_log_Z=gt_log_Z)
-        if gt_xs is not None:
-            metrics_r.update(compute_distribution_distances(sample_xs_r.unsqueeze(1), gt_xs.unsqueeze(1)))
-        metrics_r = {f"{'final_' if final_eval else ''}eval_resample/{k}": v for k, v in metrics_r.items()}
-        metrics.update(metrics_r)
+    ### Resample or reweight
+    err = - (log_fs[:, 0] + log_pfs.sum(-1) - log_rewards - log_pbs.sum(-1))
+    weights = err.softmax(0)
 
-    return metrics, model_trajs, model_trajs_r
+    model_trajs_rs = None
+    if resample:
+        # We can't use `estimate_partition_function` with resampled trajectories
+        # since we don't know the distribution of the resampled trajectories
+        assert gt_xs is not None
+
+        metrics_rs = {}
+        sampled_idx = torch.distributions.Categorical(weights).sample((batch_size,))
+        model_trajs_rs = model_trajs[sampled_idx]
+        sample_xs_rs = model_trajs_rs[:, -1]
+
+        metrics_rs.update(
+            compute_distribution_distances(sample_xs_rs.unsqueeze(1), gt_xs.unsqueeze(1))
+        )
+        metrics_rs = {
+            f"{'final_' if final_eval else ''}eval_resample/{k}": v for k, v in metrics_rs.items()
+        }
+        metrics.update(metrics_rs)
+
+    if reweight:
+        assert gt_xs is not None
+        metrics_rw = {}
+        metrics_rw.update(
+            compute_distribution_distances(sample_xs.unsqueeze(1), gt_xs.unsqueeze(1), weights=weights)
+        )
+        metrics_rw = {
+            f"{'final_' if final_eval else ''}eval_reweight/{k}": v for k, v in metrics_rw.items()
+        }
+
+        metrics.update(metrics_rw)
+
+    return metrics, model_trajs, weights, model_trajs_rs

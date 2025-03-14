@@ -142,27 +142,42 @@ def train(args):
         )
 
         if i % 100 == 0:
-            results, model_trajs, model_trajs_r = eval_step(
-                args.eval_data_size, gt_xs, gfn_model, energy, pis=args.training_loss=="pis", resample=args.eval_resample
+            results, model_trajs, weights, model_trajs_r = eval_step(
+                args.eval_data_size,
+                gt_xs,
+                gfn_model,
+                energy,
+                pis=args.training_loss=="pis",
+                resample=args.eval_resample,
+                reweight=args.eval_reweight,
             )
             metrics.update(results)
 
-            images = plot_step(energy, model_trajs[:, -1], gt_xs, args.plot_data_size, device)
+            images = plot_step(energy, model_trajs[:, -1])
             metrics.update(images)
+
             if args.eval_resample:
                 assert model_trajs_r is not None
-                images_resample = plot_step(energy, model_trajs_r[:, -1], gt_xs, args.plot_data_size, device)
+                images_resample = plot_step(energy, model_trajs_r[:, -1])
                 images_resample = {
                     k.replace("visualization/", "visualization_resample/"): v for k, v in images_resample.items()
                 }
                 metrics.update(images_resample)
+
+            if args.eval_reweight:
+                images_reweight = plot_step(energy, model_trajs[:, -1], weights=weights)
+                images_reweight = {
+                    k.replace("visualization/", "visualization_reweight/"): v for k, v in images_reweight.items()
+                }
+                metrics.update(images_reweight)
+
             plt.close('all')
 
             wandb.log(metrics, step=i)
             if i % 1000 == 0:
                 torch.save(gfn_model.state_dict(), f'{exp_name}model.pt')
 
-    final_results, _, _ = eval_step(
+    final_results, _, _, _ = eval_step(
         args.final_eval_data_size, gt_xs, gfn_model, energy, pis=args.training_loss=="pis", final_eval=True, resample=args.eval_resample
     )
     metrics.update(final_results)
@@ -306,8 +321,9 @@ if __name__ == '__main__':
     ################################################################
 
     ################################################################
-    ### Resampling
+    ### Importance sampling related
     parser.add_argument('--eval_resample', action='store_true', default=False)
+    parser.add_argument('--eval_reweight', action='store_true', default=False)
     ################################################################
 
     args = parser.parse_args()
