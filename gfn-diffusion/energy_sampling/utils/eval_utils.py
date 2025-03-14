@@ -315,8 +315,8 @@ def eval_step(
     target_energy: BaseEnergy,
     pis: bool = False,
     final_eval: bool = False,
-    resample: bool = False,
-    reweight: bool = False,
+    resampling: bool = False,
+    weighting: bool = False,
 ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor | None]:
     metrics = {}
 
@@ -358,39 +358,39 @@ def eval_step(
 
     metrics = {f"{'final_' if final_eval else ''}eval/{k}": v for k, v in metrics.items()}
 
-    ### Resample or reweight
+    ### Resample or weighted
     err = - (log_fs[:, 0] + log_pfs.sum(-1) - log_rewards - log_pbs.sum(-1))
     weights = err.softmax(0)
 
     model_trajs_rs = None
-    if resample:
+    if resampling:
         # We can't use `estimate_partition_function` with resampled trajectories
         # since we don't know the distribution of the resampled trajectories
         assert gt_xs is not None
 
-        metrics_rs = {}
+        metrics_r = {}
         sampled_idx = torch.distributions.Categorical(weights).sample((batch_size,))
         model_trajs_rs = model_trajs[sampled_idx]
         sample_xs_rs = model_trajs_rs[:, -1]
 
-        metrics_rs.update(
+        metrics_r.update(
             compute_distribution_distances(sample_xs_rs.unsqueeze(1), gt_xs.unsqueeze(1))
         )
-        metrics_rs = {
-            f"{'final_' if final_eval else ''}eval_resample/{k}": v for k, v in metrics_rs.items()
+        metrics_r = {
+            f"{'final_' if final_eval else ''}eval_resampled/{k}": v for k, v in metrics_r.items()
         }
-        metrics.update(metrics_rs)
+        metrics.update(metrics_r)
 
-    if reweight:
+    if weighting:
         assert gt_xs is not None
-        metrics_rw = {}
-        metrics_rw.update(
+        metrics_w = {}
+        metrics_w.update(
             compute_distribution_distances(sample_xs.unsqueeze(1), gt_xs.unsqueeze(1), weights=weights)
         )
-        metrics_rw = {
-            f"{'final_' if final_eval else ''}eval_reweight/{k}": v for k, v in metrics_rw.items()
+        metrics_w = {
+            f"{'final_' if final_eval else ''}eval_weighted/{k}": v for k, v in metrics_w.items()
         }
 
-        metrics.update(metrics_rw)
+        metrics.update(metrics_w)
 
     return metrics, model_trajs, weights, model_trajs_rs

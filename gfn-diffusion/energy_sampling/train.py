@@ -120,7 +120,7 @@ def train(args):
 
     metrics = dict()
     gfn_model.train()
-    for i in trange(args.epochs + 1):
+    for i in trange(args.epochs + 1, dynamic_ncols=True):
         metrics['train/loss'] = train_step(
             energy,
             gfn_model,
@@ -148,15 +148,15 @@ def train(args):
                 gfn_model,
                 energy,
                 pis=args.training_loss=="pis",
-                resample=args.eval_resample,
-                reweight=args.eval_reweight,
+                resampling=args.eval_resampling,
+                weighting=args.eval_weighting,
             )
             metrics.update(results)
 
             images = plot_step(energy, model_trajs[:, -1])
             metrics.update(images)
 
-            if args.eval_resample:
+            if args.eval_resampling:
                 assert model_trajs_r is not None
                 images_resample = plot_step(energy, model_trajs_r[:, -1])
                 images_resample = {
@@ -164,12 +164,12 @@ def train(args):
                 }
                 metrics.update(images_resample)
 
-            if args.eval_reweight:
-                images_reweight = plot_step(energy, model_trajs[:, -1], weights=weights)
-                images_reweight = {
-                    k.replace("visualization/", "visualization_reweight/"): v for k, v in images_reweight.items()
+            if args.eval_weighting:
+                images_weighted = plot_step(energy, model_trajs[:, -1], weights=weights)
+                images_weighted = {
+                    k.replace("visualization/", "visualization_weighted/"): v for k, v in images_weighted.items()
                 }
-                metrics.update(images_reweight)
+                metrics.update(images_weighted)
 
             plt.close('all')
 
@@ -178,7 +178,7 @@ def train(args):
                 torch.save(gfn_model.state_dict(), f'{exp_name}model.pt')
 
     final_results, _, _, _ = eval_step(
-        args.final_eval_data_size, gt_xs, gfn_model, energy, pis=args.training_loss=="pis", final_eval=True, resample=args.eval_resample
+        args.final_eval_data_size, gt_xs, gfn_model, energy, pis=args.training_loss=="pis", final_eval=True, resampling=args.eval_resampling
     )
     metrics.update(final_results)
     wandb.log(metrics, step=args.epochs)
@@ -322,8 +322,8 @@ if __name__ == '__main__':
 
     ################################################################
     ### Importance sampling related
-    parser.add_argument('--eval_resample', action='store_true', default=False)
-    parser.add_argument('--eval_reweight', action='store_true', default=False)
+    parser.add_argument('--eval_resampling', action='store_true', default=False)
+    parser.add_argument('--eval_weighting', action='store_true', default=False)
     ################################################################
 
     args = parser.parse_args()
