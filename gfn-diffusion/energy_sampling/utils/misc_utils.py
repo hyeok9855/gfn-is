@@ -25,7 +25,7 @@ def logmeanexp(x, dim=0):
     return x.logsumexp(dim) - math.log(x.shape[dim])
 
 
-def cal_subtb_coef_matrix(lamda, N):
+def cal_subtb_coef_matrix(lamda: float, N: int) -> torch.Tensor:
     """
     diff_matrix: (N+1, N+1)
     0, 1, 2, ...
@@ -58,8 +58,8 @@ def get_gfn_optimizer(
         {'params': gfn_model.s_model.parameters()},
         {'params': gfn_model.joint_model.parameters()},
     ]
-    if gfn_model.langevin_scaling_model is not None:
-        param_groups += [{'params': gfn_model.langevin_scaling_model.parameters()}]
+    if gfn_model.lp_scaling_model is not None:
+        param_groups += [{'params': gfn_model.lp_scaling_model.parameters()}]
 
     if conditional_flow_model:
         assert isinstance(gfn_model.flow_model, torch.nn.Module)
@@ -79,29 +79,57 @@ def get_gfn_optimizer(
     return gfn_optimizer
 
 
-def get_gfn_forward_loss(mode, init_state, gfn_model, log_reward, coeff_matrix, exploration_std=0.0, return_exp=False):
-    if mode == 'tb':
-        loss = fwd_tb(init_state, gfn_model, log_reward, exploration_std, return_exp=return_exp)
-    elif mode == 'tb-avg':
-        loss = fwd_tb_avg(init_state, gfn_model, log_reward, exploration_std, return_exp=return_exp)
-    elif mode == 'db':
-        loss = db(init_state, gfn_model, log_reward, exploration_std)
-    elif mode == 'subtb':
-        loss = subtb(init_state, gfn_model, log_reward, coeff_matrix, exploration_std)
-    return loss
+def get_gfn_forward_loss(
+    training_loss,
+    init_state,
+    gfn_model,
+    log_reward,
+    coeff_matrix,
+    exploration_std=0.0,
+    return_exp=False,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | torch.Tensor:
+    if training_loss == 'tb':
+        output = fwd_tb(init_state, gfn_model, log_reward, exploration_std, return_exp=return_exp)
+    elif training_loss == 'tb-avg':
+        output = fwd_tb_avg(init_state, gfn_model, log_reward, exploration_std, return_exp=return_exp)
+    elif training_loss == 'db':
+        output = db(init_state, gfn_model, log_reward, exploration_std)
+    elif training_loss == 'subtb':
+        output = subtb(init_state, gfn_model, log_reward, coeff_matrix, exploration_std)
+    else:
+        raise ValueError(f'Invalid training loss for forward: {training_loss}')
+
+    if return_exp:
+        loss, states, log_pfs, log_pbs, log_r = output
+        return loss, states, log_pfs, log_pbs, log_r
+    else:
+        loss = output
+        return loss
 
 
-def get_gfn_backward_loss(mode, samples, gfn_model, log_reward):
-    if mode == 'tb':
+def get_gfn_backward_loss(
+    training_loss,
+    samples,
+    gfn_model,
+    log_reward,
+) -> torch.Tensor:
+    if training_loss == 'tb':
         loss = bwd_tb(samples, gfn_model, log_reward)
-    elif mode == 'tb-avg':
+    elif training_loss == 'tb-avg':
         loss = bwd_tb_avg(samples, gfn_model, log_reward)
-    elif mode == 'mle':
+    elif training_loss == 'mle':
         loss = bwd_mle(samples, gfn_model, log_reward)
+    else:
+        raise ValueError(f'Invalid training loss for backward: {training_loss}')
     return loss
 
 
-def get_exploration_std(iter, exploratory, exploration_factor=0.1, exploration_wd=False) -> float:
+def get_exploration_std(
+    iter,
+    exploratory,
+    exploration_factor=0.1,
+    exploration_wd=False,
+) -> float:
     if exploratory is False:
         return 0.0
     if exploration_wd:
@@ -113,10 +141,10 @@ def get_exploration_std(iter, exploratory, exploration_factor=0.1, exploration_w
 
 def get_name(args):
     name = ''
-    if args.langevin:
-        name = f'langevin_'
-        if args.langevin_scaling_per_dimension:
-            name = f'langevin_scaling_per_dimension_'
+    if args.lp:
+        name = f'lp_'
+        if args.lp_scaling_per_dimension:
+            name = f'lp_scaling_per_dimension_'
     if args.exploratory and (args.exploration_factor is not None):
         if args.exploration_wd:
             name = f'exploration_wd_{args.exploration_factor}_{name}_'
@@ -129,20 +157,14 @@ def get_name(args):
     if args.clipping:
         name = f'{name}clipping_lgv_{args.lgv_clip}_gfn_{args.gfn_clip}_'
 
-    if args.mode_fwd == 'subtb':
-        mode_fwd = f'subtb_subtb_lambda_{args.subtb_lambda}'
+    if args.training_loss == 'subtb':
+        training_loss = f'subtb_lambda_{args.subtb_lambda}'
         if args.partial_energy:
-            mode_fwd = f'{mode_fwd}_{args.partial_energy}'
+            training_loss = f'{training_loss}_{args.partial_energy}'
     else:
-        mode_fwd = args.mode_fwd
+        training_loss = args.training_loss
 
-    if args.both_ways:
-        ways = f'fwd_bwd/fwd_{mode_fwd}_bwd_{args.mode_bwd}'
-    elif args.bwd:
-        ways = f'bwd/bwd_{args.mode_bwd}'
-    else:
-        ways = f'fwd/fwd_{mode_fwd}'
-
+    ways = args.training_mode
     if args.local_search:
         local_search = f'local_search_iter_{args.max_iter_ls}_burn_{args.burn_in}_cycle_{args.ls_cycle}_step_{args.ld_step}_beta_{args.beta}_rankw_{args.rank_weight}_prioritized_{args.prioritized}'
         ways = f'{ways}/{local_search}'
@@ -152,7 +174,7 @@ def get_name(args):
     else:
         results = 'results'
 
-    name = f'{results}/{args.energy}/{name}gfn/{ways}/T_{args.T}/tscale_{args.t_scale}/lvr_{args.log_var_range}/'
+    name = f'{results}/{args.target_energy}/{name}gfn/{ways}/T_{args.T}/tscale_{args.t_scale}/lvr_{args.log_var_range}/'
 
     name = f'{name}/seed_{args.seed}/'
 

@@ -30,7 +30,7 @@ class GFN(nn.Module):
         hidden_dim: int,
         log_var_range: float = 4.0,
         t_scale: float = 1.0,
-        langevin: bool = False,
+        lp: bool = False,
         learned_variance: bool = True,
         trajectory_length: int = 100,
         partial_energy: bool = False,
@@ -38,7 +38,7 @@ class GFN(nn.Module):
         lgv_clip: float = 1e2,
         gfn_clip: float = 1e4,
         pb_scale_range: float = 1.0,
-        langevin_scaling_per_dimension: bool = True,
+        lp_scaling_per_dimension: bool = True,
         conditional_flow_model: bool = False,
         learn_pb: bool = False,
         pis_architectures: bool = False,
@@ -54,7 +54,7 @@ class GFN(nn.Module):
         self.s_emb_dim = s_emb_dim
 
         self.trajectory_length = trajectory_length
-        self.langevin = langevin
+        self.lp = lp
         self.learned_variance = learned_variance
         self.partial_energy = partial_energy
         self.t_scale = t_scale
@@ -63,7 +63,7 @@ class GFN(nn.Module):
         self.lgv_clip = lgv_clip
         self.gfn_clip = gfn_clip
 
-        self.langevin_scaling_per_dimension = langevin_scaling_per_dimension
+        self.lp_scaling_per_dimension = lp_scaling_per_dimension
         self.conditional_flow_model = conditional_flow_model
         self.learn_pb = learn_pb
         self.pb_scale_range = pb_scale_range
@@ -78,9 +78,9 @@ class GFN(nn.Module):
         self.device = device
 
         out_dim = 2 * ndim if self.learned_variance else ndim
-        lv_out_dim = ndim if self.langevin_scaling_per_dimension else 1
+        lv_out_dim = ndim if self.lp_scaling_per_dimension else 1
 
-        self.back_model = self.langevin_scaling_model = None
+        self.back_model = self.lp_scaling_model = None
 
         if self.pis_architectures:
             assert s_emb_dim == t_emb_dim, print(
@@ -99,8 +99,8 @@ class GFN(nn.Module):
             else:
                 self.flow_model = torch.nn.Parameter(torch.tensor(0.0).to(self.device))
 
-            if self.langevin:
-                self.langevin_scaling_model = LangevinScalingModelPIS(t_emb_dim, hidden_dim, lv_out_dim, lgv_layers, zero_init)
+            if self.lp:
+                self.lp_scaling_model = LangevinScalingModelPIS(t_emb_dim, hidden_dim, lv_out_dim, lgv_layers, zero_init)
 
         else:
 
@@ -115,8 +115,8 @@ class GFN(nn.Module):
             else:
                 self.flow_model = torch.nn.Parameter(torch.tensor(0.0).to(self.device))
 
-            if self.langevin:
-                self.langevin_scaling_model = LangevinScalingModel(s_emb_dim, t_emb_dim, hidden_dim, lv_out_dim, zero_init)
+            if self.lp:
+                self.lp_scaling_model = LangevinScalingModel(s_emb_dim, t_emb_dim, hidden_dim, lv_out_dim, zero_init)
 
     def split_params(self, tensor):
         if not self.learned_variance:
@@ -128,7 +128,7 @@ class GFN(nn.Module):
         return mean, logvar + np.log(self.pf_std_per_traj) * 2.0
 
     def predict_next_state(self, s, t, log_r_fn: Callable | None = None):
-        if self.langevin:
+        if self.lp:
             assert log_r_fn is not None
             s.requires_grad_(True)
             with torch.enable_grad():
@@ -149,12 +149,12 @@ class GFN(nn.Module):
             else self.flow_model
         )
 
-        if self.langevin:
-            assert self.langevin_scaling_model is not None
+        if self.lp:
+            assert self.lp_scaling_model is not None
             if self.pis_architectures:
-                scale = self.langevin_scaling_model(t)
+                scale = self.lp_scaling_model(t)
             else:
-                scale = self.langevin_scaling_model(s_emb, t_emb)
+                scale = self.lp_scaling_model(s_emb, t_emb)
             s_new[..., : self.dim] += scale * grad_log_r
 
         if self.clipping:
