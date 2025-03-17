@@ -295,8 +295,7 @@ def estimate_partition_function(
         eubo = (gt_log_rewards + gt_log_pbs.sum(-1) - gt_log_pfs.sum(-1)).mean().item()
     else:
         eubo = float("nan")
-    err = log_weights - log_fs[:, 0]
-    ess = 1.0 / (err.softmax(0) ** 2).sum().item()
+    ess = 1.0 / (log_weights.softmax(0) ** 2).sum().item()
     metrics = {
         "log_Z": log_Z,
         "Δ_log_Z": abs(log_Z - gt_log_Z) if gt_log_Z is not None else float("nan"),

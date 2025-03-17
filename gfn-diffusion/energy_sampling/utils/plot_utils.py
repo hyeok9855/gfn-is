@@ -230,9 +230,10 @@ def viz_kde2d(
             cmap="coolwarm",
             fill=True,
             ax=ax,
+            warn_singular=False,
         )
     except Exception as e:
-        print("Error in kde plot")
+        print(f"Error in kde plot: {e}")
     ax.set_xlim(-lim, lim)
     ax.set_ylim(-lim, lim)
     return fig, ax

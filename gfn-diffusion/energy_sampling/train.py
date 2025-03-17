@@ -27,7 +27,7 @@ def get_energy(target_energy: str, device: torch.device) -> BaseEnergy:
     elif target_energy == 'funnel':
         energy = Funnel(device=device)
     elif target_energy == 'many_well':
-        energy = ManyWell(device=device)
+        energy = ManyWell(device=device, ndim=8)
     elif target_energy == "lgcp":
         raise NotImplementedError
         energy = LGCP(device=device)
@@ -48,7 +48,7 @@ def train(args):
     device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
 
     subtb_coef_matrix = None
-    if args.training_loss == 'subtb':
+    if args.loss_type == 'subtb':
         subtb_coef_matrix = cal_subtb_coef_matrix(args.subtb_lambda, args.T).to(device)
 
     ls_args = None
@@ -94,7 +94,6 @@ def train(args):
         device=device,
     ).to(device)
 
-
     gfn_optimizer = get_gfn_optimizer(
         gfn_model,
         args.lr_policy,
@@ -102,21 +101,21 @@ def train(args):
         args.lr_back,
         args.learn_pb,
         args.conditional_flow_model,
-        args.use_weight_decay,
+        args.use_weight_decay,  
         args.weight_decay,
     )
 
     buffer = ReplayBuffer(
         args.buffer_size,
         device,
-        energy.log_reward,
-        args.batch_size,
-        data_ndim=energy.ndim,
-        beta=args.beta,
-        rank_weight=args.rank_weight,
-        prioritized=args.prioritized,
+        prioritization=args.prioritization,
+        rank_k=args.rank_k,
+        logr_lb=args.logr_lb,
     )
-    buffer_ls = deepcopy(buffer)
+    buffer_ls = None
+    if args.local_search:
+        buffer_ls = deepcopy(buffer)
+        buffer_ls.prioritization = "reward"
 
     metrics = dict()
     gfn_model.train()
@@ -127,18 +126,24 @@ def train(args):
             gfn_optimizer,
             i,
             batch_size=args.batch_size,
-            training_loss=args.training_loss,
+            loss_type=args.loss_type,
             training_mode=args.training_mode,
+            clip_grad_norm=args.clip_grad_norm,
             bwd_from=args.bwd_from,
             exploratory=args.exploratory,
             exploration_factor=args.exploration_factor,
             exploration_wd=args.exploration_wd,
             buffer=buffer,
             buffer_ls=buffer_ls,
+            warmup_steps=args.warmup_steps,
             local_search=args.local_search,
             ls_args=ls_args,
             subtb_coef_matrix=subtb_coef_matrix,
             device=device,
+            resampling=args.train_resampling,
+            weighting=args.train_weighting,
+            aux_reward=args.aux_reward,
+            aux_reward_temp=args.aux_reward_temp,
         )
 
         if i % 100 == 0:
@@ -147,7 +152,7 @@ def train(args):
                 gt_xs,
                 gfn_model,
                 energy,
-                pis=args.training_loss=="pis",
+                pis=args.loss_type=="pis",
                 resampling=args.eval_resampling,
                 weighting=args.eval_weighting,
             )
@@ -178,62 +183,11 @@ def train(args):
                 torch.save(gfn_model.state_dict(), f'{exp_name}model.pt')
 
     final_results, _, _, _ = eval_step(
-        args.final_eval_data_size, gt_xs, gfn_model, energy, pis=args.training_loss=="pis", final_eval=True, resampling=args.eval_resampling
+        args.final_eval_data_size, gt_xs, gfn_model, energy, pis=args.loss_type=="pis", final_eval=True, resampling=args.eval_resampling
     )
     metrics.update(final_results)
     wandb.log(metrics, step=args.epochs)
     torch.save(gfn_model.state_dict(), f'{exp_name}model_final.pt')
-
-
-# def eval():
-#     name = get_name(args)
-
-#     print(name)
-
-#     energy = get_energy()
-#     eval_data = energy.sample(eval_data_size).to(device) if not (args.energy in _LIST_OF_NO_SAMPLES_ENERGIES) else None
-
-#     gfn_model = GFN(energy.data_ndim, args.s_emb_dim, args.hidden_dim, args.harmonics_dim, args.t_emb_dim,
-#                     clipping=args.clipping, lgv_clip=args.lgv_clip, gfn_clip=args.gfn_clip,
-#                     langevin=args.langevin, learned_variance=args.learned_variance,
-#                     partial_energy=args.partial_energy, log_var_range=args.log_var_range,
-#                     pb_scale_range=args.pb_scale_range,
-#                     t_scale=args.t_scale, langevin_scaling_per_dimension=args.langevin_scaling_per_dimension,
-#                     conditional_flow_model=args.conditional_flow_model, learn_pb=args.learn_pb,
-#                     pis_architectures=args.pis_architectures, lgv_layers=args.lgv_layers,
-#                     joint_layers=args.joint_layers, zero_init=args.zero_init, device=device).to(device)
-
-#     model_final_path = name + 'model_final.pt'
-#     model_path = name + 'model.pt'
-
-#     if os.path.exists(model_final_path):
-#         try:
-#             gfn_model.load_state_dict(torch.load(model_final_path, weights_only=True))
-#         except:
-#             print("Couldn't load final model")
-#     else:
-#         if os.path.exists(model_path):
-#             try:
-#                 gfn_model.load_state_dict(torch.load(model_path, weights_only=True))
-#             except:
-#                 print("Couldn't load model")
-#         else:
-#             print("NO MODEL IS AVAILABLE")
-#             return
-
-#     config = args.__dict__
-#     config["Experiment"] = "{args.energy}"
-#     wandb.init(project="GFN Energy - proper evaluation", config=config, name=name)
-
-#     print(gfn_model)
-#     metrics = dict()
-
-#     gfn_model.eval()
-#     for i in trange(1, 201):
-#         metrics.update(eval_step_K_step_discretizer(eval_data, energy, gfn_model, final_eval=False, traj_length=i))
-#         # if 'tb-avg' in args.training_loss or 'tb-avg' in args.mode_bwd:
-#         #     del metrics[f'eval_{i}_steps/log_Z_learned']
-#     wandb.log(metrics)
 
 
 if __name__ == '__main__':
@@ -242,18 +196,19 @@ if __name__ == '__main__':
     parser.add_argument('--lr_policy', type=float, default=1e-3)
     parser.add_argument('--lr_flow', type=float, default=1e-2)
     parser.add_argument('--lr_back', type=float, default=1e-3)
+    parser.add_argument('--clip_grad_norm', type=float, default=3.0)
     parser.add_argument('--hidden_dim', type=int, default=64)
     parser.add_argument('--s_emb_dim', type=int, default=64)
     parser.add_argument('--t_emb_dim', type=int, default=64)
     parser.add_argument('--harmonics_dim', type=int, default=64)
     parser.add_argument('--batch_size', type=int, default=300)
-    parser.add_argument('--epochs', type=int, default=25000)
+    parser.add_argument('--epochs', type=int, default=10000)
     parser.add_argument('--T', type=int, default=100)
     parser.add_argument('--subtb_lambda', type=int, default=2)
     parser.add_argument('--t_scale', type=float, default=5.)
     parser.add_argument('--log_var_range', type=float, default=4.)
     parser.add_argument('--target_energy', type=str, default='9gmm', choices=('25gmm', 'funnel', 'many_well', 'lgcp'))
-    parser.add_argument('--training_loss', type=str, default="tb", choices=('tb', 'tb-avg', 'db', 'subtb', "pis", "mle"))
+    parser.add_argument('--loss_type', type=str, default="tb", choices=('tb', 'tb-avg', 'db', 'subtb', "pis", "mle"))
     parser.add_argument('--training_mode', type=str, default="fwd", choices=('fwd', 'bwd', 'both'))
     parser.add_argument('--bwd_from', type=str, default="buffer", choices=('energy', 'buffer'))
     parser.add_argument('--lp', action='store_true', default=False)
@@ -282,33 +237,28 @@ if __name__ == '__main__':
     ### For local search
     # How many iterations to run local search
     parser.add_argument('--max_iter_ls', type=int, default=200)
-
     # How many iterations to burn in before making local search
     parser.add_argument('--burn_in', type=int, default=100)
-
     # How frequently to make local search
     parser.add_argument('--ls_cycle', type=int, default=100)
-
     # Step size of Langevin Dynamics
     parser.add_argument('--ld_step', type=float, default=0.001)
     parser.add_argument('--ld_schedule', action='store_true', default=False)
-
     # Target acceptance rate
     parser.add_argument('--target_acceptance_rate', type=float, default=0.574)
     ################################################################
 
     ################################################################
     ### For replay buffer
-    parser.add_argument('--buffer_size', type=int, default=300 * 1000 * 2)
-
-    # high beta give steep priorization in reward prioritized replay sampling
-    parser.add_argument('--beta', type=float, default=1.)
-
-    # low rank_weighted give steep priorization in rank-based replay sampling
-    parser.add_argument('--rank_weight', type=float, default=1e-2)
-
-    # three kinds of replay training: random, reward prioritized, rank-based
-    parser.add_argument('--prioritized', type=str, default="rank", choices=('none', 'reward', 'rank'))
+    parser.add_argument('--buffer_size', type=int, default=100_000)
+    # none -> no prioritization, rank -> rank-based prioritization; TODO: support quantile-based prioritization
+    parser.add_argument('--prioritization', type=str, default="delta", choices=('none', 'reward', 'loss', 'delta'))
+    # low rank_k give steep priorization in rank-based replay sampling
+    parser.add_argument('--rank_k', type=float, default=1e-2)
+    # logr_lb for filtering out samples with extremely low reward values
+    parser.add_argument('--logr_lb', type=float, default=-10000)
+    # warmup_steps to wait before starting to sample from buffer
+    parser.add_argument('--warmup_steps', type=int, default=10)
     ################################################################
 
     parser.add_argument('--exploratory', action='store_true', default=False)
@@ -322,6 +272,10 @@ if __name__ == '__main__':
 
     ################################################################
     ### Importance sampling related
+    parser.add_argument('--train_resampling', action='store_true', default=False)
+    parser.add_argument('--train_weighting', action='store_true', default=False)
+    parser.add_argument('--aux_reward', type=str, default="reward", choices=("reward", "loss", "delta"))
+    parser.add_argument('--aux_reward_temp', type=float, default=1.0)
     parser.add_argument('--eval_resampling', action='store_true', default=False)
     parser.add_argument('--eval_weighting', action='store_true', default=False)
     ################################################################
@@ -340,5 +294,8 @@ if __name__ == '__main__':
             (args.training_mode == "both" or args.training_mode == "bwd")
             and args.bwd_from == "buffer"
         ), "We only support local search for backward sampling with buffer"
+
+    if "tb" not in args.loss_type and args.prioritization == "delta":
+        raise ValueError("Delta prioritization is only supported for tb loss")
 
     train(args)

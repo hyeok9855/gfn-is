@@ -2,12 +2,8 @@ import random
 import math
 
 import numpy as np
-import PIL
 import torch
 
-from gflownet_losses import (
-    bwd_mle, bwd_tb, bwd_tb_avg, db, fwd_tb, fwd_tb_avg, subtb
-)
 from models import GFN
 
 
@@ -79,51 +75,6 @@ def get_gfn_optimizer(
     return gfn_optimizer
 
 
-def get_gfn_forward_loss(
-    training_loss,
-    init_state,
-    gfn_model,
-    log_reward,
-    coeff_matrix,
-    exploration_std=0.0,
-    return_exp=False,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | torch.Tensor:
-    if training_loss == 'tb':
-        output = fwd_tb(init_state, gfn_model, log_reward, exploration_std, return_exp=return_exp)
-    elif training_loss == 'tb-avg':
-        output = fwd_tb_avg(init_state, gfn_model, log_reward, exploration_std, return_exp=return_exp)
-    elif training_loss == 'db':
-        output = db(init_state, gfn_model, log_reward, exploration_std)
-    elif training_loss == 'subtb':
-        output = subtb(init_state, gfn_model, log_reward, coeff_matrix, exploration_std)
-    else:
-        raise ValueError(f'Invalid training loss for forward: {training_loss}')
-
-    if return_exp:
-        loss, states, log_pfs, log_pbs, log_r = output
-        return loss, states, log_pfs, log_pbs, log_r
-    else:
-        loss = output
-        return loss
-
-
-def get_gfn_backward_loss(
-    training_loss,
-    samples,
-    gfn_model,
-    log_reward,
-) -> torch.Tensor:
-    if training_loss == 'tb':
-        loss = bwd_tb(samples, gfn_model, log_reward)
-    elif training_loss == 'tb-avg':
-        loss = bwd_tb_avg(samples, gfn_model, log_reward)
-    elif training_loss == 'mle':
-        loss = bwd_mle(samples, gfn_model, log_reward)
-    else:
-        raise ValueError(f'Invalid training loss for backward: {training_loss}')
-    return loss
-
-
 def get_exploration_std(
     iter,
     exploratory,
@@ -157,16 +108,16 @@ def get_name(args):
     if args.clipping:
         name = f'{name}clipping_lgv_{args.lgv_clip}_gfn_{args.gfn_clip}_'
 
-    if args.training_loss == 'subtb':
-        training_loss = f'subtb_lambda_{args.subtb_lambda}'
+    if args.loss_type == 'subtb':
+        loss_type = f'subtb_lambda_{args.subtb_lambda}'
         if args.partial_energy:
-            training_loss = f'{training_loss}_{args.partial_energy}'
+            loss_type = f'{loss_type}_{args.partial_energy}'
     else:
-        training_loss = args.training_loss
+        loss_type = args.loss_type
 
     ways = args.training_mode
     if args.local_search:
-        local_search = f'local_search_iter_{args.max_iter_ls}_burn_{args.burn_in}_cycle_{args.ls_cycle}_step_{args.ld_step}_beta_{args.beta}_rankw_{args.rank_weight}_prioritized_{args.prioritized}'
+        local_search = f'local_search_iter_{args.max_iter_ls}_burn_{args.burn_in}_cycle_{args.ls_cycle}_step_{args.ld_step}_rankk_{args.rank_k}_prioritization_{args.prioritization}'
         ways = f'{ways}/{local_search}'
 
     if args.pis_architectures:

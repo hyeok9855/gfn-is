@@ -1,65 +1,35 @@
 import torch
-import numpy as np
+from torch.utils.data import Dataset
 
 
-class SampleDataset(torch.utils.data.Dataset):
-    def __init__(self, sample):
-        super(SampleDataset, self).__init__()
-        self.sample_list = sample
-      
-    def __getitem__(self, idx):
-        
-    
-        sample = self.sample_list[idx]
-        return sample
-
-    def update(self, sample):
-        self.sample_list = torch.cat([self.sample_list, sample], dim=0)
-
-    def deque(self, length):
-        self.sample_list = self.sample_list[length:]
-
-    def get_seq(self):
-        return self.sample_list
+class CustomDataset(Dataset):
+    def __init__(self, device: torch.device, dataset_size: int):
+        super().__init__()
+        self.data = torch.tensor([]).to(device)
+        self.dataset_size = dataset_size
 
     def __len__(self):
-        return len(self.sample_list)
-
-    def collate(data_list):
-        return torch.stack(data_list)
-
-class RewardDataset(torch.utils.data.Dataset):
-    def __init__(self, rewards):
-        super(RewardDataset, self).__init__()
-        self.rewards = rewards
-        self.raw_tsrs = self.rewards
+        return self.data.size(0)
 
     def __getitem__(self, idx):
-        return self.rewards[idx]
-        #return  self.score_list[idx]
+        return self.data[idx]
+
+    def add(self, new_batch: torch.Tensor):
+        self.data = torch.cat([self.data, new_batch.detach()], dim=0)
+        self.trim_if_needed()
+
+    def trim_if_needed(self):
+        if self.data.size(0) > self.dataset_size:
+            self.data = self.data[self.data.size(0) - self.dataset_size :]  # FIFO
+
+    def update(self, indices, new_batch: torch.Tensor):
+        self.data[indices] = new_batch.detach()
+
+    def reorder(self, indices):
+        self.data = self.data[indices]
 
 
-    def update(self, rewards):
-        new_rewards = rewards
-
-        self.raw_tsrs = torch.cat([self.rewards, new_rewards], dim=0)
-        self.rewards = self.raw_tsrs
-
-    def deque(self, length):
-        self.raw_tsrs = self.raw_tsrs[length:]
-        self.rewards = self.raw_tsrs
-
-
-    def get_tsrs(self):
-        return self.rewards
-
-    def __len__(self):
-        return self.rewards.size(0)
-
-    def collate(data_list):
-        return torch.stack(data_list)
-
-class ZipDataset(torch.utils.data.Dataset):
+class ZipDataset(Dataset):
     def __init__(self, *datasets):
         self.datasets = datasets
 
@@ -69,87 +39,107 @@ class ZipDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         return [dataset[idx] for dataset in self.datasets]
 
-    def collate(data_list):
-        return [dataset.collate(data_list) for dataset, data_list in zip(self.datasets, zip(*data_list))]
 
-
-def collate(data_list):
-    sample,rewards  = zip(*data_list)
-
-    sample_data = SampleDataset.collate(sample)
-    reward_data = RewardDataset.collate(rewards)
-
-    return sample_data, reward_data
-
-
-class ReplayBuffer():
-    def __init__(self, buffer_size, device, log_reward, batch_size, data_ndim=2, beta=1.0, rank_weight=1e-2, prioritized=None):
+class ReplayBuffer:
+    def __init__(
+        self,
+        buffer_size,
+        device: torch.device,
+        prioritization: str,
+        rank_k: float = 0.01,
+        logr_lb: float | None = None,
+    ):
+        assert prioritization in ["none", "reward", "loss", "delta"]
         self.buffer_size = buffer_size
-        self.prioritized = prioritized
         self.device = device
-        self.data_ndim = data_ndim
-        self.batch_size = batch_size
-        self.reward_dataset = None
-        self.buffer_idx = 0
-        self.buffer_full = False
-        self.log_reward = log_reward
-        self.beta = beta
-        self.rank_weight = rank_weight
-        self.beta = beta
+        self.prioritization = prioritization
+        self.logr_lb = logr_lb
+        self.rank_k = rank_k
 
-    def add(self, samples,log_r):
-        if self.reward_dataset is None:
-            self.reward_dataset = RewardDataset(log_r.detach())
-            self.sample_dataset = SampleDataset(samples.detach())
-            self.sample_dataset.update(samples.detach())
-            self.reward_dataset.update(log_r.detach())
-        else:
-            self.sample_dataset.update(samples.detach())
-            self.reward_dataset.update(log_r.detach())
+        self.x_dataset = CustomDataset(self.device, buffer_size)
+        self.logr_dataset = CustomDataset(self.device, buffer_size)
+        self.delta_dataset = CustomDataset(self.device, buffer_size)  # Note: delta ** 2 = loss
+        self.dataset = ZipDataset(self.x_dataset, self.logr_dataset, self.delta_dataset)
+        self.prioritized_indices: torch.Tensor | None = None
 
-        if self.reward_dataset.__len__() > self.buffer_size:
-            self.reward_dataset.deque(self.reward_dataset.__len__() - self.buffer_size)
-            self.sample_dataset.deque(self.sample_dataset.__len__() - self.buffer_size)
-
-        if self.prioritized == 'rank':
-            self.scores_np = self.reward_dataset.get_tsrs().detach().cpu().view(-1).numpy()
-            ranks = np.argsort(np.argsort(-1 * self.scores_np))
-            weights = 1.0 / (1e-2 * len(self.scores_np) + ranks)
-            self.dataset = ZipDataset(self.sample_dataset,self.reward_dataset)
-            self.sampler = torch.utils.data.WeightedRandomSampler(
-                    weights=weights, num_samples=len(self.scores_np), replacement=True
-                    )
-
-            self.loader = torch.utils.data.DataLoader(
-                self.dataset, 
-                sampler=self.sampler, 
-                batch_size=self.batch_size, 
-                collate_fn=collate,
-                drop_last=True
-                )
-        else:   
-            weights = 1.0
-            self.dataset = ZipDataset(self.sample_dataset,self.reward_dataset)
-            self.sampler = torch.utils.data.WeightedRandomSampler(
-                    weights=weights, num_samples=len(self.scores_np), replacement=True
-                    )
-
-            self.loader = torch.utils.data.DataLoader(
-                self.dataset, 
-                sampler=self.sampler, 
-                batch_size=self.batch_size, 
-                collate_fn=collate,
-                drop_last=True
-            )
-        # check if we have any additional samples before updating the buffer and the scorer!
+    def __len__(self):
+        return len(self.dataset)
 
 
-    def sample(self):
+    def _add_or_update(
+        self,
+        action: str,
+        xs: torch.Tensor,
+        log_rewards: torch.Tensor,
+        deltas: torch.Tensor | None = None,
+        indices: torch.Tensor | None = None,
+    ) -> None:
+        if action == "update":
+            assert indices is not None
 
-        try:
-            sample, reward = next(self.data_iter)
-        except:
-            self.data_iter = iter(self.loader)
-            sample, reward = next(self.data_iter)
-            
-        return sample.detach(), reward.detach()
+        deltas = deltas if deltas is not None else torch.zeros_like(log_rewards, device=log_rewards.device)
+        zipped = zip(
+            [self.x_dataset, self.logr_dataset, self.delta_dataset],
+            [xs, log_rewards, deltas],
+        )
+
+        for _ds, _data in zipped:
+            if _ds is not None:
+                assert _data is not None
+                if action == "add":
+                    _ds.add(_data)
+                elif action == "update":
+                    _ds.update(indices, _data)
+
+        self.reset()
+
+    def add(
+        self,
+        xs: torch.Tensor,
+        log_rewards: torch.Tensor,
+        deltas: torch.Tensor | None = None,
+    ) -> None:
+        # filter out the outliers in the log-rewards for numerical stability
+        if self.logr_lb is not None:
+            mask = log_rewards > self.logr_lb
+            xs = xs[mask]
+            log_rewards = log_rewards[mask]
+            deltas = deltas[mask] if deltas is not None else None
+
+        self._add_or_update("add", xs, log_rewards, deltas)
+
+    def update(
+        self,
+        indices: torch.Tensor,
+        xs: torch.Tensor,
+        log_rewards: torch.Tensor,
+        deltas: torch.Tensor | None = None,
+    ) -> None:
+        self._add_or_update("update", xs, log_rewards, deltas, indices)
+
+    def reset(self) -> None:
+        self.dataset = ZipDataset(self.x_dataset, self.logr_dataset, self.delta_dataset)
+
+    def sample(
+        self, batch_size: int, prioritized=True
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        weights = torch.ones(len(self.dataset), device=self.device)
+        if prioritized and self.prioritization != "none":
+            match self.prioritization:
+                case "reward":
+                    scores = self.logr_dataset.data
+                case "loss":
+                    raise NotImplementedError
+                    scores = self.delta_dataset.data**2
+                case "delta":
+                    scores = self.delta_dataset.data
+                case _:
+                    raise NotImplementedError
+
+            ranks = torch.argsort(torch.argsort(-scores))
+            weights = 1.0 / (self.rank_k * len(scores) + ranks)
+
+        indices = torch.multinomial(weights, batch_size, replacement=False)
+        xs, log_rewards, deltas = self.dataset[indices]
+
+        return xs, log_rewards, deltas, indices
