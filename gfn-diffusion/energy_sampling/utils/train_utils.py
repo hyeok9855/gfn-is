@@ -35,7 +35,7 @@ def train_step(
     resampling: bool = False,
     weighting: bool = False,
     aux_reward: str = "reward",  # reward, loss, delta
-    aux_reward_temp: float = 1.0,
+    temperature: float = 1.0,
 ):
     exploration_std = get_exploration_std(it, exploratory, exploration_factor, exploration_wd)
 
@@ -52,7 +52,7 @@ def train_step(
         resampling=resampling,
         weighting=weighting,
         aux_reward=aux_reward,
-        aux_reward_temp=aux_reward_temp
+        temperature=temperature
     )
     run_backward = partial(
         bwd_train_step,
@@ -106,7 +106,7 @@ def fwd_train_step(
     resampling: bool = False,
     weighting: bool = False,
     aux_reward: str = "reward",  # reward, loss, delta
-    aux_reward_temp: float = 1.0,
+    temperature: float = 1.0,
 ) -> torch.Tensor:
     if loss_type == 'subtb':
         assert subtb_coef_matrix is not None
@@ -126,15 +126,18 @@ def fwd_train_step(
     if resampling or weighting:
         match aux_reward:
             case "reward":
-                weights = (log_r / aux_reward_temp) + log_pbs.sum(-1) - log_pfs.sum(-1)
+                log_weights = log_r + log_pbs.sum(-1) - log_pfs.sum(-1)
             case "loss":
-                weights = (loss.log() / aux_reward_temp) + log_pbs.sum(-1) - log_pfs.sum(-1)
+                log_weights = loss.log() + log_pbs.sum(-1) - log_pfs.sum(-1)
             case "delta":
                 assert delta is not None  # For TB, delta = log_r + log_pbs.sum(-1) - log_pfs.sum(-1) - log_Z
-                weights = ((1e-2 + delta.clamp(min=0)).log() / aux_reward_temp) + log_pbs.sum(-1) - log_pfs.sum(-1)
+                log_weights = (1e-2 + delta.clamp(min=0)).log() + log_pbs.sum(-1) - log_pfs.sum(-1)
             case _:
                 raise ValueError(f"Invalid aux_reward: {aux_reward}")
-        normalized_weights = weights.softmax(dim=0)
+        log_weights = log_weights.detach()
+
+        normalized_weights = (log_weights / temperature).softmax(dim=0)
+
         if weighting:
             return (normalized_weights * loss).sum()
         else:  # resampling

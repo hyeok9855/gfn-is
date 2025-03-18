@@ -143,7 +143,7 @@ def train(args):
             resampling=args.train_resampling,
             weighting=args.train_weighting,
             aux_reward=args.aux_reward,
-            aux_reward_temp=args.aux_reward_temp,
+            temperature=args.temperature,
         )
 
         if i % 100 == 0:
@@ -256,7 +256,7 @@ if __name__ == '__main__':
     # low rank_k give steep priorization in rank-based replay sampling
     parser.add_argument('--rank_k', type=float, default=1e-2)
     # logr_lb for filtering out samples with extremely low reward values
-    parser.add_argument('--logr_lb', type=float, default=-10000)
+    parser.add_argument('--logr_lb', type=float, default=-100)
     # warmup_steps to wait before starting to sample from buffer
     parser.add_argument('--warmup_steps', type=int, default=10)
     ################################################################
@@ -275,7 +275,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_resampling', action='store_true', default=False)
     parser.add_argument('--train_weighting', action='store_true', default=False)
     parser.add_argument('--aux_reward', type=str, default="reward", choices=("reward", "loss", "delta"))
-    parser.add_argument('--aux_reward_temp', type=float, default=1.0)
+    parser.add_argument('--temperature', type=float, default=1.0)
     parser.add_argument('--eval_resampling', action='store_true', default=False)
     parser.add_argument('--eval_weighting', action='store_true', default=False)
     ################################################################
