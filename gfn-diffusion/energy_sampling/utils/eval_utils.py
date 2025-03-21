@@ -321,7 +321,7 @@ def eval_step(
 
     init_state = torch.zeros(batch_size, target_energy.ndim).to(gfn_model.device)
     with torch.no_grad():
-        model_trajs, log_pfs, log_pbs, log_fs = gfn_model.get_trajectory_fwd(
+        model_trajs, log_pfs, log_pbs, log_fs, _ = gfn_model.get_trajectory_fwd(
             init_state, 0.0, target_energy.log_reward, pis=pis
         )
         sample_xs = model_trajs[:, -1]

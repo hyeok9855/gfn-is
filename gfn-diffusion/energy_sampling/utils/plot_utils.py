@@ -10,7 +10,7 @@ import torch
 import wandb
 from einops import rearrange
 
-from energies import BaseEnergy, Funnel, ManyWell, TwentyFiveGaussianMixture
+from energies import BaseEnergy, Funnel, GMM40, ManyWell, TwentyFiveGaussianMixture
 
 
 def get_figure(bounds=(-10.0, 10.0)):
@@ -25,58 +25,6 @@ def get_figure(bounds=(-10.0, 10.0)):
 def fig_to_image(fig):
     fig.canvas.draw()
     return PIL.Image.frombytes("RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb())  # type: ignore
-
-
-# def plot_contours(
-#     log_prob, device, ax=None, bounds=(-10.0, 10.0), grid_width_n_points=200, n_contour_levels=50, clamp_min=-1000.0
-# ):
-#     """Plot contours of a log_prob_func that is defined on 2D"""
-#     if ax is None:
-#         fig, ax = plt.subplots(1)
-#     x_points_dim1 = torch.linspace(bounds[0], bounds[1], grid_width_n_points)
-#     x_points_dim2 = x_points_dim1
-#     x_points = torch.tensor(list(itertools.product(x_points_dim1, x_points_dim2)))
-#     log_p_x = log_prob(x_points.to(device)).detach().cpu()
-#     log_p_x = torch.clamp_min(log_p_x, clamp_min)
-#     log_p_x = log_p_x.reshape((grid_width_n_points, grid_width_n_points))
-#     x_points_dim1 = x_points[:, 0].reshape((grid_width_n_points, grid_width_n_points)).numpy()
-#     x_points_dim2 = x_points[:, 1].reshape((grid_width_n_points, grid_width_n_points)).numpy()
-#     if n_contour_levels:
-#         ax.contour(x_points_dim1, x_points_dim2, log_p_x, levels=n_contour_levels)
-#     else:
-#         ax.contour(x_points_dim1, x_points_dim2, log_p_x)
-
-
-# def plot_samples(samples, ax=None, bounds=(-10.0, 10.0), alpha=0.5):
-#     if ax is None:
-#         fig, ax = plt.subplots(1)
-#     samples = torch.clamp(samples, bounds[0], bounds[1])
-#     samples = samples.cpu().detach()
-#     ax.scatter(samples[:, 0], samples[:, 1], alpha=alpha, marker="o", s=10)
-
-
-# def plot_kde(
-#     samples: torch.Tensor,
-#     weights: torch.Tensor | None = None,
-#     ax=None,
-#     bounds=(-10.0, 10.0),
-# ):
-#     if ax is None:
-#         fig, ax = plt.subplots(1)
-#     samples = samples.cpu().detach()
-
-#     if weights is not None:
-#         assert samples.shape[0] == weights.shape[0]
-
-#     sns.kdeplot(
-#         x=samples[:, 0],
-#         y=samples[:, 1],
-#         weights=weights,
-#         cmap="Blues",
-#         fill=True,
-#         ax=ax,
-#         clip=bounds,
-#     )
 
 
 def viz_2d_slice(
@@ -94,9 +42,7 @@ def viz_2d_slice(
     weights = weights.detach().cpu() if weights is not None else None
 
     if kde:
-        fig_kde, ax_kde = viz_kde2d(
-            x, "kde", weights=weights, lim=lim
-        )
+        fig_kde, ax_kde = viz_kde2d(x, "kde", weights=weights, lim=lim)
     else:
         fig_kde, ax_kde = None, None
 
@@ -177,10 +123,10 @@ def viz_funnel(
 
 
 def viz_gmm(
-    energy: TwentyFiveGaussianMixture,
+    energy: TwentyFiveGaussianMixture | GMM40,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
-    n_contour_levels=10,
+    n_contour_levels=25,
     clamp_min=-100000.0,
 ) -> dict:
     lim = energy.plot_bound
@@ -297,9 +243,6 @@ def plot_step(
     energy: BaseEnergy,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
-    # gt_samples: torch.Tensor | None = None,
-    # plot_batch_size=5000,
-    # device=torch.device("cpu"),
 ):
     if isinstance(energy, ManyWell):
         out_dict = viz_manywell(energy, samples, weights)
@@ -307,33 +250,14 @@ def plot_step(
     elif isinstance(energy, Funnel):
         out_dict = viz_funnel(energy, samples, weights)
 
-    elif isinstance(energy, TwentyFiveGaussianMixture):
+    elif isinstance(energy, (TwentyFiveGaussianMixture, GMM40)):
         out_dict = viz_gmm(energy, samples, weights)
 
-    elif energy.ndim != 2:
-        out_dict = {}
-
     else:
-        raise NotImplementedError
-        # if gt_samples is None:
-        #     gt_samples = energy.sample(plot_batch_size)
+        print(
+            f"Warning: {energy.__class__.__name__} is not supported for visualization."
+            + " Skipping..."
+        )
 
-        # lim = getattr(energy, "_plot_bound", gt_samples.abs().max().item() * 1.1)
-
-        # fig_contour, ax_contour = get_figure(bounds=(-lim, lim))
-        # fig_kde, ax_kde = get_figure(bounds=(-lim, lim))
-        # fig_kde_overlay, ax_kde_overlay = get_figure(bounds=(-lim, lim))
-
-        # plot_contours(energy.log_reward, device=device, ax=ax_contour, bounds=(-lim, lim), n_contour_levels=150)
-        # plot_kde(gt_samples, ax=ax_kde_overlay, bounds=(-lim, lim))
-        # plot_kde(samples, weights=weights, ax=ax_kde, bounds=(-lim, lim))
-        # plot_samples(samples, ax=ax_contour, bounds=(-lim, lim))
-        # plot_samples(samples, ax=ax_kde_overlay, bounds=(-lim, lim))
-
-        # out_dict = {
-        #     "visualization/contour": wandb.Image(fig_to_image(fig_contour)),
-        #     "visualization/kde_overlay": wandb.Image(fig_to_image(fig_kde_overlay)),
-        #     "visualization/kde": wandb.Image(fig_to_image(fig_kde)),
-        # }
 
     return out_dict

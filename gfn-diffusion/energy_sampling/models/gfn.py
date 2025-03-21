@@ -170,6 +170,7 @@ class GFN(nn.Module):
         logpf = torch.zeros((bsz, self.trajectory_length), device=self.device)
         logpb = torch.zeros((bsz, self.trajectory_length), device=self.device)
         logf = torch.zeros((bsz, self.trajectory_length + 1), device=self.device)
+        logpf_exp = torch.zeros((bsz, self.trajectory_length), device=self.device)
         states = torch.zeros((bsz, self.trajectory_length + 1, self.dim), device=self.device)
 
         for i in range(self.trajectory_length):
@@ -204,6 +205,12 @@ class GFN(nn.Module):
             noise = ((s_ - s) - self.dt * pfmean) / (np.sqrt(self.dt) * (pflogvars / 2).exp())
             logpf[:, i] = -0.5 * (noise**2 + logtwopi + np.log(self.dt) + pflogvars).sum(1)
 
+            if exploration_std > 0.0:
+                noise_exp = ((s_ - s) - self.dt * pfmean_sample) / (np.sqrt(self.dt) * (pflogvars_sample / 2).exp())
+                logpf_exp[:, i] = -0.5 * (noise_exp**2 + logtwopi + np.log(self.dt) + pflogvars_sample).sum(1)
+            else:
+                logpf_exp[:, i] = logpf[:, i].detach()
+
             if self.learn_pb:
                 assert self.back_model is not None
                 t = self.t_model((i + 1) * self.dt).repeat(bsz, 1)
@@ -223,7 +230,7 @@ class GFN(nn.Module):
             s = s_
             states[:, i + 1] = s
 
-        return states, logpf, logpb, logf
+        return states, logpf, logpb, logf, logpf_exp
 
     def get_trajectory_bwd(self, s, log_r_fn=None):
         bsz = s.shape[0]

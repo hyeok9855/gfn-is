@@ -5,7 +5,8 @@ from energies.base import BaseEnergy
 
 
 class TwentyFiveGaussianMixture(BaseEnergy):
-    def __init__(self, device: str | torch.device, ndim=2) -> None:
+    def __init__(self, device: str | torch.device) -> None:
+        ndim = 2
         super().__init__(device=device, ndim=ndim, plot_bound=13.0)
 
         self.nmode = 25

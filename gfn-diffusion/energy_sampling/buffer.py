@@ -49,7 +49,7 @@ class ReplayBuffer:
         rank_k: float = 0.01,
         logr_lb: float | None = None,
     ):
-        assert prioritization in ["none", "reward", "loss", "delta"]
+        assert prioritization in ["none", "reward", "loss", "log_iw"]
         self.buffer_size = buffer_size
         self.device = device
         self.prioritization = prioritization
@@ -58,8 +58,8 @@ class ReplayBuffer:
 
         self.x_dataset = CustomDataset(self.device, buffer_size)
         self.logr_dataset = CustomDataset(self.device, buffer_size)
-        self.delta_dataset = CustomDataset(self.device, buffer_size)  # Note: delta ** 2 = loss
-        self.dataset = ZipDataset(self.x_dataset, self.logr_dataset, self.delta_dataset)
+        self.log_iw_dataset = CustomDataset(self.device, buffer_size)  # Note: log_iw ** 2 = loss
+        self.dataset = ZipDataset(self.x_dataset, self.logr_dataset, self.log_iw_dataset)
         self.prioritized_indices: torch.Tensor | None = None
 
     def __len__(self):
@@ -71,16 +71,16 @@ class ReplayBuffer:
         action: str,
         xs: torch.Tensor,
         log_rewards: torch.Tensor,
-        deltas: torch.Tensor | None = None,
+        log_iws: torch.Tensor | None = None,
         indices: torch.Tensor | None = None,
     ) -> None:
         if action == "update":
             assert indices is not None
 
-        deltas = deltas if deltas is not None else torch.zeros_like(log_rewards, device=log_rewards.device)
+        log_iws = log_iws if log_iws is not None else torch.zeros_like(log_rewards, device=log_rewards.device)
         zipped = zip(
-            [self.x_dataset, self.logr_dataset, self.delta_dataset],
-            [xs, log_rewards, deltas],
+            [self.x_dataset, self.logr_dataset, self.log_iw_dataset],
+            [xs, log_rewards, log_iws],
         )
 
         for _ds, _data in zipped:
@@ -97,28 +97,28 @@ class ReplayBuffer:
         self,
         xs: torch.Tensor,
         log_rewards: torch.Tensor,
-        deltas: torch.Tensor | None = None,
+        log_iws: torch.Tensor | None = None,
     ) -> None:
         # filter out the outliers in the log-rewards for numerical stability
         if self.logr_lb is not None:
             mask = log_rewards > self.logr_lb
             xs = xs[mask]
             log_rewards = log_rewards[mask]
-            deltas = deltas[mask] if deltas is not None else None
+            log_iws = log_iws[mask] if log_iws is not None else None
 
-        self._add_or_update("add", xs, log_rewards, deltas)
+        self._add_or_update("add", xs, log_rewards, log_iws)
 
     def update(
         self,
         indices: torch.Tensor,
         xs: torch.Tensor,
         log_rewards: torch.Tensor,
-        deltas: torch.Tensor | None = None,
+        log_iws: torch.Tensor | None = None,
     ) -> None:
-        self._add_or_update("update", xs, log_rewards, deltas, indices)
+        self._add_or_update("update", xs, log_rewards, log_iws, indices)
 
     def reset(self) -> None:
-        self.dataset = ZipDataset(self.x_dataset, self.logr_dataset, self.delta_dataset)
+        self.dataset = ZipDataset(self.x_dataset, self.logr_dataset, self.log_iw_dataset)
 
     def sample(
         self, batch_size: int, prioritized=True
@@ -130,9 +130,9 @@ class ReplayBuffer:
                     scores = self.logr_dataset.data
                 case "loss":
                     raise NotImplementedError
-                    scores = self.delta_dataset.data**2
-                case "delta":
-                    scores = self.delta_dataset.data
+                    scores = self.log_iw_dataset.data**2
+                case "log_iw":
+                    scores = self.log_iw_dataset.data
                 case _:
                     raise NotImplementedError
 
@@ -140,6 +140,6 @@ class ReplayBuffer:
             weights = 1.0 / (self.rank_k * len(scores) + ranks)
 
         indices = torch.multinomial(weights, batch_size, replacement=False)
-        xs, log_rewards, deltas = self.dataset[indices]
+        xs, log_rewards, log_iws = self.dataset[indices]
 
-        return xs, log_rewards, deltas, indices
+        return xs, log_rewards, log_iws, indices

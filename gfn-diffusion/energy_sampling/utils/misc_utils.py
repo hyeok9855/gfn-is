@@ -1,3 +1,4 @@
+import contextlib
 import random
 import math
 
@@ -15,6 +16,23 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     np.random.seed(seed)
+
+
+@contextlib.contextmanager
+def temp_seed(seed):
+    random_state = random.getstate()
+    np_state = np.random.get_state()
+    torch_state = torch.get_rng_state()
+    torch_cuda_states = torch.cuda.get_rng_state_all()
+    set_seed(seed)
+
+    try:
+        yield
+    finally:
+        random.setstate(random_state)
+        np.random.set_state(np_state)
+        torch.set_rng_state(torch_state)
+        torch.cuda.set_rng_state_all(torch_cuda_states)
 
 
 def logmeanexp(x, dim=0):
@@ -92,41 +110,30 @@ def get_exploration_std(
 
 def get_name(args):
     name = ''
-    if args.lp:
-        name = f'lp_'
-        if args.lp_scaling_per_dimension:
-            name = f'lp_scaling_per_dimension_'
-    if args.exploratory and (args.exploration_factor is not None):
+    name += args.loss_type
+    if args.loss_type == "subtb":
+        name += f"-lambda{args.subtb_lambda}"
+    if args.partial_energy:
+        name += "-partialE"
+    name += f"_{args.training_mode}"
+    name += f"_T{args.T}t_scale{args.t_scale}"
+    name += f"_NNhidden{args.hidden_dim}"
+    if args.exploratory:
+        name += f"_expl{args.exploration_factor}"
         if args.exploration_wd:
-            name = f'exploration_wd_{args.exploration_factor}_{name}_'
-        else:
-            name = f'exploration_{args.exploration_factor}_{name}_'
-
-    if args.learn_pb:
-        name = f'{name}learn_pb_scale_range_{args.pb_scale_range}_'
-
-    if args.clipping:
-        name = f'{name}clipping_lgv_{args.lgv_clip}_gfn_{args.gfn_clip}_'
-
-    if args.loss_type == 'subtb':
-        loss_type = f'subtb_lambda_{args.subtb_lambda}'
-        if args.partial_energy:
-            loss_type = f'{loss_type}_{args.partial_energy}'
-    else:
-        loss_type = args.loss_type
-
-    ways = args.training_mode
-    if args.local_search:
-        local_search = f'local_search_iter_{args.max_iter_ls}_burn_{args.burn_in}_cycle_{args.ls_cycle}_step_{args.ld_step}_rankk_{args.rank_k}_prioritization_{args.prioritization}'
-        ways = f'{ways}/{local_search}'
-
-    if args.pis_architectures:
-        results = 'results_pis_architectures'
-    else:
-        results = 'results'
-
-    name = f'{results}/{args.target_energy}/{name}gfn/{ways}/T_{args.T}/tscale_{args.t_scale}/lvr_{args.log_var_range}/'
-
-    name = f'{name}/seed_{args.seed}/'
-
+            name += "wd"
+    if args.train_resampling or args.train_weighting:
+        if args.train_resampling:
+            name += "_resampling"
+        if args.train_weighting:
+            name += "_weighting"
+        name += f"-{args.aux_reward}"
+        if args.temperature != 1.0:
+            name += f"-temp{args.temperature}"
+        if args.mixing_ratio != 0.0:
+            name += f"-mix{args.mixing_ratio}"
+        if args.alternating:
+            name += "-alt"
+    name += f"_sd{args.seed}"
+    name += f"_{args.exp_name}" if args.exp_name else ""
     return name

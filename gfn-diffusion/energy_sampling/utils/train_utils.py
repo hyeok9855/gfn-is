@@ -34,8 +34,10 @@ def train_step(
     device=torch.device('cpu'),
     resampling: bool = False,
     weighting: bool = False,
-    aux_reward: str = "reward",  # reward, loss, delta
+    aux_reward: str = "reward",  # reward, loss, log_iw
     temperature: float = 1.0,
+    mixing_ratio: float = 0.0,
+    alternating: bool = False,
 ):
     exploration_std = get_exploration_std(it, exploratory, exploration_factor, exploration_wd)
 
@@ -49,10 +51,9 @@ def train_step(
         exploration_std=exploration_std,
         buffer=buffer,
         device=device,
-        resampling=resampling,
-        weighting=weighting,
         aux_reward=aux_reward,
-        temperature=temperature
+        temperature=temperature,
+        mixing_ratio=mixing_ratio,
     )
     run_backward = partial(
         bwd_train_step,
@@ -70,7 +71,13 @@ def train_step(
     )
 
     if training_mode == "fwd":  # forward sampling only
-        loss = cast(torch.Tensor, run_forward())
+        loss = cast(
+            torch.Tensor,
+            run_forward(
+                resampling=resampling & ((it % 2 == 1) if alternating else True),
+                weighting=weighting & ((it % 2 == 1) if alternating else True),
+            )
+        )
 
     elif training_mode == "bwd":  # backward sampling only
         assert bwd_from == "energy"  # FIXME: can buffer sampling be used here?
@@ -80,7 +87,10 @@ def train_step(
         # FIXME: is it worth to support different loss_type for fwd and bwd?
         assert bwd_from == "buffer" and buffer is not None  # FIXME: do we need to support bwd from energy?
         if it % 2 == 0 or it < warmup_steps:
-            loss = run_forward()
+            loss = run_forward(
+                resampling=resampling & ((it % 4 == 2) if alternating else True),
+                weighting=weighting & ((it % 4 == 2) if alternating else True),
+            )
         else:
             loss = run_backward()
     else:
@@ -105,14 +115,15 @@ def fwd_train_step(
     device=torch.device('cpu'),
     resampling: bool = False,
     weighting: bool = False,
-    aux_reward: str = "reward",  # reward, loss, delta
+    aux_reward: str = "reward",  # reward, loss, log_iw
     temperature: float = 1.0,
+    mixing_ratio: float = 0.0,
 ) -> torch.Tensor:
     if loss_type == 'subtb':
         assert subtb_coef_matrix is not None
 
     init_state = torch.zeros(batch_size, energy.ndim).to(device)
-    delta, loss, states, log_pfs, log_pbs, log_r = get_gfn_forward_loss(
+    log_iw, loss, states, log_pfs, log_pbs, log_r, log_pfs_exp = get_gfn_forward_loss(
         loss_type,
         init_state,
         gfn_model,
@@ -121,22 +132,25 @@ def fwd_train_step(
         exploration_std=exploration_std,
     )
     if buffer is not None:
-        buffer.add(states[:, -1], log_r, delta)
+        buffer.add(states[:, -1], log_r, log_iw)
 
     if resampling or weighting:
+        log_pfs_exp = log_pfs_exp if exploration_std > 0.0 else log_pfs
         match aux_reward:
-            case "reward":
-                log_weights = log_r + log_pbs.sum(-1) - log_pfs.sum(-1)
+            case "reward":  # r(x)p_B(\tau|x)
+                log_weights = log_r + log_pbs.sum(-1) - log_pfs_exp.sum(-1)
             case "loss":
-                log_weights = loss.log() + log_pbs.sum(-1) - log_pfs.sum(-1)
-            case "delta":
-                assert delta is not None  # For TB, delta = log_r + log_pbs.sum(-1) - log_pfs.sum(-1) - log_Z
-                log_weights = (1e-2 + delta.clamp(min=0)).log() + log_pbs.sum(-1) - log_pfs.sum(-1)
+                log_weights = loss.log() - log_pfs_exp.sum(-1)
+            case "iw":
+                assert log_iw is not None  # For TB, log_iw = log_r + log_pbs.sum(-1) - log_pfs.sum(-1) - log_Z
+                log_weights = log_iw - log_pfs_exp.sum(-1)
             case _:
                 raise ValueError(f"Invalid aux_reward: {aux_reward}")
         log_weights = log_weights.detach()
 
         normalized_weights = (log_weights / temperature).softmax(dim=0)
+        # Mix the weights with uniform distribution
+        normalized_weights = (1 - mixing_ratio) * normalized_weights + mixing_ratio / batch_size
 
         if weighting:
             return (normalized_weights * loss).sum()
@@ -167,18 +181,20 @@ def bwd_train_step(
         assert buffer is not None
         if local_search:
             assert buffer_ls is not None
-            assert buffer_ls.prioritization in ["none", "reward"], "Local search buffer cannot be prioritized by loss or delta"
+            assert buffer_ls.prioritization in ["none", "reward"], (
+                "Local search buffer cannot be prioritized by loss or log_iw"
+            )
             assert ls_args is not None
             if it % ls_args.ls_cycle < 2:
                 samples, log_r, _, _ = buffer.sample(batch_size)
                 local_search_samples, log_r = langevin_dynamics(samples, energy.log_reward, device, ls_args)
                 buffer_ls.add(local_search_samples, log_r)
             samples, log_r, _, _ = buffer_ls.sample(batch_size)
-            delta, loss = get_gfn_backward_loss(loss_type, samples, gfn_model, energy.log_reward)
+            log_iw, loss = get_gfn_backward_loss(loss_type, samples, gfn_model, energy.log_reward)
         else:
             samples, log_r, _, indices = buffer.sample(batch_size)
-            delta, loss = get_gfn_backward_loss(loss_type, samples, gfn_model, energy.log_reward)
-            buffer.update(indices, samples, log_r, delta)
+            log_iw, loss = get_gfn_backward_loss(loss_type, samples, gfn_model, energy.log_reward)
+            buffer.update(indices, samples, log_r, log_iw)
 
     return loss.mean()
 
@@ -190,23 +206,23 @@ def get_gfn_forward_loss(
     log_reward,
     coeff_matrix,
     exploration_std=0.0,
-) -> tuple[torch.Tensor | None, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor | None, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if loss_type == 'tb':
-        delta, states, log_pfs, log_pbs, log_r = fwd_tb(init_state, gfn_model, log_reward, exploration_std)
-        loss = 0.5 * (delta ** 2)
+        log_iw, states, log_pfs, log_pbs, log_r, log_pfs_exp = fwd_tb(init_state, gfn_model, log_reward, exploration_std)
+        loss = 0.5 * (log_iw ** 2)
     elif loss_type == 'tb-avg':
-        delta, states, log_pfs, log_pbs, log_r = fwd_tb_avg(init_state, gfn_model, log_reward, exploration_std)
-        loss = 0.5 * (delta ** 2)
+        log_iw, states, log_pfs, log_pbs, log_r, log_pfs_exp = fwd_tb_avg(init_state, gfn_model, log_reward, exploration_std)
+        loss = 0.5 * (log_iw ** 2)
     elif loss_type == 'db':
-        delta = None
-        loss, states, log_pfs, log_pbs, log_r = db(init_state, gfn_model, log_reward, exploration_std)
+        log_iw = None  # TODO: implement incremental importance weights
+        loss, states, log_pfs, log_pbs, log_r, log_pfs_exp = db(init_state, gfn_model, log_reward, exploration_std)
     elif loss_type == 'subtb':
-        delta = None
-        loss, states, log_pfs, log_pbs, log_r = subtb(init_state, gfn_model, log_reward, coeff_matrix, exploration_std)
+        log_iw = None  # TODO: implement incremental importance weights
+        loss, states, log_pfs, log_pbs, log_r, log_pfs_exp = subtb(init_state, gfn_model, log_reward, coeff_matrix, exploration_std)
     else:
         raise ValueError(f'Invalid training loss for forward: {loss_type}')
 
-    return delta, loss, states, log_pfs, log_pbs, log_r
+    return log_iw, loss, states, log_pfs, log_pbs, log_r, log_pfs_exp
 
 
 def get_gfn_backward_loss(
@@ -216,14 +232,14 @@ def get_gfn_backward_loss(
     log_reward,
 ) -> tuple[torch.Tensor | None, torch.Tensor]:
     if loss_type == 'tb':
-        delta = bwd_tb(samples, gfn_model, log_reward)
-        loss = 0.5 * (delta ** 2)
+        log_iw = bwd_tb(samples, gfn_model, log_reward)
+        loss = 0.5 * (log_iw ** 2)
     elif loss_type == 'tb-avg':
-        delta = bwd_tb_avg(samples, gfn_model, log_reward)
-        loss = 0.5 * (delta ** 2)
+        log_iw = bwd_tb_avg(samples, gfn_model, log_reward)
+        loss = 0.5 * (log_iw ** 2)
     elif loss_type == 'mle':
-        delta = None
+        log_iw = None
         loss = bwd_mle(samples, gfn_model, log_reward)
     else:
         raise ValueError(f'Invalid training loss for backward: {loss_type}')
-    return delta, loss
+    return log_iw, loss
