@@ -110,30 +110,50 @@ def get_exploration_std(
 
 def get_name(args):
     name = ''
+
     name += args.loss_type
     if args.loss_type == "subtb":
         name += f"-lambda{args.subtb_lambda}"
+    if args.lp:
+        name += "-lp"
     if args.partial_energy:
         name += "-partialE"
+
     name += f"_{args.training_mode}"
-    name += f"_T{args.T}t_scale{args.t_scale}"
-    name += f"_NNhidden{args.hidden_dim}"
+    if args.training_mode != "fwd":
+        name += f"-{args.bwd_from}"
+        if args.bwd_from == "buffer":
+            buffer_size_str = f"{args.buffer_size // 1000}K" if args.buffer_size >= 1000 else f"{args.buffer_size}"
+            name += f"-{buffer_size_str}"
+            if args.prioritization != "none":
+                name += f"-{args.prioritization}"
+
+    name += f"_T{args.T}-t_scale{args.t_scale}-NNhidden{args.hidden_dim}"
+
+
+    name += f"-lr{args.lr_policy}-lrflow{args.lr_flow}"
+    if args.use_weight_decay:
+        name += f"-wd{args.weight_decay}"
+
     if args.exploratory:
         name += f"_expl{args.exploration_factor}"
         if args.exploration_wd:
             name += "wd"
+
     if args.train_resampling or args.train_weighting:
         if args.train_resampling:
             name += "_resampling"
         if args.train_weighting:
             name += "_weighting"
         name += f"-{args.aux_reward}"
-        if args.temperature != 1.0:
-            name += f"-temp{args.temperature}"
-        if args.mixing_ratio != 0.0:
-            name += f"-mix{args.mixing_ratio}"
+        if args.target_ess != 0.0:
+            name += f"-tgtess{args.target_ess}"
+            if args.target_ess_anneal:
+                name += "ann"
         if args.alternating:
             name += "-alt"
+
     name += f"_sd{args.seed}"
     name += f"_{args.exp_name}" if args.exp_name else ""
+
     return name

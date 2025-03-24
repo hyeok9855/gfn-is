@@ -35,8 +35,7 @@ def train_step(
     resampling: bool = False,
     weighting: bool = False,
     aux_reward: str = "reward",  # reward, loss, log_iw
-    temperature: float = 1.0,
-    mixing_ratio: float = 0.0,
+    target_ess: float = 1.0,
     alternating: bool = False,
 ):
     exploration_std = get_exploration_std(it, exploratory, exploration_factor, exploration_wd)
@@ -52,8 +51,7 @@ def train_step(
         buffer=buffer,
         device=device,
         aux_reward=aux_reward,
-        temperature=temperature,
-        mixing_ratio=mixing_ratio,
+        target_ess=target_ess,
     )
     run_backward = partial(
         bwd_train_step,
@@ -116,8 +114,7 @@ def fwd_train_step(
     resampling: bool = False,
     weighting: bool = False,
     aux_reward: str = "reward",  # reward, loss, log_iw
-    temperature: float = 1.0,
-    mixing_ratio: float = 0.0,
+    target_ess: float = 0.0,
 ) -> torch.Tensor:
     if loss_type == 'subtb':
         assert subtb_coef_matrix is not None
@@ -135,6 +132,16 @@ def fwd_train_step(
         buffer.add(states[:, -1], log_r, log_iw)
 
     if resampling or weighting:
+        if target_ess != 0.0:
+            if 0.0 <= target_ess <= 1.0:
+                target_ess = target_ess * batch_size
+            else:
+                assert 1.0 < target_ess <= batch_size, f"Invalid target ESS: {target_ess}"
+            assert target_ess > 1.0
+
+        if target_ess == batch_size:  # No need to weighting or resampling
+            return loss.mean()
+
         log_pfs_exp = log_pfs_exp if exploration_std > 0.0 else log_pfs
         match aux_reward:
             case "reward":  # r(x)p_B(\tau|x)
@@ -148,9 +155,11 @@ def fwd_train_step(
                 raise ValueError(f"Invalid aux_reward: {aux_reward}")
         log_weights = log_weights.detach()
 
-        normalized_weights = (log_weights / temperature).softmax(dim=0)
-        # Mix the weights with uniform distribution
-        normalized_weights = (1 - mixing_ratio) * normalized_weights + mixing_ratio / batch_size
+        normalized_weights = log_weights.softmax(dim=0)
+        if target_ess != 0.0:
+            mixing_ratio = solve_mixing_ratio(normalized_weights, target_ess=target_ess)
+            # Mix the weights with uniform distribution
+            normalized_weights = (1 - mixing_ratio) * normalized_weights + mixing_ratio / batch_size
 
         if weighting:
             return (normalized_weights * loss).sum()
@@ -159,6 +168,59 @@ def fwd_train_step(
             return loss[indices].mean()
     else:
         return loss.mean()
+
+
+def solve_mixing_ratio(normalized_weights: torch.Tensor, target_ess: float) -> float:
+    """
+    Find the mixing ratio to achieve the target effective sample size (ESS)
+
+    normalized_weights_mix = (1 - mixing_ratio) * normalized_weights + mixing_ratio / batch_size
+
+    ESS_mix = 1 / (normalized_weights_mix^2).sum()
+            = 1 / (((1 - mixing_ratio) * normalized_weights + mixing_ratio / batch_size)^2).sum()
+
+    Solve the following equation for mixing_ratio:
+    1 / ESS_mix = (((1 - mixing_ratio) * normalized_weights + mixing_ratio / batch_size)^2).sum()
+                = 1 / target_ess
+
+    This is equivalent to the following quadratic equation:
+        A * (mixing_ratio^2) - 2 * B * mixing_ratio + C = 0
+    where
+        A = normalized_weights^2.sum() - 2 * normalized_weights.sum() / N + 1 / N
+        B = normalized_weights^2.sum() - normalized_weights.sum() / N
+        C = normalized_weights^2.sum() - 1 / target_ess
+    """
+    N = len(normalized_weights)
+    nw_sum = 1.0
+    nw_squared_sum = (normalized_weights ** 2).sum().item()
+
+    ess_before = 1 / nw_squared_sum
+    if ess_before >= target_ess:
+        return 0.0
+
+    A = nw_squared_sum - 2 * nw_sum / N + 1 / N
+    B = nw_squared_sum - nw_sum / N
+    C = nw_squared_sum - 1 / target_ess
+
+    min_lhs = C - B ** 2 / A
+    if min_lhs >= 0:
+        raise ValueError(f"Cannot achieve target ESS: {target_ess}")
+        return 1.0
+
+    mixing_ratio_1 = (B + (B ** 2 - A * C) ** 0.5) / A
+    mixing_ratio_2 = (B - (B ** 2 - A * C) ** 0.5) / A
+
+    valid_1 = mixing_ratio_1 >= 0.0 and mixing_ratio_1 <= 1.0
+    valid_2 = mixing_ratio_2 >= 0.0 and mixing_ratio_2 <= 1.0
+
+    if valid_1 and valid_2:
+        raise ValueError(f"Multiple solutions: {mixing_ratio_1}, {mixing_ratio_2}")
+    elif valid_1:
+        return mixing_ratio_1
+    elif valid_2:
+        return mixing_ratio_2
+    else:
+        raise ValueError(f"No valid solution: {mixing_ratio_1}, {mixing_ratio_2}")
 
 
 def bwd_train_step(

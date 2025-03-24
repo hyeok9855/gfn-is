@@ -155,8 +155,7 @@ def train(args):
             resampling=args.train_resampling,
             weighting=args.train_weighting,
             aux_reward=args.aux_reward,
-            temperature=args.temperature,
-            mixing_ratio=args.mixing_ratio,
+            target_ess=args.target_ess,
             alternating=args.alternating,
         )
 
@@ -172,25 +171,26 @@ def train(args):
             )
             metrics.update(results)
 
-            images = plot_step(energy, model_trajs[:, -1])
-            metrics.update(images)
+            if i % args.plot_freq == 0:
+                images = plot_step(energy, model_trajs[:, -1])
+                metrics.update(images)
 
-            if args.eval_resampling:
-                assert model_trajs_r is not None
-                images_resample = plot_step(energy, model_trajs_r[:, -1])
-                images_resample = {
-                    k.replace("visualization/", "visualization_resample/"): v for k, v in images_resample.items()
-                }
-                metrics.update(images_resample)
+                if args.eval_resampling:
+                    assert model_trajs_r is not None
+                    images_resample = plot_step(energy, model_trajs_r[:, -1])
+                    images_resample = {
+                        k.replace("visualization/", "visualization_resample/"): v for k, v in images_resample.items()
+                    }
+                    metrics.update(images_resample)
 
-            if args.eval_weighting:
-                images_weighted = plot_step(energy, model_trajs[:, -1], weights=weights)
-                images_weighted = {
-                    k.replace("visualization/", "visualization_weighted/"): v for k, v in images_weighted.items()
-                }
-                metrics.update(images_weighted)
+                if args.eval_weighting:
+                    images_weighted = plot_step(energy, model_trajs[:, -1], weights=weights)
+                    images_weighted = {
+                        k.replace("visualization/", "visualization_weighted/"): v for k, v in images_weighted.items()
+                    }
+                    metrics.update(images_weighted)
 
-            plt.close('all')
+                plt.close('all')
 
             wandb.log(metrics, step=i)
             if i % 1000 == 0:
@@ -225,7 +225,7 @@ if __name__ == '__main__':
     parser.add_argument('--bwd_from', type=str, default="buffer", choices=('energy', 'buffer'))
     parser.add_argument('--lr_policy', type=float, default=1e-3)
     parser.add_argument('--lr_flow', type=float, default=1e-1)
-    parser.add_argument('--lr_back', type=float, default=1e-3)
+    parser.add_argument('--lr_back', type=float, default=None)
     parser.add_argument('--use_weight_decay', action='store_true', default=False)
     parser.add_argument('--weight_decay', type=float, default=1e-7)
     parser.add_argument('--clip_grad_norm', type=float, default=3.0)
@@ -295,6 +295,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval_freq', type=int, default=100)
     parser.add_argument('--eval_data_size', type=int, default=2000)
     parser.add_argument('--final_eval_data_size', type=int, default=2000)
+    parser.add_argument('--plot_freq', type=int, default=1000)
     parser.add_argument('--plot_data_size', type=int, default=2000)
     ################################################################
 
@@ -303,8 +304,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_resampling', action='store_true', default=False)
     parser.add_argument('--train_weighting', action='store_true', default=False)
     parser.add_argument('--aux_reward', type=str, default="reward", choices=("reward", "loss", "iw"))
-    parser.add_argument('--temperature', type=float, default=1.0)
-    parser.add_argument('--mixing_ratio', type=float, default=0.0)
+    parser.add_argument('--target_ess', type=float, default=0.0)  # 0.0 has no effect
     parser.add_argument('--alternating', action='store_true', default=False)
     parser.add_argument('--eval_resampling', action='store_true', default=False)
     parser.add_argument('--eval_weighting', action='store_true', default=False)
@@ -315,6 +315,9 @@ if __name__ == '__main__':
     set_seed(args.seed)
     if 'SLURM_PROCID' in os.environ:
         args.seed += int(os.environ["SLURM_PROCID"])
+
+    if args.lr_back is None:
+        args.lr_back = args.lr_policy
 
     if args.buffer_size == -1:
         args.buffer_size = 100 * args.batch_size

@@ -73,21 +73,21 @@ def viz_manywell(
     viz_lst = []
     viz_lst.extend(viz_2d_slice(energy, (0, 2), samples, weights=weights, lim=lim))
     viz_lst.extend(viz_2d_slice(energy, (1, 2), samples, weights=weights, lim=lim))
-    viz_lst.extend(viz_2d_slice(energy, (0, 4), samples, weights=weights, lim=lim))
-    viz_lst.extend(viz_2d_slice(energy, (1, 4), samples, weights=weights, lim=lim))
+    viz_lst.extend(viz_2d_slice(energy, (4, 6), samples, weights=weights, lim=lim))
+    viz_lst.extend(viz_2d_slice(energy, (5, 6), samples, weights=weights, lim=lim))
 
     fig_kde_x02, fig_contour_x02, fig_kde_x12, fig_contour_x12 = viz_lst[0:8:2]
-    fig_kde_x04, fig_contour_x04, fig_kde_x14, fig_contour_x14 = viz_lst[8::2]
+    fig_kde_x46, fig_contour_x46, fig_kde_x56, fig_contour_x56 = viz_lst[8::2]
 
     out_dict = {
         "visualization/contourx02": wandb.Image(fig_to_image(fig_contour_x02)),
         "visualization/contourx12": wandb.Image(fig_to_image(fig_contour_x12)),
         "visualization/kdex02": wandb.Image(fig_to_image(fig_kde_x02)),
         "visualization/kdex12": wandb.Image(fig_to_image(fig_kde_x12)),
-        "visualization/contourx04": wandb.Image(fig_to_image(fig_contour_x04)),
-        "visualization/contourx14": wandb.Image(fig_to_image(fig_contour_x14)),
-        "visualization/kdex04": wandb.Image(fig_to_image(fig_kde_x04)),
-        "visualization/kdex14": wandb.Image(fig_to_image(fig_kde_x14)),
+        "visualization/contourx46": wandb.Image(fig_to_image(fig_contour_x46)),
+        "visualization/contourx56": wandb.Image(fig_to_image(fig_contour_x56)),
+        "visualization/kdex46": wandb.Image(fig_to_image(fig_kde_x46)),
+        "visualization/kdex56": wandb.Image(fig_to_image(fig_kde_x56)),
     }
 
     for obj in viz_lst:
@@ -185,7 +185,14 @@ def viz_kde2d(
     return fig, ax
 
 
-def viz_contour_with_ax(ax, log_prob_func, lim=3.0, n_contour_levels=None, clamp_min=-1000.0):
+def viz_contour_with_ax(
+    ax,
+    log_prob_func,
+    lim=3.0,
+    n_contour_levels=None,
+    clamp_min=-1000.0,
+    zorder=1,
+):
     grid_width_n_points = 100
     x_points_dim1 = torch.linspace(-lim, lim, grid_width_n_points)
     x_points_dim2 = x_points_dim1
@@ -195,11 +202,7 @@ def viz_contour_with_ax(ax, log_prob_func, lim=3.0, n_contour_levels=None, clamp
     log_p_x = log_p_x.reshape((grid_width_n_points, grid_width_n_points))
     x_points_dim1 = x_points[:, 0].reshape((grid_width_n_points, grid_width_n_points)).numpy()
     x_points_dim2 = x_points[:, 1].reshape((grid_width_n_points, grid_width_n_points)).numpy()
-    if n_contour_levels:
-        ax.contour(x_points_dim1, x_points_dim2, log_p_x, levels=n_contour_levels)
-    else:
-        ax.contour(x_points_dim1, x_points_dim2, log_p_x)
-
+    ax.contour(x_points_dim1, x_points_dim2, log_p_x, levels=n_contour_levels, zorder=zorder)
 
 def viz_contour_sample2d(
     points: torch.Tensor,
@@ -213,7 +216,12 @@ def viz_contour_sample2d(
     fig, ax = plt.subplots(1, 1, figsize=(7, 7))
 
     viz_contour_with_ax(
-        ax, log_prob_func, lim=lim, n_contour_levels=n_contour_levels, clamp_min=clamp_min
+        ax,
+        log_prob_func,
+        lim=lim,
+        n_contour_levels=n_contour_levels,
+        clamp_min=clamp_min,
+        zorder=2,
     )
 
     samples = torch.clamp(points, -lim, lim)
@@ -234,6 +242,7 @@ def viz_contour_sample2d(
         alpha=alpha,
         marker="o",
         s=weights[: len(samples)] * len(samples) * 5 if weights is not None else 5,
+        zorder=1,
     )
 
     return fig, ax
