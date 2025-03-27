@@ -73,21 +73,21 @@ def viz_manywell(
     viz_lst = []
     viz_lst.extend(viz_2d_slice(energy, (0, 2), samples, weights=weights, lim=lim))
     viz_lst.extend(viz_2d_slice(energy, (1, 2), samples, weights=weights, lim=lim))
-    viz_lst.extend(viz_2d_slice(energy, (4, 6), samples, weights=weights, lim=lim))
-    viz_lst.extend(viz_2d_slice(energy, (5, 6), samples, weights=weights, lim=lim))
+    # viz_lst.extend(viz_2d_slice(energy, (4, 6), samples, weights=weights, lim=lim))
+    # viz_lst.extend(viz_2d_slice(energy, (5, 6), samples, weights=weights, lim=lim))
 
     fig_kde_x02, fig_contour_x02, fig_kde_x12, fig_contour_x12 = viz_lst[0:8:2]
-    fig_kde_x46, fig_contour_x46, fig_kde_x56, fig_contour_x56 = viz_lst[8::2]
+    # fig_kde_x46, fig_contour_x46, fig_kde_x56, fig_contour_x56 = viz_lst[8::2]
 
     out_dict = {
         "visualization/contourx02": wandb.Image(fig_to_image(fig_contour_x02)),
         "visualization/contourx12": wandb.Image(fig_to_image(fig_contour_x12)),
         "visualization/kdex02": wandb.Image(fig_to_image(fig_kde_x02)),
         "visualization/kdex12": wandb.Image(fig_to_image(fig_kde_x12)),
-        "visualization/contourx46": wandb.Image(fig_to_image(fig_contour_x46)),
-        "visualization/contourx56": wandb.Image(fig_to_image(fig_contour_x56)),
-        "visualization/kdex46": wandb.Image(fig_to_image(fig_kde_x46)),
-        "visualization/kdex56": wandb.Image(fig_to_image(fig_kde_x56)),
+        # "visualization/contourx46": wandb.Image(fig_to_image(fig_contour_x46)),
+        # "visualization/contourx56": wandb.Image(fig_to_image(fig_contour_x56)),
+        # "visualization/kdex46": wandb.Image(fig_to_image(fig_kde_x46)),
+        # "visualization/kdex56": wandb.Image(fig_to_image(fig_kde_x56)),
     }
 
     for obj in viz_lst:
@@ -104,11 +104,11 @@ def viz_funnel(
 ) -> dict:
     lim = energy.plot_bound
     viz_lst = []
-    for i in range(1, 5):
+    for i in range(1, 3):
         viz_lst.extend(viz_2d_slice(energy, (0, i), samples, weights=weights, lim=lim))
 
     out_dict = {}
-    for i in range(1, 5):
+    for i in range(1, 3):
         fig_kde, ax_kde, fig_contour, ax_contour = viz_lst[4 * (i - 1) : 4 * i]
         out_dict.update(
             {
@@ -131,7 +131,7 @@ def viz_gmm(
 ) -> dict:
     lim = energy.plot_bound
     viz_lst = []
-    for i in range(0, min(energy.ndim, 8), 2):
+    for i in range(0, min(energy.ndim, 4), 2):
         viz_lst.extend(
             viz_2d_slice(
                 energy, (i, i + 1),
@@ -267,6 +267,5 @@ def plot_step(
             f"Warning: {energy.__class__.__name__} is not supported for visualization."
             + " Skipping..."
         )
-
 
     return out_dict

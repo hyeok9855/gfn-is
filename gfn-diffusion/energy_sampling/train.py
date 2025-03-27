@@ -45,17 +45,17 @@ def train(args):
     device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
     energy = get_energy(args.target_energy, args.ndim, device=device)
 
-    energy_name = f"{args.target_energy}_{args.ndim}d"
+    energy_name = f"{args.target_energy}-{args.ndim}d"
     exp_name = get_name(args)
 
-    parent_dir = os.path.dirname(os.path.abspath(__file__))
-    save_dir = f"{parent_dir}/results/{energy_name}/{exp_name}"
-    os.makedirs(save_dir, exist_ok=True)
+    # parent_dir = os.path.dirname(os.path.abspath(__file__))
+    # save_dir = f"{parent_dir}/results/{energy_name}/{exp_name}"
+    # os.makedirs(save_dir, exist_ok=True)
 
     config = args.__dict__
     config["Experiment"] = "{args.energy}"
     wandb.init(
-        project=f"GFN-Diffusion-{args.target_energy}-{args.ndim}d",
+        project=f"GFN-Diffusion-{energy_name}",
         config=config,
         name=exp_name,
     )
@@ -130,9 +130,9 @@ def train(args):
         buffer_ls = deepcopy(buffer)
         buffer_ls.prioritization = "reward"
 
-    metrics = dict()
     gfn_model.train()
     for i in trange(args.epochs + 1, dynamic_ncols=True):
+        metrics = dict()
         metrics['train/loss'] = train_step(
             energy,
             gfn_model,
@@ -194,8 +194,8 @@ def train(args):
                 plt.close('all')
 
             wandb.log(metrics, step=i)
-            if i % 1000 == 0:
-                torch.save(gfn_model.state_dict(), f'{save_dir}/model.pt')
+            # if i % 1000 == 0:
+            #     torch.save(gfn_model.state_dict(), f'{save_dir}/model.pt')
 
     final_results, _, _, _ = eval_step(
         args.final_eval_data_size,
@@ -209,7 +209,7 @@ def train(args):
     )
     metrics.update(final_results)
     wandb.log(metrics, step=args.epochs)
-    torch.save(gfn_model.state_dict(), f'{save_dir}/model_final.pt')
+    # torch.save(gfn_model.state_dict(), f'{save_dir}/model_final.pt')
 
 
 if __name__ == '__main__':
@@ -338,5 +338,7 @@ if __name__ == '__main__':
 
     if "tb" not in args.loss_type and args.prioritization == "log_iw":
         raise ValueError("Prioritization with importance weight is only supported for tb loss")
+
+    assert args.plot_freq % args.eval_freq == 0
 
     train(args)
