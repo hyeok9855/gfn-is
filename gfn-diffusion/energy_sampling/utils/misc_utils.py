@@ -126,7 +126,7 @@ def get_name(args):
             buffer_size_str = f"{args.buffer_size // 1000}K" if args.buffer_size >= 1000 else f"{args.buffer_size}"
             name += f"-{buffer_size_str}"
             if args.prioritization != "none":
-                name += f"-{args.prioritization}"
+                name += f"-{args.prioritization}-{args.buffer_sampling}"
 
     name += f"_T{args.T}-t_scale{args.t_scale}-NNhidden{args.hidden_dim}"
 

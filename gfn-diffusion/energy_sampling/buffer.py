@@ -1,3 +1,4 @@
+from typing import Literal
 import torch
 from torch.utils.data import Dataset
 
@@ -45,7 +46,8 @@ class ReplayBuffer:
         self,
         buffer_size,
         device: torch.device,
-        prioritization: str,
+        prioritization: Literal["none", "reward", "loss", "log_iw"] = "none",
+        sampling_strategy: Literal["proportional", "rank"] = "proportional",
         rank_k: float = 0.01,
         logr_lb: float | None = None,
     ):
@@ -53,18 +55,17 @@ class ReplayBuffer:
         self.buffer_size = buffer_size
         self.device = device
         self.prioritization = prioritization
-        self.logr_lb = logr_lb
+        self.sampling_strategy = sampling_strategy
         self.rank_k = rank_k
+        self.logr_lb = logr_lb
 
         self.x_dataset = CustomDataset(self.device, buffer_size)
         self.logr_dataset = CustomDataset(self.device, buffer_size)
         self.log_iw_dataset = CustomDataset(self.device, buffer_size)  # Note: log_iw ** 2 = loss
         self.dataset = ZipDataset(self.x_dataset, self.logr_dataset, self.log_iw_dataset)
-        self.prioritized_indices: torch.Tensor | None = None
 
     def __len__(self):
         return len(self.dataset)
-
 
     def _add_or_update(
         self,
@@ -129,15 +130,22 @@ class ReplayBuffer:
                 case "reward":
                     scores = self.logr_dataset.data
                 case "loss":
-                    raise NotImplementedError
                     scores = self.log_iw_dataset.data**2
                 case "log_iw":
                     scores = self.log_iw_dataset.data
                 case _:
                     raise NotImplementedError
 
-            ranks = torch.argsort(torch.argsort(-scores))
-            weights = 1.0 / (self.rank_k * len(scores) + ranks)
+            if self.sampling_strategy == "proportional":
+                if self.prioritization == "loss":
+                    weights = scores
+                else:
+                    weights = torch.exp(scores - torch.max(scores))
+            elif self.sampling_strategy == "rank":
+                ranks = torch.argsort(torch.argsort(-scores))
+                weights = 1.0 / (self.rank_k * len(scores) + ranks)
+            else:
+                raise NotImplementedError
 
         indices = torch.multinomial(weights, batch_size, replacement=False)
         xs, log_rewards, log_iws = self.dataset[indices]

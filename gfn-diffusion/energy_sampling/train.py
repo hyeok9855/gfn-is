@@ -121,6 +121,7 @@ def train(args):
         args.buffer_size,
         device,
         prioritization=args.prioritization,
+        sampling_strategy=args.buffer_sampling,
         rank_k=args.rank_k,
         logr_lb=args.logr_lb,
     )
@@ -273,8 +274,12 @@ if __name__ == '__main__':
     ################################################################
     ### For replay buffer
     parser.add_argument('--buffer_size', type=int, default=-1)  # 100 * batch_size by default
-    # none -> no prioritization, rank -> rank-based prioritization; TODO: support quantile-based prioritization
+    # prioritization
     parser.add_argument('--prioritization', type=str, default="none", choices=('none', 'reward', 'loss', 'log_iw'))
+    # buffer sampling strategy  # TODO: support percentile-based sampling
+    parser.add_argument(
+        '--buffer_sampling', type=str, default="proportional", choices=('proportional', 'rank')
+    )
     # low rank_k give steep priorization in rank-based replay sampling
     parser.add_argument('--rank_k', type=float, default=1e-2)
     # logr_lb for filtering out samples with extremely low reward values for numerical stability
@@ -331,7 +336,7 @@ if __name__ == '__main__':
             and args.bwd_from == "buffer"
         ), "We only support local search for backward sampling with buffer"
 
-    if "tb" not in args.loss_type and args.prioritization == "iw":
+    if "tb" not in args.loss_type and args.prioritization == "log_iw":
         raise ValueError("Prioritization with importance weight is only supported for tb loss")
 
     train(args)
