@@ -161,7 +161,13 @@ class GFN(nn.Module):
             s_new = torch.clip(s_new, -self.gfn_clip, self.gfn_clip)
         return s_new, flow.squeeze(-1)
 
-    def get_trajectory_fwd(self, s, exploration_std=0.0, log_r_fn: Callable | None = None, pis=False):
+    def get_trajectory_fwd(
+        self,
+        s: torch.Tensor,
+        exploration_std=0.0,
+        log_r_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        pis=False
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         if self.partial_energy:
             assert log_r_fn is not None
 
@@ -232,7 +238,11 @@ class GFN(nn.Module):
 
         return states, logpf, logpb, logf, logpf_exp
 
-    def get_trajectory_bwd(self, s, log_r_fn=None):
+    def get_trajectory_bwd(
+        self,
+        s: torch.Tensor,
+        log_r_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         bsz = s.shape[0]
 
         logpf = torch.zeros((bsz, self.trajectory_length), device=self.device)
