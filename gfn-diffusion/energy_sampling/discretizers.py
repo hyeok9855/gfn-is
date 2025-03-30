@@ -15,18 +15,18 @@ def get_discretizer(discretizer: str, T: int, *args, **kwargs) -> Callable[[int]
         raise ValueError(f"Unknown discretizer: {discretizer}")
 
 
-def uniform_discretizer(batch_size: int, T: int) -> torch.Tensor:
+def uniform_discretizer(batch_size: int, T: int, *args, **kwargs) -> torch.Tensor:
     ts = torch.linspace(0, 1, T + 1).repeat(batch_size, 1)
     return ts
 
 
-def random_discretizer(batch_size: int, T: int, max_ratio=10.0) -> torch.Tensor:
+def random_discretizer(batch_size: int, T: int, max_ratio=10.0, *args, **kwargs) -> torch.Tensor:
     ts = (torch.rand(batch_size, T) * (max_ratio - 1) + 1).cumsum(1)
     ts = torch.cat([torch.zeros(batch_size, 1), ts], 1) / ts[:, -1].unsqueeze(1)
     return ts
 
 
-def shifted_equidistant_discretizer(batch_size: int, T: int, eps=1e-4) -> torch.Tensor:
+def shifted_equidistant_discretizer(batch_size: int, T: int, eps=1e-4, *args, **kwargs) -> torch.Tensor:
     bound = 1 / T - eps
     noise = torch.empty(batch_size, 1).uniform_(- bound, bound)
     steps = (torch.arange(1, T) / T).unsqueeze(0) + noise

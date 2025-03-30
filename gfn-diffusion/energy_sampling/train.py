@@ -324,7 +324,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval_freq', type=int, default=100)
     parser.add_argument('--eval_data_size', type=int, default=2000)
     parser.add_argument('--final_eval_data_size', type=int, default=2000)
-    parser.add_argument('--plot_freq', type=int, default=1000)
+    parser.add_argument('--plot_freq', type=int, default=2500)
     parser.add_argument('--plot_data_size', type=int, default=2000)
     ################################################################
 
