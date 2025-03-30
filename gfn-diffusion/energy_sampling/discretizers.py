@@ -9,7 +9,7 @@ def get_discretizer(discretizer: str, T: int, *args, **kwargs) -> Callable[[int]
         return partial(uniform_discretizer, T=T)
     elif discretizer == "random":
         return partial(random_discretizer, T=T, *args, **kwargs)
-    elif discretizer == "shifted_equidistant":
+    elif discretizer == "equidistant":
         return partial(shifted_equidistant_discretizer, T=T, *args, **kwargs)
     else:
         raise ValueError(f"Unknown discretizer: {discretizer}")
