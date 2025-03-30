@@ -1,6 +1,6 @@
 from argparse import Namespace
 from functools import partial
-from typing import cast
+from typing import Callable
 
 import torch
 
@@ -21,7 +21,7 @@ def train_step(
     loss_type: str,
     training_mode: str,
     bwd_from: str,
-    clip_grad_norm: float = 1.0,
+    discretizer: Callable[[int], torch.Tensor],
     exploratory: bool = False,
     exploration_factor: float = 0.0,
     exploration_wd: bool = False,
@@ -31,6 +31,7 @@ def train_step(
     local_search: bool = False,
     ls_args: Namespace | None = None,
     subtb_coef_matrix: torch.Tensor | None = None,
+    clip_grad_norm: float = 1.0,
     device=torch.device('cpu'),
     resampling: bool = False,
     weighting: bool = False,
@@ -46,6 +47,7 @@ def train_step(
         gfn_model=gfn_model,
         batch_size=batch_size,
         loss_type=loss_type,
+        discretizer=discretizer,
         subtb_coef_matrix=subtb_coef_matrix,
         exploration_std=exploration_std,
         buffer=buffer,
@@ -60,6 +62,7 @@ def train_step(
         batch_size=batch_size,
         loss_type=loss_type,
         bwd_from=bwd_from,
+        discretizer=discretizer,
         subtb_coef_matrix=subtb_coef_matrix,
         local_search=local_search,
         ls_args=ls_args,
@@ -70,12 +73,9 @@ def train_step(
     )
 
     if training_mode == "fwd":  # forward sampling only
-        loss = cast(
-            torch.Tensor,
-            run_forward(
-                resampling=resampling & ((it % 2 == 1) if alternating else True),
-                weighting=weighting & ((it % 2 == 1) if alternating else True),
-            )
+        loss = run_forward(
+            resampling=resampling & ((it % 2 == 1) if alternating else True),
+            weighting=weighting & ((it % 2 == 1) if alternating else True),
         )
 
     elif training_mode == "bwd":  # backward sampling only
@@ -108,6 +108,7 @@ def fwd_train_step(
     gfn_model: GFN,
     batch_size: int,
     loss_type: str,
+    discretizer: Callable[[int], torch.Tensor],
     subtb_coef_matrix: torch.Tensor | None,
     exploration_std=0.0,
     buffer: ReplayBuffer | None = None,
@@ -121,9 +122,10 @@ def fwd_train_step(
         assert subtb_coef_matrix is not None
 
     init_states = torch.zeros(batch_size, energy.ndim).to(device)
+    ts = discretizer(batch_size).to(device)
 
     states, log_pfs, log_pbs, log_fs, log_pfs_exp = gfn_model.get_trajectory_fwd(
-        init_states, exploration_std, energy.log_reward
+        init_states, ts, exploration_std, energy.log_reward
     )
     with torch.no_grad():
         log_fs[:, -1] = energy.log_reward(states[:, -1])
@@ -185,6 +187,7 @@ def bwd_train_step(
     batch_size: int,
     loss_type: str,
     bwd_from: str,
+    discretizer: Callable[[int], torch.Tensor],
     subtb_coef_matrix: torch.Tensor | None,
     local_search: bool = False,
     ls_args: Namespace | None = None,
@@ -195,6 +198,7 @@ def bwd_train_step(
 ) -> torch.Tensor:
     if bwd_from == 'energy':
         samples = energy.sample(batch_size).to(device)
+        raise NotImplementedError("Training from energy is not used for this project.")
 
     elif bwd_from == 'buffer':
         assert buffer is not None
@@ -212,8 +216,9 @@ def bwd_train_step(
         else:
             samples, log_r, _, indices = buffer.sample(batch_size)
 
+        ts = discretizer(batch_size).to(device)
         _, log_pfs, log_pbs, log_fs = gfn_model.get_trajectory_bwd(
-            samples, energy.log_reward
+            samples, ts, energy.log_reward
         )
 
         log_fs[:, -1] = log_r

@@ -1,6 +1,6 @@
 import math
 from functools import partial
-from typing import Optional, cast
+from typing import Callable, Optional, cast
 
 import numpy as np
 import ot as pot
@@ -312,6 +312,7 @@ def eval_step(
     gt_xs: torch.Tensor | None,
     gfn_model: GFN,
     target_energy: BaseEnergy,
+    discretizer: Callable[[int], torch.Tensor],
     pis: bool = False,
     final_eval: bool = False,
     resampling: bool = False,
@@ -320,15 +321,19 @@ def eval_step(
     metrics = {}
 
     init_state = torch.zeros(batch_size, target_energy.ndim).to(gfn_model.device)
+    ts = discretizer(batch_size).to(gfn_model.device)
+
     with torch.no_grad():
         model_trajs, log_pfs, log_pbs, log_fs, _ = gfn_model.get_trajectory_fwd(
-            init_state, 0.0, target_energy.log_reward, pis=pis
+            init_state, ts, 0.0, target_energy.log_reward, pis=pis
         )
         sample_xs = model_trajs[:, -1]
         log_rewards = target_energy.log_reward(sample_xs)
 
         if gt_xs is not None:
-            _, gt_log_pfs, gt_log_pbs, _ = gfn_model.get_trajectory_bwd(gt_xs, target_energy.log_reward)
+            _, gt_log_pfs, gt_log_pbs, _ = gfn_model.get_trajectory_bwd(
+                gt_xs, ts, target_energy.log_reward
+            )
             gt_log_rewards = target_energy.log_reward(gt_xs)
         else:
             gt_log_pfs = gt_log_pbs = gt_log_rewards = None

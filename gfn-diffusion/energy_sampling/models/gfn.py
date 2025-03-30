@@ -32,7 +32,6 @@ class GFN(nn.Module):
         t_scale: float = 1.0,
         lp: bool = False,
         learned_variance: bool = True,
-        trajectory_length: int = 100,
         partial_energy: bool = False,
         clipping: bool = False,
         lgv_clip: float = 1e2,
@@ -53,7 +52,6 @@ class GFN(nn.Module):
         self.t_emb_dim = t_emb_dim
         self.s_emb_dim = s_emb_dim
 
-        self.trajectory_length = trajectory_length
         self.lp = lp
         self.learned_variance = learned_variance
         self.partial_energy = partial_energy
@@ -73,7 +71,6 @@ class GFN(nn.Module):
         self.joint_layers = joint_layers
 
         self.pf_std_per_traj = np.sqrt(self.t_scale)
-        self.dt = 1.0 / trajectory_length
         self.log_var_range = log_var_range
         self.device = device
 
@@ -118,7 +115,7 @@ class GFN(nn.Module):
             if self.lp:
                 self.lp_scaling_model = LangevinScalingModel(s_emb_dim, t_emb_dim, hidden_dim, lv_out_dim, zero_init)
 
-    def split_params(self, tensor):
+    def split_params(self, tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if not self.learned_variance:
             mean = tensor
             logvar = torch.zeros_like(mean)
@@ -137,10 +134,8 @@ class GFN(nn.Module):
                 if self.clipping:
                     grad_log_r = torch.clip(grad_log_r, -self.lgv_clip, self.lgv_clip)
 
-        bsz = s.shape[0]
-
         s_emb = self.s_model(s)
-        t_emb = self.t_model(t).repeat(bsz, 1)
+        t_emb = self.t_model(t)
         s_new = self.joint_model(s_emb, t_emb)
 
         flow = (
@@ -164,30 +159,33 @@ class GFN(nn.Module):
     def get_trajectory_fwd(
         self,
         s: torch.Tensor,
+        ts: torch.Tensor,
         exploration_std=0.0,
         log_r_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
         pis=False
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        if self.partial_energy:
-            assert log_r_fn is not None
-
         bsz = s.shape[0]
+        T = ts.shape[1] - 1
 
-        logpf = torch.zeros((bsz, self.trajectory_length), device=self.device)
-        logpb = torch.zeros((bsz, self.trajectory_length), device=self.device)
-        logf = torch.zeros((bsz, self.trajectory_length + 1), device=self.device)
-        logpf_exp = torch.zeros((bsz, self.trajectory_length), device=self.device)
-        states = torch.zeros((bsz, self.trajectory_length + 1, self.dim), device=self.device)
+        logpf = torch.zeros((bsz, T), device=self.device)
+        logpb = torch.zeros((bsz, T), device=self.device)
+        logf = torch.zeros((bsz, T + 1), device=self.device)
+        logpf_exp = torch.zeros((bsz, T), device=self.device)
+        states = torch.zeros((bsz, T + 1, self.dim), device=self.device)
 
-        for i in range(self.trajectory_length):
-            pfs, flow = self.predict_next_state(s, i * self.dt, log_r_fn)
+        for i in range(T):
+            dts = (ts[:, i + 1] - ts[:, i]).unsqueeze(1)
+
+            pfs, flow = self.predict_next_state(s, ts[:, i], log_r_fn)
             pfmean, pflogvars = self.split_params(pfs)
 
             logf[:, i] = flow
             if self.partial_energy:
-                ref_log_var = np.log(self.t_scale * max(1, i) * self.dt)
-                log_p_ref = -0.5 * (logtwopi + ref_log_var + np.exp(-ref_log_var) * (s**2)).sum(1)
-                logf[:, i] += (1 - i * self.dt) * log_p_ref + i * self.dt * log_r_fn(s)  # type: ignore
+                assert log_r_fn is not None
+                ref_log_var = (self.t_scale * ts[:, max(1, i)]).log()
+                import pdb; pdb.set_trace()  # TODO: Check if this is correct
+                log_p_ref = -0.5 * (logtwopi + ref_log_var + (-ref_log_var).exp() * (s**2)).sum(1)
+                logf[:, i] += (1 - ts[:, i]) * log_p_ref + ts[:, i] * log_r_fn(s)
 
             # PIS requires gradients w.r.t. the parameters
             if pis:
@@ -199,27 +197,27 @@ class GFN(nn.Module):
                 pflogvars_sample = pflogvars.detach()
                 # Add exploration noise
                 if exploration_std > 0.0:
-                    add_log_var = torch.full_like(pflogvars_sample, np.log(exploration_std / np.sqrt(self.dt)) * 2)
+                    add_log_var = torch.ones_like(pflogvars_sample) * (exploration_std / dts.sqrt()).log() * 2
                     pflogvars_sample = torch.logaddexp(pflogvars_sample, add_log_var)
 
             s_ = (
                 s
-                + self.dt * pfmean_sample
-                + np.sqrt(self.dt) * (pflogvars_sample / 2).exp() * torch.randn_like(s, device=self.device)
+                + dts * pfmean_sample
+                + dts.sqrt() * (pflogvars_sample / 2).exp() * torch.randn_like(s, device=self.device)
             )
 
-            noise = ((s_ - s) - self.dt * pfmean) / (np.sqrt(self.dt) * (pflogvars / 2).exp())
-            logpf[:, i] = -0.5 * (noise**2 + logtwopi + np.log(self.dt) + pflogvars).sum(1)
+            noise = ((s_ - s) - dts * pfmean) / (dts.sqrt() * (pflogvars / 2).exp())
+            logpf[:, i] = -0.5 * (noise**2 + logtwopi + dts.log() + pflogvars).sum(1)
 
             if exploration_std > 0.0:
-                noise_exp = ((s_ - s) - self.dt * pfmean_sample) / (np.sqrt(self.dt) * (pflogvars_sample / 2).exp())
-                logpf_exp[:, i] = -0.5 * (noise_exp**2 + logtwopi + np.log(self.dt) + pflogvars_sample).sum(1)
+                noise_exp = ((s_ - s) - dts * pfmean_sample) / (dts.sqrt() * (pflogvars_sample / 2).exp())
+                logpf_exp[:, i] = -0.5 * (noise_exp**2 + logtwopi + dts.log() + pflogvars_sample).sum(1)
             else:
                 logpf_exp[:, i] = logpf[:, i].detach()
 
             if self.learn_pb:
                 assert self.back_model is not None
-                t = self.t_model((i + 1) * self.dt).repeat(bsz, 1)
+                t = self.t_model(ts[:, i + 1])
                 pbs = self.back_model(self.s_model(s_), t)
                 dmean, dvar = torch.chunk(pbs, 2, dim=-1)
                 back_mean_correction = 1 + dmean.tanh() * self.pb_scale_range
@@ -228,8 +226,8 @@ class GFN(nn.Module):
                 back_mean_correction, back_var_correction = torch.ones_like(s_), torch.ones_like(s_)
 
             if i > 0:
-                back_mean = s_ - self.dt * s_ / ((i + 1) * self.dt) * back_mean_correction
-                back_var = (self.pf_std_per_traj**2) * self.dt * i / (i + 1) * back_var_correction
+                back_mean = s_ - s_ * dts / (ts[:, i + 1]).unsqueeze(1) * back_mean_correction
+                back_var = (self.pf_std_per_traj**2) * dts * (ts[:, i] / ts[:, i + 1]).unsqueeze(1) * back_var_correction
                 noise_backward = (s - back_mean) / back_var.sqrt()
                 logpb[:, i] = -0.5 * (noise_backward**2 + logtwopi + back_var.log()).sum(1)
 
@@ -241,21 +239,25 @@ class GFN(nn.Module):
     def get_trajectory_bwd(
         self,
         s: torch.Tensor,
+        ts: torch.Tensor,
         log_r_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         bsz = s.shape[0]
+        T = ts.shape[1] - 1
 
-        logpf = torch.zeros((bsz, self.trajectory_length), device=self.device)
-        logpb = torch.zeros((bsz, self.trajectory_length), device=self.device)
-        logf = torch.zeros((bsz, self.trajectory_length + 1), device=self.device)
-        states = torch.zeros((bsz, self.trajectory_length + 1, self.dim), device=self.device)
+        logpf = torch.zeros((bsz, T), device=self.device)
+        logpb = torch.zeros((bsz, T), device=self.device)
+        logf = torch.zeros((bsz, T + 1), device=self.device)
+        states = torch.zeros((bsz, T + 1, self.dim), device=self.device)
         states[:, -1] = s
 
-        for i in range(self.trajectory_length):
-            if i < self.trajectory_length - 1:
+        for i in range(T):
+            dts = (ts[:, T - i] - ts[:, T - i - 1]).unsqueeze(1)
+
+            if i < T - 1:
                 if self.learn_pb:
                     assert self.back_model is not None
-                    t = self.t_model(1.0 - i * self.dt).repeat(bsz, 1)
+                    t = self.t_model(ts[:, T - i])
                     pbs = self.back_model(self.s_model(s), t)
                     dmean, dvar = torch.chunk(pbs, 2, dim=-1)
                     back_mean_correction = 1 + dmean.tanh() * self.pb_scale_range
@@ -263,38 +265,34 @@ class GFN(nn.Module):
                 else:
                     back_mean_correction, back_var_correction = torch.ones_like(s), torch.ones_like(s)
 
-                mean = s - self.dt * s / (1.0 - i * self.dt) * back_mean_correction
+                mean = s - s * dts / ts[:, T - i].unsqueeze(1) * back_mean_correction
                 var = (
-                    ((self.pf_std_per_traj**2) * self.dt * (1.0 - (i + 1) * self.dt))
-                    / (1 - i * self.dt)
+                    (self.pf_std_per_traj**2)
+                    * dts * (ts[:, T - i - 1] / ts[:, T - i]).unsqueeze(1)
                     * back_var_correction
                 )
 
                 s_ = mean.detach() + var.sqrt().detach() * torch.randn_like(s, device=self.device)
                 noise_backward = (s_ - mean) / var.sqrt()
-                logpb[:, self.trajectory_length - i - 1] = -0.5 * (noise_backward**2 + logtwopi + var.log()).sum(1)
+                logpb[:, T - i - 1] = -0.5 * (noise_backward**2 + logtwopi + var.log()).sum(1)
             else:
                 s_ = torch.zeros_like(s)
 
-            pfs, flow = self.predict_next_state(s_, (1.0 - (i + 1) * self.dt), log_r_fn)
+            pfs, flow = self.predict_next_state(s_, ts[:, T - i - 1], log_r_fn)
             pfmean, pflogvars = self.split_params(pfs)
 
-            logf[:, self.trajectory_length - i - 1] = flow
+            logf[:, T - i - 1] = flow
             if self.partial_energy:
                 assert log_r_fn is not None
-                ref_log_var = np.log(self.t_scale * max(1, self.trajectory_length - i - 1) * self.dt)
-                log_p_ref = -0.5 * (logtwopi + ref_log_var + np.exp(-ref_log_var) * (s**2)).sum(1)
-                logf[:, self.trajectory_length - i - 1] += (i + 1) * self.dt * log_p_ref + (
-                    self.trajectory_length - i - 1
-                ) * self.dt * log_r_fn(s)
+                ref_log_var = (self.t_scale * ts[:, max(1, T - i - 1)]).log()
+                log_p_ref = -0.5 * (logtwopi + ref_log_var + (-ref_log_var).exp() * (s**2)).sum(1)
+                logf[:, T - i - 1] += ts[:, T - i - 1] * log_p_ref + ts[:, i + 1] * log_r_fn(s)
 
-            noise = ((s - s_) - self.dt * pfmean) / (np.sqrt(self.dt) * (pflogvars / 2).exp())
-            logpf[:, self.trajectory_length - i - 1] = -0.5 * (
-                noise**2 + logtwopi + np.log(self.dt) + pflogvars
-            ).sum(1)
+            noise = ((s - s_) - dts * pfmean) / (dts.sqrt() * (pflogvars / 2).exp())
+            logpf[:, T - i - 1] = -0.5 * (noise**2 + logtwopi + dts.log() + pflogvars).sum(1)
 
             s = s_
-            states[:, self.trajectory_length - i - 1] = s
+            states[:, T - i - 1] = s
 
         return states, logpf, logpb, logf
 

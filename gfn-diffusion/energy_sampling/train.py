@@ -8,6 +8,7 @@ import wandb
 from tqdm import trange
 
 from buffer import ReplayBuffer
+from discretizers import get_discretizer
 from energies import BaseEnergy, Funnel, ManyWell, GMM40, TwentyFiveGaussianMixture
 from models import GFN
 from utils.eval_utils import eval_step
@@ -90,7 +91,6 @@ def train(args):
         t_scale=args.t_scale,
         lp=args.lp,
         learned_variance=args.learned_variance,
-        trajectory_length=args.T,
         partial_energy=args.partial_energy,
         clipping=args.clipping,
         lgv_clip=args.lgv_clip,
@@ -130,6 +130,17 @@ def train(args):
         buffer_ls = deepcopy(buffer)
         buffer_ls.prioritization = "reward"
 
+    train_discretizer = get_discretizer(
+        discretizer=args.discretizer, T=args.T, max_ratio=args.discretizer_max_ratio
+    )
+    eval_discretizer = get_discretizer(
+        discretizer="uniform", T=args.eval_T
+    )
+
+    ######################
+    # Main training loop #
+    ######################
+
     gfn_model.train()
     for i in trange(args.epochs + 1, dynamic_ncols=True):
         metrics = dict()
@@ -142,7 +153,7 @@ def train(args):
             loss_type=args.loss_type,
             training_mode=args.training_mode,
             bwd_from=args.bwd_from,
-            clip_grad_norm=args.clip_grad_norm,
+            discretizer=train_discretizer,
             exploratory=args.exploratory,
             exploration_factor=args.exploration_factor,
             exploration_wd=args.exploration_wd,
@@ -152,6 +163,7 @@ def train(args):
             local_search=args.local_search,
             ls_args=ls_args,
             subtb_coef_matrix=subtb_coef_matrix,
+            clip_grad_norm=args.clip_grad_norm,
             device=device,
             resampling=args.train_resampling,
             weighting=args.train_weighting,
@@ -166,6 +178,7 @@ def train(args):
                 gt_xs,
                 gfn_model,
                 energy,
+                discretizer=eval_discretizer,
                 pis=args.loss_type=="pis",
                 resampling=args.eval_resampling,
                 weighting=args.eval_weighting,
@@ -202,6 +215,7 @@ def train(args):
         gt_xs,
         gfn_model,
         energy,
+        discretizer=eval_discretizer,
         pis=args.loss_type=="pis",
         final_eval=True,
         resampling=args.eval_resampling,
@@ -239,7 +253,6 @@ if __name__ == '__main__':
     # parser.add_argument('--harmonics_dim', type=int, default=256)
     parser.add_argument('--lgv_layers', type=int, default=3)
     parser.add_argument('--joint_layers', type=int, default=2)
-    parser.add_argument('--T', type=int, default=100)
     parser.add_argument('--t_scale', type=float, default=1.)
     parser.add_argument('--log_var_range', type=float, default=4.)
     parser.add_argument('--lp', action='store_true', default=False)
@@ -254,6 +267,17 @@ if __name__ == '__main__':
     parser.add_argument('--gfn_clip', type=float, default=1e4)
     parser.add_argument('--no_zero_init', action='store_false', dest='zero_init')
     parser.add_argument('--no_pis_architectures', action='store_false', dest='pis_architectures')
+
+    ################################################################
+    ### For discretizer
+    parser.add_argument('--T', type=int, default=100)
+    # evaluation T
+    parser.add_argument('--eval_T', type=int, default=100)
+    # discretization scheme for training
+    parser.add_argument('--discretizer', type=str, default='uniform', choices=('uniform', 'random', 'equidistant'))
+    # maximum ratio between the longest and the shortest step size (only for 'random' discretizer)
+    parser.add_argument('--discretizer_max_ratio', type=float, default=10.0)
+    ################################################################
 
     ################################################################
     ### For local search
@@ -308,7 +332,7 @@ if __name__ == '__main__':
     ### Importance sampling related
     parser.add_argument('--train_resampling', action='store_true', default=False)
     parser.add_argument('--train_weighting', action='store_true', default=False)
-    parser.add_argument('--aux_reward', type=str, default="reward", choices=("reward", "loss", "iw"))
+    parser.add_argument('--aux_reward', type=str, default='reward', choices=('reward', 'loss', 'iw'))
     parser.add_argument('--target_ess', type=float, default=0.0)  # 0.0 has no effect
     parser.add_argument('--alternating', action='store_true', default=False)
     parser.add_argument('--eval_resampling', action='store_true', default=False)

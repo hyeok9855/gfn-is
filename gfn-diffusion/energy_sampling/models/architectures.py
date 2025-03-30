@@ -14,13 +14,13 @@ class TimeEncoding(nn.Module):
         )
         self.register_buffer("pe", pe)
 
-    def forward(self, t: float):
+    def forward(self, t: torch.Tensor) -> torch.Tensor:
         """
         Arguments:
-            t: float
+            t: torch.Tensor
         """
-        t_sin = (t * self.pe).sin()  # type: ignore
-        t_cos = (t * self.pe).cos()  # type: ignore
+        t_sin = (t.unsqueeze(1) * self.pe).sin()  # type: ignore
+        t_cos = (t.unsqueeze(1) * self.pe).cos()  # type: ignore
         t_emb = torch.cat([t_sin, t_cos], dim=-1)
         return self.t_model(t_emb)
 
@@ -108,13 +108,13 @@ class TimeEncodingPIS(nn.Module):
         )
         self.register_buffer("pe", pe)
 
-    def forward(self, t: float):
+    def forward(self, t: torch.Tensor) -> torch.Tensor:
         """
         Arguments:
-            t: float
+            t: torch.Tensor
         """
-        t_sin = ((t * self.pe) + self.timestep_phase).sin()  # type: ignore
-        t_cos = ((t * self.pe) + self.timestep_phase).cos()  # type: ignore
+        t_sin = ((t.unsqueeze(1) * self.pe) + self.timestep_phase).sin()  # type: ignore
+        t_cos = ((t.unsqueeze(1) * self.pe) + self.timestep_phase).cos()  # type: ignore
         t_emb = torch.cat([t_sin, t_cos], dim=-1)
         return self.t_model(t_emb)
 
