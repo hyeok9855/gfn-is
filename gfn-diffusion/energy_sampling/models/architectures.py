@@ -33,8 +33,8 @@ class StateEncoding(nn.Module):
             nn.Linear(ndim, hidden_dim), nn.GELU(), nn.Linear(hidden_dim, s_emb_dim), nn.GELU()
         )
 
-    def forward(self, s):
-        return self.x_model(s)
+    def forward(self, s_emb: torch.Tensor) -> torch.Tensor:
+        return self.x_model(s_emb)
 
 
 class JointPolicy(nn.Module):
@@ -53,8 +53,8 @@ class JointPolicy(nn.Module):
             self.model[-1].weight.data.fill_(0.0)
             self.model[-1].bias.data.fill_(0.0)
 
-    def forward(self, s, t):
-        return self.model(torch.cat([s, t], dim=-1))
+    def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+        return self.model(torch.cat([s_emb, t_emb], dim=-1))
 
 
 class FlowModel(nn.Module):
@@ -69,8 +69,8 @@ class FlowModel(nn.Module):
             nn.Linear(hidden_dim, out_dim),
         )
 
-    def forward(self, s, t):
-        return self.model(torch.cat([s, t], dim=-1))
+    def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+        return self.model(torch.cat([s_emb, t_emb], dim=-1))
 
 
 class LangevinScalingModel(nn.Module):
@@ -89,8 +89,8 @@ class LangevinScalingModel(nn.Module):
             self.model[-1].weight.data.fill_(0.0)
             self.model[-1].bias.data.fill_(0.01)
 
-    def forward(self, s, t):
-        return self.model(torch.cat([s, t], dim=-1))
+    def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+        return self.model(torch.cat([s_emb, t_emb], dim=-1))
 
 
 class TimeEncodingPIS(nn.Module):
@@ -125,8 +125,8 @@ class StateEncodingPIS(nn.Module):
 
         self.x_model = nn.Linear(ndim, s_emb_dim)
 
-    def forward(self, s):
-        return self.x_model(s)
+    def forward(self, s_emb: torch.Tensor) -> torch.Tensor:
+        return self.x_model(s_emb)
 
 
 class JointPolicyPIS(nn.Module):
@@ -145,8 +145,8 @@ class JointPolicyPIS(nn.Module):
             self.model[-1].weight.data.fill_(0.0)
             self.model[-1].bias.data.fill_(0.0)
 
-    def forward(self, s, t):
-        return self.model(s + t)
+    def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+        return self.model(s_emb + t_emb)
 
 
 class FlowModelPIS(nn.Module):
@@ -165,8 +165,8 @@ class FlowModelPIS(nn.Module):
             self.model[-1].weight.data.fill_(0.0)
             self.model[-1].bias.data.fill_(0.0)
 
-    def forward(self, s, t):
-        return self.model(s + t)
+    def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+        return self.model(s_emb + t_emb)
 
 
 class LangevinScalingModelPIS(nn.Module):
@@ -196,8 +196,8 @@ class LangevinScalingModelPIS(nn.Module):
             self.lgv_model[-1].weight.data.fill_(0.0)
             self.lgv_model[-1].bias.data.fill_(0.01)
 
-    def forward(self, t):
-        t_sin = ((t * self.pe) + self.timestep_phase).sin()
-        t_cos = ((t * self.pe) + self.timestep_phase).cos()
+    def forward(self, t: torch.Tensor) -> torch.Tensor:
+        t_sin = ((t.unsqueeze(1) * self.pe) + self.timestep_phase).sin()  # type: ignore
+        t_cos = ((t.unsqueeze(1) * self.pe) + self.timestep_phase).cos()  # type: ignore
         t_emb = torch.cat([t_sin, t_cos], dim=-1)
         return self.lgv_model(t_emb)
