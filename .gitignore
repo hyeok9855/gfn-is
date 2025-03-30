@@ -2,3 +2,5 @@ __pycache__/
 .venv/
 wandb/
 .vscode/
+slurm_logs/
+scripts/
