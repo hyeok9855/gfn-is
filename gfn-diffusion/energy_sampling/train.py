@@ -159,7 +159,7 @@ def train(args):
             exploration_wd=args.exploration_wd,
             buffer=buffer,
             buffer_ls=buffer_ls,
-            warmup_steps=args.warmup_steps,
+            prefill=args.prefill,
             local_search=args.local_search,
             ls_args=ls_args,
             subtb_coef_matrix=subtb_coef_matrix,
@@ -299,7 +299,7 @@ if __name__ == '__main__':
     ### For replay buffer
     parser.add_argument('--buffer_size', type=int, default=-1)  # 100 * batch_size by default
     # prioritization
-    parser.add_argument('--prioritization', type=str, default="none", choices=('none', 'reward', 'loss', 'log_iw'))
+    parser.add_argument('--prioritization', type=str, default="none", choices=('none', 'reward', 'loss', 'delta', 'normalized_iw'))
     # buffer sampling strategy  # TODO: support percentile-based sampling
     parser.add_argument(
         '--buffer_sampling', type=str, default="proportional", choices=('proportional', 'rank')
@@ -308,8 +308,8 @@ if __name__ == '__main__':
     parser.add_argument('--rank_k', type=float, default=1e-2)
     # logr_lb for filtering out samples with extremely low reward values for numerical stability
     parser.add_argument('--logr_lb', type=float, default=-1e5)
-    # warmup_steps to wait before starting to sample from buffer
-    parser.add_argument('--warmup_steps', type=int, default=10)
+    # prefill to wait before starting to sample from buffer
+    parser.add_argument('--prefill', type=int, default=10)  # wait this amount of iterations to fill the buffer
     ################################################################
 
     ################################################################
@@ -360,8 +360,8 @@ if __name__ == '__main__':
             and args.bwd_from == "buffer"
         ), "We only support local search for backward sampling with buffer"
 
-    if "tb" not in args.loss_type and args.prioritization == "log_iw":
-        raise ValueError("Prioritization with importance weight is only supported for tb loss")
+    if "tb" not in args.loss_type and args.prioritization in ["delta", "normalized_iw"]:
+        raise ValueError("Prioritization with importance weight is only supported for tb loss for now.")
 
     assert args.plot_freq % args.eval_freq == 0
 

@@ -119,6 +119,12 @@ def get_name(args):
     if args.partial_energy:
         name += "-partialE"
 
+    name += f"_t_scale{args.t_scale}-NNhidden{args.hidden_dim}"
+
+    name += f"-lr{args.lr_policy}-lrflow{args.lr_flow}"
+    if args.use_weight_decay:
+        name += f"-wd{args.weight_decay}"
+
     name += f"_{args.training_mode}"
     if args.training_mode != "fwd":
         name += f"-{args.bwd_from}"
@@ -128,12 +134,9 @@ def get_name(args):
             if args.prioritization != "none":
                 name += f"-{args.prioritization}-{args.buffer_sampling}"
 
-    name += f"_T{args.T}-t_scale{args.t_scale}-NNhidden{args.hidden_dim}"
-
-
-    name += f"-lr{args.lr_policy}-lrflow{args.lr_flow}"
-    if args.use_weight_decay:
-        name += f"-wd{args.weight_decay}"
+    name += f"-T{args.T}-{args.discretizer}"
+    if args.discretizer == "random":
+        name += f"-maxr{args.max_ratio}"
 
     if args.exploratory:
         name += f"_expl{args.exploration_factor}"

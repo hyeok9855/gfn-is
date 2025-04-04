@@ -234,6 +234,8 @@ class GFN(nn.Module):
             s = s_
             states[:, i + 1] = s
 
+        logpf_exp = logpf_exp if exploration_std > 0.0 else logpf
+
         return states, logpf, logpb, logf, logpf_exp
 
     def get_trajectory_bwd(
