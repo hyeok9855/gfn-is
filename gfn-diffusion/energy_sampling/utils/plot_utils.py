@@ -126,15 +126,16 @@ def viz_gmm(
     energy: TwentyFiveGaussianMixture | GMM40,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
-    n_contour_levels=25,
+    n_contour_levels=20,
     clamp_min=-100000.0,
 ) -> dict:
     lim = energy.plot_bound
     viz_lst = []
-    for i in range(0, min(energy.ndim, 4), 2):
+    for i in range(1, min(energy.ndim, 4), 2):
         viz_lst.extend(
             viz_2d_slice(
-                energy, (i, i + 1),
+                energy,
+                (i - 1, i),
                 samples,
                 weights=weights,
                 lim=lim,
@@ -203,6 +204,7 @@ def viz_contour_with_ax(
     x_points_dim1 = x_points[:, 0].reshape((grid_width_n_points, grid_width_n_points)).numpy()
     x_points_dim2 = x_points[:, 1].reshape((grid_width_n_points, grid_width_n_points)).numpy()
     ax.contour(x_points_dim1, x_points_dim2, log_p_x, levels=n_contour_levels, zorder=zorder)
+
 
 def viz_contour_sample2d(
     points: torch.Tensor,

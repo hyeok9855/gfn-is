@@ -35,8 +35,9 @@ def train_step(
     device=torch.device('cpu'),
     resampling: bool = False,
     weighting: bool = False,
-    aux_reward: str = "reward",  # reward, loss, iw
+    aux_target: str = "target",  # target, loss, iw
     target_ess: float = 1.0,
+    smoothing: str = "clip_above",
     alternating: bool = False,
 ):
     exploration_std = get_exploration_std(it, exploratory, exploration_factor, exploration_wd)
@@ -52,8 +53,9 @@ def train_step(
         exploration_std=exploration_std,
         buffer=buffer,
         device=device,
-        aux_reward=aux_reward,
+        aux_target=aux_target,
         target_ess=target_ess,
+        smoothing=smoothing,
     )
     run_backward = partial(
         bwd_train_step,
@@ -118,8 +120,9 @@ def fwd_train_step(
     device=torch.device('cpu'),
     resampling: bool = False,
     weighting: bool = False,
-    aux_reward: str = "reward",  # reward, loss, iw
+    aux_target: str = "target",  # target, loss, iw
     target_ess: float = 0.0,
+    smoothing: str = "clip_above",
 ) -> torch.Tensor:
     if loss_type == 'subtb':
         assert subtb_coef_matrix is not None
@@ -142,48 +145,49 @@ def fwd_train_step(
         ndim=energy.ndim,
     )
 
-    log_weights = (log_fs[:, -1] + log_pbs.sum(-1) - log_pfs_exp.sum(-1)).detach()
-    normalized_weights = log_weights.softmax(dim=0)
+    match aux_target:
+        case "target":  # r(x)p_B(\tau|x)
+            log_weights = (log_fs[:, -1] + log_pbs.sum(-1) - log_pfs_exp.sum(-1)).detach()
+        case "loss":
+            log_weights = (losses.log() - log_pfs_exp.sum(-1)).detach()
+        case "iw":  # For TB, log_iw = log_r + log_pbs.sum(-1) - log_pfs.sum(-1) - log_Z
+            log_weights = (log_fs[:, -1] + log_pbs.sum(-1) - 2 * log_pfs_exp.sum(-1)).detach()
+        case _:
+            raise ValueError(f"Invalid aux_target: {aux_target}")
+
+    if target_ess != 0.0:
+        if 0.0 <= target_ess <= 1.0:
+            target_ess = target_ess * batch_size
+        else:
+            assert 1.0 < target_ess <= batch_size, f"Invalid target ESS: {target_ess}"
+
+        if ess(log_weights) >= target_ess:
+            normalized_weights = log_weights.softmax(dim=0)
+        else:
+            if smoothing == "mix_with_uniform":
+                normalized_weights = log_weights.softmax(dim=0)
+                mixing_ratio = solve_mixing_ratio(normalized_weights, target_ess=target_ess)
+                normalized_weights = (1 - mixing_ratio) * normalized_weights + mixing_ratio / batch_size
+            else:
+                func = get_func(smoothing)
+                value, _ = binary_search(log_weights, target_ess, func)
+                log_weights = func(log_weights, value)
+                normalized_weights = log_weights.softmax(dim=0)
+    else:
+        normalized_weights = log_weights.softmax(dim=0)
 
     if buffer is not None:
         buffer.add(states[:, -1], log_fs[:, -1], deltas, log_weights, normalized_weights)
 
-    if resampling or weighting:
-        if target_ess != 0.0:
-            if 0.0 <= target_ess <= 1.0:
-                target_ess = target_ess * batch_size
-            else:
-                assert 1.0 < target_ess <= batch_size, f"Invalid target ESS: {target_ess}"
-            assert target_ess > 1.0
-
-        if target_ess == batch_size:  # No need to weighting or resampling
-            return losses.mean()
-
-        match aux_reward:
-            case "reward":  # r(x)p_B(\tau|x)
-                pass  # already computed above
-            case "loss":
-                log_weights = (losses.log() - log_pfs_exp.sum(-1)).detach()
-                normalized_weights = log_weights.softmax(dim=0)
-            case "iw":  # For TB, log_iw = log_r + log_pbs.sum(-1) - log_pfs.sum(-1) - log_Z
-                log_weights = (log_weights - log_pfs_exp.sum(-1)).detach()
-                normalized_weights = log_weights.softmax(dim=0)
-            case _:
-                raise ValueError(f"Invalid aux_reward: {aux_reward}")
-
-        # Mixing with uniform distribution to achieve target ESS
-        if target_ess != 0.0:
-            mixing_ratio = solve_mixing_ratio(normalized_weights, target_ess=target_ess)
-            # Mix the weights with uniform distribution
-            normalized_weights = (1 - mixing_ratio) * normalized_weights + mixing_ratio / batch_size
-
-        if weighting:
-            return (normalized_weights * losses).sum()
-        else:  # resampling
-            indices = torch.multinomial(normalized_weights, batch_size, replacement=True)
-            return losses[indices].mean()
+    if weighting:
+        loss = (normalized_weights * losses).sum()
+    elif resampling:
+        indices = torch.multinomial(normalized_weights, batch_size, replacement=True)
+        loss = losses[indices].mean()
     else:
-        return losses.mean()
+        loss = losses.mean()
+
+    return loss
 
 
 def bwd_train_step(
@@ -321,3 +325,70 @@ def solve_mixing_ratio(normalized_weights: torch.Tensor, target_ess: float) -> f
         return mixing_ratio_2
     else:
         raise ValueError(f"No valid solution: {mixing_ratio_1}, {mixing_ratio_2}")
+
+
+def ess(log_weights: torch.Tensor) -> float:
+    normalized_weights = log_weights.softmax(dim=0)
+    return 1 / (normalized_weights ** 2).sum().item()
+
+
+def binary_search(
+    log_weights: torch.Tensor,
+    target_ess: float,
+    func: Callable[[torch.Tensor, float], torch.Tensor],
+    tol=1e-2,
+    max_steps=1000,
+) -> tuple[float, int]:
+    search_min, search_max = get_min_max(func, log_weights)
+
+    steps = 0
+    original_order = ess(func(log_weights, search_min)) < ess(func(log_weights, search_max))
+    while True:
+        steps += 1
+        mid = (search_min + search_max) / 2
+        if mid == search_min or mid == search_max:
+            break  # Avoid meaningless loop; maybe the tolerance is too small
+
+        log_weights_smoothed = func(log_weights, mid)
+        _ess = ess(log_weights_smoothed)
+        if (_ess > target_ess) == original_order:
+            search_max = mid
+        else:
+            search_min = mid
+        if abs(_ess - target_ess) < tol:
+            break
+        if steps > max_steps:
+            raise ValueError(f"Binary search failed in {max_steps} steps")
+    return mid, steps
+
+
+def clip_below(log_weights: torch.Tensor, value: float) -> torch.Tensor:
+    return log_weights.clamp(min=value)
+
+
+def clip_above(log_weights: torch.Tensor, value: float) -> torch.Tensor:
+    return log_weights.clamp(max=value)
+
+
+def temper(log_weights: torch.Tensor, value: float) -> torch.Tensor:
+    return log_weights / value
+
+
+def get_func(smoothing: str) -> Callable[[torch.Tensor, float], torch.Tensor]:
+    if smoothing == 'clip_below':
+        return clip_below
+    elif smoothing == 'clip_above':
+        return clip_above
+    elif smoothing == 'temper':
+        return temper
+    else:
+        raise ValueError(f"Invalid function: {smoothing}")
+
+
+def get_min_max(func: Callable, log_weights: torch.Tensor) -> tuple[float, float]:
+    if func == clip_above or func == clip_below:
+        return log_weights.min().item(), log_weights.max().item()
+    elif func == temper:
+        return 1.0, 50.0
+    else:
+        raise ValueError(f"Invalid function: {func}")

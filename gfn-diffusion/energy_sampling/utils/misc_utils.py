@@ -148,7 +148,7 @@ def get_name(args):
             name += "_resampling"
         if args.train_weighting:
             name += "_weighting"
-        name += f"-{args.aux_reward}"
+        name += f"-{args.aux_target}"
         if args.target_ess != 0.0:
             name += f"-tgtess{args.target_ess}"
             if args.target_ess_anneal:

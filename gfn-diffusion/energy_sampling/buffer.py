@@ -173,7 +173,7 @@ class ReplayBuffer:
             else:
                 raise NotImplementedError
 
-        replacement = False if self.prioritization == "normalized_iw" else True
+        replacement = True if self.prioritization == "normalized_iw" else False
         indices = torch.multinomial(weights, batch_size, replacement=replacement)
         xs, log_rewards, _, log_iws, _ = self.dataset[indices]
 

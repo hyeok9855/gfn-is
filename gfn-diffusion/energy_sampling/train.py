@@ -167,8 +167,9 @@ def train(args):
             device=device,
             resampling=args.train_resampling,
             weighting=args.train_weighting,
-            aux_reward=args.aux_reward,
+            aux_target=args.aux_target,
             target_ess=args.target_ess,
+            smoothing=args.smoothing,
             alternating=args.alternating,
         )
 
@@ -227,11 +228,11 @@ def train(args):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='GFN Linear Regression')
+    parser = argparse.ArgumentParser()
     parser.add_argument('--target_energy', type=str, default='gmm40', choices=('25gmm', 'gmm40', 'funnel', 'many_well', 'lgcp'))
     parser.add_argument('--ndim', type=int, default=2)
     parser.add_argument('--exp_name', type=str, default='')
-    parser.add_argument('--seed', type=int, default=12345)
+    parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--cpu', action='store_true', default=False)
 
     parser.add_argument('--loss_type', type=str, default="tb", choices=('tb', 'tb-avg', 'db', 'subtb', "pis", "mle"))
@@ -332,8 +333,14 @@ if __name__ == '__main__':
     ### Importance sampling related
     parser.add_argument('--train_resampling', action='store_true', default=False)
     parser.add_argument('--train_weighting', action='store_true', default=False)
-    parser.add_argument('--aux_reward', type=str, default='reward', choices=('reward', 'loss', 'iw'))
+    parser.add_argument('--aux_target', type=str, default='target', choices=('target', 'loss', 'iw'))
     parser.add_argument('--target_ess', type=float, default=0.0)  # 0.0 has no effect
+    parser.add_argument(
+        '--smoothing',
+        type=str,
+        default='clip_above',
+        choices=('clip_above', 'clip_below', 'temper', 'mix_with_uniform'),
+    )
     parser.add_argument('--alternating', action='store_true', default=False)
     parser.add_argument('--eval_resampling', action='store_true', default=False)
     parser.add_argument('--eval_weighting', action='store_true', default=False)
