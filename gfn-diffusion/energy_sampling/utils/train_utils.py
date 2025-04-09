@@ -274,6 +274,11 @@ def get_gfn_loss(
     return deltas, losses
 
 
+###########################################
+### Importance weight related functions ###
+###########################################
+
+
 def solve_mixing_ratio(normalized_weights: torch.Tensor, target_ess: float) -> float:
     """
     Find the mixing ratio to achieve the target effective sample size (ESS)
