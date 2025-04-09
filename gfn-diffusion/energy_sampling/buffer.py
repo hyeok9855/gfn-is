@@ -46,12 +46,12 @@ class ReplayBuffer:
         self,
         buffer_size,
         device: torch.device,
-        prioritization: Literal["none", "reward", "loss", "delta", "normalized_iw"] = "none",
+        prioritization: Literal["none", "reward", "loss", "normalized_iw"] = "none",
         sampling_strategy: Literal["proportional", "rank"] = "proportional",
         rank_k: float = 0.01,
         logr_lb: float | None = None,
     ):
-        assert prioritization in ["none", "reward", "loss", "delta", "normalized_iw"]
+        assert prioritization in ["none", "reward", "loss", "normalized_iw"]
         if prioritization == "normalized_iw":
             assert sampling_strategy == "proportional"
 
@@ -64,10 +64,16 @@ class ReplayBuffer:
 
         self.x_dataset = CustomDataset(self.device, buffer_size)
         self.log_r_dataset = CustomDataset(self.device, buffer_size)
-        self.delta_dataset = CustomDataset(self.device, buffer_size)  # Note: delta ** 2 = loss
-        self.log_iws_dataset = CustomDataset(self.device, buffer_size)
+        self.loss_dataset = CustomDataset(self.device, buffer_size)
+        self.log_iw_dataset = CustomDataset(self.device, buffer_size)
         self.normalized_iw_dataset = CustomDataset(self.device, buffer_size)
-        self.dataset = ZipDataset(self.x_dataset, self.log_r_dataset, self.delta_dataset)
+        self.dataset = ZipDataset(
+            self.x_dataset,
+            self.log_r_dataset,
+            self.loss_dataset,
+            self.log_iw_dataset,
+            self.normalized_iw_dataset,
+        )
 
     def __len__(self):
         return len(self.dataset)
@@ -77,7 +83,7 @@ class ReplayBuffer:
         action: str,
         xs: torch.Tensor,
         log_rewards: torch.Tensor,
-        deltas: torch.Tensor | None = None,
+        losses: torch.Tensor | None = None,
         log_iws: torch.Tensor | None = None,
         normalized_iws: torch.Tensor | None = None,
         indices: torch.Tensor | None = None,
@@ -85,15 +91,15 @@ class ReplayBuffer:
         if action == "update":
             assert indices is not None
 
-        deltas = deltas if deltas is not None else torch.zeros_like(log_rewards, device=log_rewards.device)
+        losses = losses if losses is not None else torch.zeros_like(log_rewards, device=log_rewards.device)
         log_iws = log_iws if log_iws is not None else torch.zeros_like(log_rewards, device=log_rewards.device)
         normalized_iws = normalized_iws if normalized_iws is not None else torch.zeros_like(
             log_rewards, device=log_rewards.device
         )
 
         zipped = zip(
-            [self.x_dataset, self.log_r_dataset, self.delta_dataset, self.log_iws_dataset, self.normalized_iw_dataset],
-            [xs, log_rewards, deltas, log_iws, normalized_iws],
+            [self.x_dataset, self.log_r_dataset, self.loss_dataset, self.log_iw_dataset, self.normalized_iw_dataset],
+            [xs, log_rewards, losses, log_iws, normalized_iws],
         )
         for _ds, _data in zipped:
             if _ds is not None:
@@ -109,7 +115,7 @@ class ReplayBuffer:
         self,
         xs: torch.Tensor,
         log_rewards: torch.Tensor,
-        deltas: torch.Tensor | None = None,
+        losses: torch.Tensor | None = None,
         log_iws: torch.Tensor | None = None,
         normalized_iws: torch.Tensor | None = None,
     ) -> None:
@@ -118,29 +124,29 @@ class ReplayBuffer:
             mask = log_rewards > self.logr_lb
             xs = xs[mask]
             log_rewards = log_rewards[mask]
-            deltas = deltas[mask] if deltas is not None else None
+            losses = losses[mask] if losses is not None else None
             log_iws = log_iws[mask] if log_iws is not None else None
             normalized_iws = normalized_iws[mask] if normalized_iws is not None else None
 
-        self._add_or_update("add", xs, log_rewards, deltas, log_iws, normalized_iws)
+        self._add_or_update("add", xs, log_rewards, losses, log_iws, normalized_iws)
 
     def update(
         self,
         indices: torch.Tensor,
         xs: torch.Tensor,
         log_rewards: torch.Tensor,
-        deltas: torch.Tensor | None = None,
+        losses: torch.Tensor | None = None,
         log_iws: torch.Tensor | None = None,
         normalized_iws: torch.Tensor | None = None,
     ) -> None:
-        self._add_or_update("update", xs, log_rewards, deltas, log_iws, normalized_iws, indices)
+        self._add_or_update("update", xs, log_rewards, losses, log_iws, normalized_iws, indices)
 
     def reset(self) -> None:
         self.dataset = ZipDataset(
             self.x_dataset,
             self.log_r_dataset,
-            self.delta_dataset,
-            self.log_iws_dataset,
+            self.loss_dataset,
+            self.log_iw_dataset,
             self.normalized_iw_dataset,
         )
 
@@ -153,9 +159,7 @@ class ReplayBuffer:
                 case "reward":
                     scores = self.log_r_dataset.data
                 case "loss":
-                    scores = self.delta_dataset.data**2
-                case "delta":
-                    scores = self.delta_dataset.data
+                    scores = self.loss_dataset.data
                 case "normalized_iw":
                     scores = self.normalized_iw_dataset.data
                 case _:
@@ -164,7 +168,7 @@ class ReplayBuffer:
             if self.sampling_strategy == "proportional":
                 if self.prioritization in ["loss", "normalized_iw"]:
                     weights = scores
-                else:  # delta, reward
+                else:  # reward
                     weights = torch.exp(scores - torch.max(scores))
             elif self.sampling_strategy == "rank":
                 assert self.prioritization != "normalized_iw"

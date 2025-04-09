@@ -136,7 +136,7 @@ def fwd_train_step(
     with torch.no_grad():
         log_fs[:, -1] = energy.log_reward(states[:, -1])
 
-    deltas, losses = get_gfn_loss(
+    losses = get_gfn_loss(
         loss_type,
         log_pfs,
         log_pbs,
@@ -177,7 +177,7 @@ def fwd_train_step(
         normalized_weights = log_weights.softmax(dim=0)
 
     if buffer is not None:
-        buffer.add(states[:, -1], log_fs[:, -1], deltas, log_weights, normalized_weights)
+        buffer.add(states[:, -1], log_fs[:, -1], losses.detach(), log_weights, normalized_weights)
 
     if weighting:
         loss = (normalized_weights * losses).sum()
@@ -232,7 +232,7 @@ def bwd_train_step(
 
         log_fs[:, -1] = log_rs
 
-        deltas, losses = get_gfn_loss(
+        losses = get_gfn_loss(
             loss_type,
             log_pfs,
             log_pbs,
@@ -241,8 +241,8 @@ def bwd_train_step(
             ndim=energy.ndim,
         )
 
-        if buffer.prioritization in ["loss", "delta"]:
-            buffer.update(indices, samples, log_rs, deltas)
+        if buffer.prioritization == "loss":
+            buffer.update(indices, samples, log_rs, losses.detach())
 
     return losses.mean()
 
@@ -254,24 +254,23 @@ def get_gfn_loss(
     log_fs: torch.Tensor,
     subtb_coef_matrix: torch.Tensor | None = None,
     ndim: int | None = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     if loss_type == 'tb':
-        deltas, losses = tb_loss(log_pfs, log_pbs, log_fs[:, 0], log_fs[:, -1])
+        losses = tb_loss(log_pfs, log_pbs, log_fs[:, 0], log_fs[:, -1])
     elif loss_type == 'tb-avg':
-        deltas, losses = tb_avg_loss(log_pfs, log_pbs, log_fs[:, -1])
+        losses = tb_avg_loss(log_pfs, log_pbs, log_fs[:, -1])
     elif loss_type == 'db':
-        deltas, losses = db_loss(log_pfs, log_pbs, log_fs)
+        losses = db_loss(log_pfs, log_pbs, log_fs)
     elif loss_type == 'subtb':
         assert subtb_coef_matrix is not None
-        deltas, losses = subtb_loss(log_pfs, log_pbs, log_fs, subtb_coef_matrix)
+        losses = subtb_loss(log_pfs, log_pbs, log_fs, subtb_coef_matrix)
     elif loss_type == 'pis':
         assert ndim is not None
-        deltas = (log_fs[:, -1] + log_pbs.sum(-1) - log_pfs.sum(-1)).detach()
         losses = (1 / ndim) * (log_pfs.sum(-1) - log_pbs.sum(-1) - log_fs[:, -1])
     else:
         raise ValueError(f'Invalid training loss: {loss_type}')
 
-    return deltas, losses
+    return losses
 
 
 ###########################################

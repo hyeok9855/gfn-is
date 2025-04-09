@@ -300,7 +300,7 @@ if __name__ == '__main__':
     ### For replay buffer
     parser.add_argument('--buffer_size', type=int, default=-1)  # 100 * batch_size by default
     # prioritization
-    parser.add_argument('--prioritization', type=str, default="none", choices=('none', 'reward', 'loss', 'delta', 'normalized_iw'))
+    parser.add_argument('--prioritization', type=str, default="none", choices=('none', 'reward', 'loss', 'normalized_iw'))
     # buffer sampling strategy  # TODO: support percentile-based sampling
     parser.add_argument(
         '--buffer_sampling', type=str, default="proportional", choices=('proportional', 'rank')
@@ -361,14 +361,14 @@ if __name__ == '__main__':
     if args.pis_architectures:
         assert args.zero_init
 
+    if args.loss_type in ["db", "subtb"]:
+        args.conditional_flow_model = True
+
     if args.local_search:
         assert (
             (args.training_mode == "both" or args.training_mode == "bwd")
             and args.bwd_from == "buffer"
         ), "We only support local search for backward sampling with buffer"
-
-    if "tb" not in args.loss_type and args.prioritization in ["delta", "normalized_iw"]:
-        raise ValueError("Prioritization with importance weight is only supported for tb loss for now.")
 
     assert args.plot_freq % args.eval_freq == 0
 
