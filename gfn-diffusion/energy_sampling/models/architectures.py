@@ -123,10 +123,10 @@ class StateEncodingPIS(nn.Module):
     def __init__(self, ndim: int, s_emb_dim: int) -> None:
         super().__init__()
 
-        self.x_model = nn.Linear(ndim, s_emb_dim)
+        self.s_model = nn.Linear(ndim, s_emb_dim)
 
-    def forward(self, s_emb: torch.Tensor) -> torch.Tensor:
-        return self.x_model(s_emb)
+    def forward(self, s: torch.Tensor) -> torch.Tensor:
+        return self.s_model(s)
 
 
 class JointPolicyPIS(nn.Module):

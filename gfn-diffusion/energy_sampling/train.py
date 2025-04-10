@@ -99,6 +99,7 @@ def train(args):
         pb_scale_range=args.pb_scale_range,
         lp_scaling_per_dimension=args.lp_scaling_per_dimension,
         conditional_flow_model=args.conditional_flow_model,
+        share_embeddings=args.share_embeddings,
         learn_pb=args.learn_pb,
         pis_architectures=args.pis_architectures,
         lgv_layers=args.lgv_layers,
@@ -264,6 +265,7 @@ if __name__ == '__main__':
     parser.add_argument('--lp', action='store_true', default=False)
     parser.add_argument('--lp_scaling_per_dimension', action='store_true', default=False)
     parser.add_argument('--conditional_flow_model', action='store_true', default=False)
+    parser.add_argument('--share_embeddings', action='store_true', default=False)
     parser.add_argument('--learn_pb', action='store_true', default=False)
     parser.add_argument('--pb_scale_range', type=float, default=0.1)
     parser.add_argument('--learned_variance', action='store_true', default=False)

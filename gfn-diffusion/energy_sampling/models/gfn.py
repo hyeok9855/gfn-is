@@ -39,6 +39,7 @@ class GFN(nn.Module):
         pb_scale_range: float = 1.0,
         lp_scaling_per_dimension: bool = True,
         conditional_flow_model: bool = False,
+        share_embeddings: bool = False,
         learn_pb: bool = False,
         pis_architectures: bool = False,
         lgv_layers: int = 3,
@@ -63,6 +64,7 @@ class GFN(nn.Module):
 
         self.lp_scaling_per_dimension = lp_scaling_per_dimension
         self.conditional_flow_model = conditional_flow_model
+        self.share_embeddings = share_embeddings
         self.learn_pb = learn_pb
         self.pb_scale_range = pb_scale_range
 
@@ -92,6 +94,10 @@ class GFN(nn.Module):
                 self.back_model = JointPolicyPIS(s_emb_dim, hidden_dim, out_dim, joint_layers, zero_init)
 
             if self.conditional_flow_model:
+                self.t_model_flow = self.s_model_flow = None
+                if not self.share_embeddings:
+                    self.t_model_flow = TimeEncodingPIS(harmonics_dim, t_emb_dim, hidden_dim)
+                    self.s_model_flow = StateEncodingPIS(ndim, s_emb_dim)
                 self.flow_model = FlowModelPIS(s_emb_dim, hidden_dim, 1, joint_layers)
             else:
                 self.flow_model = torch.nn.Parameter(torch.tensor(0.0).to(self.device))
@@ -138,11 +144,12 @@ class GFN(nn.Module):
         t_emb = self.t_model(t)
         s_new = self.joint_model(s_emb, t_emb)
 
-        flow = (
-            self.flow_model(s_emb, t_emb).squeeze(-1)
-            if self.conditional_flow_model
-            else self.flow_model
-        )
+        if self.conditional_flow_model:
+            s_emb_flow = self.s_model_flow(s) if not self.share_embeddings else s_emb
+            t_emb_flow = self.t_model_flow(t) if not self.share_embeddings else t_emb
+            flow = self.flow_model(s_emb_flow, t_emb_flow).squeeze(-1)
+        else:
+            flow = self.flow_model  # A learnable scalar
 
         if self.lp:
             assert self.lp_scaling_model is not None
