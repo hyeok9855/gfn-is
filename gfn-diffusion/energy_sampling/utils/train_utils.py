@@ -6,7 +6,7 @@ import torch
 
 from buffer import ReplayBuffer
 from energies import BaseEnergy
-from gflownet_losses import db_loss, subtb_loss, tb_avg_loss, tb_loss
+from gflownet_losses import get_gfn_loss
 from langevin import langevin_dynamics
 from models import GFN
 from utils.misc_utils import get_exploration_std
@@ -245,32 +245,6 @@ def bwd_train_step(
             buffer.update(indices, samples, log_rs, losses.detach())
 
     return losses.mean()
-
-
-def get_gfn_loss(
-    loss_type: str,
-    log_pfs: torch.Tensor,
-    log_pbs: torch.Tensor,
-    log_fs: torch.Tensor,
-    subtb_coef_matrix: torch.Tensor | None = None,
-    ndim: int | None = None,
-) -> torch.Tensor:
-    if loss_type == 'tb':
-        losses = tb_loss(log_pfs, log_pbs, log_fs[:, 0], log_fs[:, -1])
-    elif loss_type == 'tb-avg':
-        losses = tb_avg_loss(log_pfs, log_pbs, log_fs[:, -1])
-    elif loss_type == 'db':
-        losses = db_loss(log_pfs, log_pbs, log_fs)
-    elif loss_type == 'subtb':
-        assert subtb_coef_matrix is not None
-        losses = subtb_loss(log_pfs, log_pbs, log_fs, subtb_coef_matrix)
-    elif loss_type == 'pis':
-        assert ndim is not None
-        losses = (1 / ndim) * (log_pfs.sum(-1) - log_pbs.sum(-1) - log_fs[:, -1])
-    else:
-        raise ValueError(f'Invalid training loss: {loss_type}')
-
-    return losses
 
 
 ###########################################

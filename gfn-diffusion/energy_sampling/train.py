@@ -59,6 +59,7 @@ def train(args):
         project=f"GFN-Diffusion-{energy_name}",
         config=config,
         name=exp_name,
+        tags=[f"seed{args.seed}"],
     )
 
     subtb_coef_matrix = None

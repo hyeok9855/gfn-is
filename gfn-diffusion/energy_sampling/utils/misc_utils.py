@@ -49,12 +49,21 @@ def cal_subtb_coef_matrix(lamda: float, N: int) -> torch.Tensor:
 
     self.coef[i, j] = lamda^(j-i) / total_lambda  if i < j else 0.
     """
-    range_vals = torch.arange(N + 1)
-    diff_matrix = range_vals - range_vals.view(-1, 1)
-    B = np.log(lamda) * diff_matrix
-    B[diff_matrix <= 0] = -np.inf
-    log_total_lambda = torch.logsumexp(B.view(-1), dim=0)
-    coef = torch.exp(B - log_total_lambda)
+    assert lamda >= 0
+    if lamda == 0:  # DB
+        ones = torch.ones(N + 1, N + 1)
+        coef = torch.triu(ones, diagonal=1) - torch.triu(ones, diagonal=2)
+        coef = coef / N
+    elif lamda == float("inf"):  # TB if lambda is inf
+        coef = torch.zeros(N + 1, N + 1)
+        coef[0, -1] = 1.0
+    else:
+        range_vals = torch.arange(N + 1)
+        diff_matrix = range_vals - range_vals.view(-1, 1)
+        B = np.log(lamda) * diff_matrix
+        B[diff_matrix <= 0] = -np.inf
+        log_total_lambda = torch.logsumexp(B.view(-1), dim=0)
+        coef = torch.exp(B - log_total_lambda)
     return coef
 
 
@@ -119,7 +128,12 @@ def get_name(args):
 
     name += f"_t_scale{args.t_scale}-NNhidden{args.hidden_dim}"
 
-    name += f"-lr{args.lr_policy}-lrflow{args.lr_flow}"
+    name += f"-lr{args.lr_policy}"
+    if args.loss_type == "tb":
+        name += f"-lrZ{args.lr_Z}"
+    elif args.loss_type in ["subtb", "db"]:
+        name += f"-lrflow{args.lr_flow}"
+
     if args.use_weight_decay:
         name += f"-wd{args.weight_decay}"
 
@@ -153,7 +167,6 @@ def get_name(args):
     if args.target_ess != 0.0:
         name += f"_tgtess{args.target_ess}-{args.smoothing}"
 
-    name += f"_sd{args.seed}"
     name += f"_{args.exp_name}" if args.exp_name else ""
 
     return name
