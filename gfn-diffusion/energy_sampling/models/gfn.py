@@ -140,7 +140,7 @@ class GFN(nn.Module):
 
         flow = (
             self.flow_model(s_emb, t_emb).squeeze(-1)
-            if self.conditional_flow_model or self.partial_energy
+            if self.conditional_flow_model
             else self.flow_model
         )
 

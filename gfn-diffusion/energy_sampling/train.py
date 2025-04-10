@@ -109,6 +109,7 @@ def train(args):
     gfn_optimizer = get_gfn_optimizer(
         gfn_model,
         args.lr_policy,
+        args.lr_Z,
         args.lr_flow,
         args.lr_back,
         args.learn_pb,
@@ -236,11 +237,12 @@ if __name__ == '__main__':
     parser.add_argument('--cpu', action='store_true', default=False)
 
     parser.add_argument('--loss_type', type=str, default="tb", choices=('tb', 'tb-avg', 'db', 'subtb', "pis", "mle"))
-    parser.add_argument('--subtb_lambda', type=int, default=2)
+    parser.add_argument('--subtb_lambda', type=float, default=2.0)
     parser.add_argument('--training_mode', type=str, default="fwd", choices=('fwd', 'bwd', 'both'))
     parser.add_argument('--bwd_from', type=str, default="buffer", choices=('energy', 'buffer'))
     parser.add_argument('--lr_policy', type=float, default=1e-3)
-    parser.add_argument('--lr_flow', type=float, default=1e-1)
+    parser.add_argument('--lr_Z', type=float, default=1e-1)
+    parser.add_argument('--lr_flow', type=float, default=1e-2)
     parser.add_argument('--lr_back', type=float, default=None)
     parser.add_argument('--use_weight_decay', action='store_true', default=False)
     parser.add_argument('--weight_decay', type=float, default=1e-7)
@@ -331,9 +333,10 @@ if __name__ == '__main__':
 
     ################################################################
     ### Importance sampling related
+    parser.add_argument('--aux_target', type=str, default='target', choices=('target', 'loss', 'iw'))
     parser.add_argument('--train_resampling', action='store_true', default=False)
     parser.add_argument('--train_weighting', action='store_true', default=False)
-    parser.add_argument('--aux_target', type=str, default='target', choices=('target', 'loss', 'iw'))
+    parser.add_argument('--alternating', action='store_true', default=False)
     parser.add_argument('--target_ess', type=float, default=0.0)  # 0.0 has no effect
     parser.add_argument(
         '--smoothing',
@@ -341,7 +344,6 @@ if __name__ == '__main__':
         default='clip_above',
         choices=('clip_above', 'clip_below', 'temper', 'mix_with_uniform'),
     )
-    parser.add_argument('--alternating', action='store_true', default=False)
     parser.add_argument('--eval_resampling', action='store_true', default=False)
     parser.add_argument('--eval_weighting', action='store_true', default=False)
     ################################################################

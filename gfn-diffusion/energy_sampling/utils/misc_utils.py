@@ -42,9 +42,10 @@ def logmeanexp(x, dim=0):
 def cal_subtb_coef_matrix(lamda: float, N: int) -> torch.Tensor:
     """
     diff_matrix: (N+1, N+1)
-    0, 1, 2, ...
-    -1, 0, 1, ...
-    -2, -1, 0, ...
+     0,  1,  2, ...,   N
+    -1,  0,  1, ..., N-1
+    -2, -1,  0, .... N-2
+    ...
 
     self.coef[i, j] = lamda^(j-i) / total_lambda  if i < j else 0.
     """
@@ -59,9 +60,10 @@ def cal_subtb_coef_matrix(lamda: float, N: int) -> torch.Tensor:
 
 def get_gfn_optimizer(
     gfn_model: GFN,
-    lr_policy,
-    lr_flow,
-    lr_back,
+    lr_policy: float,
+    lr_Z: float,
+    lr_flow: float,
+    lr_back: float,
     back_model=False,
     conditional_flow_model=False,
     use_weight_decay=False,
@@ -79,17 +81,13 @@ def get_gfn_optimizer(
         assert isinstance(gfn_model.flow_model, torch.nn.Module)
         param_groups += [{'params': gfn_model.flow_model.parameters(), 'lr': lr_flow}]
     else:
-        param_groups += [{'params': [gfn_model.flow_model], 'lr': lr_flow} ]
+        param_groups += [{'params': [gfn_model.flow_model], 'lr': lr_Z} ]
 
     if back_model:
         assert gfn_model.back_model is not None
         param_groups += [{'params': gfn_model.back_model.parameters(), 'lr': lr_back}]
 
-    if use_weight_decay:
-        gfn_optimizer = torch.optim.Adam(param_groups, lr_policy, weight_decay=weight_decay)
-    else:
-        gfn_optimizer = torch.optim.Adam(param_groups, lr_policy)
-
+    gfn_optimizer = torch.optim.Adam(param_groups, lr_policy, weight_decay=weight_decay if use_weight_decay else 0.0)
     return gfn_optimizer
 
 
@@ -149,12 +147,11 @@ def get_name(args):
         if args.train_weighting:
             name += "_weighting"
         name += f"-{args.aux_target}"
-        if args.target_ess != 0.0:
-            name += f"-tgtess{args.target_ess}"
-            if args.target_ess_anneal:
-                name += "ann"
         if args.alternating:
             name += "-alt"
+
+    if args.target_ess != 0.0:
+        name += f"_tgtess{args.target_ess}-{args.smoothing}"
 
     name += f"_sd{args.seed}"
     name += f"_{args.exp_name}" if args.exp_name else ""
