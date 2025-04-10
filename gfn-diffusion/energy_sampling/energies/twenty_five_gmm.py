@@ -10,10 +10,14 @@ class TwentyFiveGaussianMixture(BaseEnergy):
         super().__init__(device=device, ndim=ndim, plot_bound=13.0)
 
         self.nmode = 25
-        modes = torch.Tensor([(a, b) for a in [-10, -5, 0, 5, 10] for b in [-10, -5, 0, 5, 10]]).to(self.device)
+        modes = torch.Tensor([(a, b) for a in [-10, -5, 0, 5, 10] for b in [-10, -5, 0, 5, 10]]).to(
+            self.device
+        )
 
         self.gmm = [
-            D.MultivariateNormal(loc=mode, covariance_matrix=0.3 * torch.eye(ndim, device=self.device))
+            D.MultivariateNormal(
+                loc=mode, covariance_matrix=0.3 * torch.eye(ndim, device=self.device)
+            )
             for mode in modes
         ]
 
@@ -21,7 +25,9 @@ class TwentyFiveGaussianMixture(BaseEnergy):
         return -self._log_prob(x)
 
     def sample(self, batch_size: int) -> torch.Tensor:
-        samples = torch.cat([mvn.sample(torch.Size((batch_size // self.nmode,))) for mvn in self.gmm], dim=0)
+        samples = torch.cat(
+            [mvn.sample(torch.Size((batch_size // self.nmode,))) for mvn in self.gmm], dim=0
+        )
         samples = samples.to(self.device)
         return samples
 
@@ -30,7 +36,6 @@ class TwentyFiveGaussianMixture(BaseEnergy):
 
     # ----- Energy-specific methods ----- #
     def _log_prob(self, x: torch.Tensor) -> torch.Tensor:
-        return (
-            torch.logsumexp(torch.stack([mvn.log_prob(x) for mvn in self.gmm]), dim=0, keepdim=False) 
-            - torch.log(torch.tensor(self.nmode, device=self.device))
-        )
+        return torch.logsumexp(
+            torch.stack([mvn.log_prob(x) for mvn in self.gmm]), dim=0, keepdim=False
+        ) - torch.log(torch.tensor(self.nmode, device=self.device))

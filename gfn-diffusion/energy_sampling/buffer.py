@@ -91,14 +91,30 @@ class ReplayBuffer:
         if action == "update":
             assert indices is not None
 
-        losses = losses if losses is not None else torch.zeros_like(log_rewards, device=log_rewards.device)
-        log_iws = log_iws if log_iws is not None else torch.zeros_like(log_rewards, device=log_rewards.device)
-        normalized_iws = normalized_iws if normalized_iws is not None else torch.zeros_like(
-            log_rewards, device=log_rewards.device
+        losses = (
+            losses
+            if losses is not None
+            else torch.zeros_like(log_rewards, device=log_rewards.device)
+        )
+        log_iws = (
+            log_iws
+            if log_iws is not None
+            else torch.zeros_like(log_rewards, device=log_rewards.device)
+        )
+        normalized_iws = (
+            normalized_iws
+            if normalized_iws is not None
+            else torch.zeros_like(log_rewards, device=log_rewards.device)
         )
 
         zipped = zip(
-            [self.x_dataset, self.log_r_dataset, self.loss_dataset, self.log_iw_dataset, self.normalized_iw_dataset],
+            [
+                self.x_dataset,
+                self.log_r_dataset,
+                self.loss_dataset,
+                self.log_iw_dataset,
+                self.normalized_iw_dataset,
+            ],
             [xs, log_rewards, losses, log_iws, normalized_iws],
         )
         for _ds, _data in zipped:

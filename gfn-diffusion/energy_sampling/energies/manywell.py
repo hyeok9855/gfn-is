@@ -28,6 +28,7 @@ class ManyWell(BaseEnergy):
     """
     log p(x1, x2) = -(x1**4) + 6 * x1**2 + 1 / 2 * x1 - (1 / 2) * (x2**2)
     """
+
     def __init__(self, device: str | torch.device, ndim=32) -> None:
         super().__init__(device=device, ndim=ndim, plot_bound=3.0)
 
@@ -49,7 +50,9 @@ class ManyWell(BaseEnergy):
         return -self._manywell_unnormed_logp(x)
 
     def sample(self, batch_size: int) -> torch.Tensor:
-        samples = torch.cat([self._sample_doublewell(batch_size) for _ in range(self.n_wells)], dim=-1)
+        samples = torch.cat(
+            [self._sample_doublewell(batch_size) for _ in range(self.n_wells)], dim=-1
+        )
         samples = samples.to(self.device)
         return samples
 
@@ -60,12 +63,15 @@ class ManyWell(BaseEnergy):
     def _manywell_unnormed_logp(self, x: torch.Tensor) -> torch.Tensor:
         assert x.ndim == 2
         unnormed_logp = torch.stack(
-            [self._doublewell_unnormed_logp(x[:, i * 2 : i * 2 + 2]) for i in range(self.n_wells)], dim=1
+            [self._doublewell_unnormed_logp(x[:, i * 2 : i * 2 + 2]) for i in range(self.n_wells)],
+            dim=1,
         ).sum(dim=1)
         return unnormed_logp
 
     def _sample_doublewell(self, batch_size: int) -> torch.Tensor:
-        x1 = rejection_sampling(batch_size, self.proposal_x1, self._target_unnormed_logp_x1, self.Z_x1 * 3)
+        x1 = rejection_sampling(
+            batch_size, self.proposal_x1, self._target_unnormed_logp_x1, self.Z_x1 * 3
+        )
         x2 = torch.randn_like(x1)
         return torch.stack([x1, x2], dim=1)
 

@@ -32,7 +32,7 @@ def train_step(
     ls_args: Namespace | None = None,
     subtb_coef_matrix: torch.Tensor | None = None,
     clip_grad_norm: float = 1.0,
-    device=torch.device('cpu'),
+    device=torch.device("cpu"),
     resampling: bool = False,
     weighting: bool = False,
     aux_target: str = "target",  # target, loss, iw
@@ -86,7 +86,9 @@ def train_step(
 
     elif training_mode == "both":  # Both forward and backward sampling
         # FIXME: is it worth to support different loss_type for fwd and bwd?
-        assert bwd_from == "buffer" and buffer is not None  # FIXME: do we need to support bwd from energy?
+        assert (
+            bwd_from == "buffer" and buffer is not None
+        )  # FIXME: do we need to support bwd from energy?
         if it % 2 == 0 or it < prefill:
             loss = run_forward(
                 resampling=resampling & ((it % 4 == 2) if alternating else True),
@@ -117,14 +119,14 @@ def fwd_train_step(
     subtb_coef_matrix: torch.Tensor | None,
     exploration_std=0.0,
     buffer: ReplayBuffer | None = None,
-    device=torch.device('cpu'),
+    device=torch.device("cpu"),
     resampling: bool = False,
     weighting: bool = False,
     aux_target: str = "target",  # target, loss, iw
     target_ess: float = 0.0,
     smoothing: str = "clip_above",
 ) -> torch.Tensor:
-    if loss_type == 'subtb':
+    if loss_type == "subtb":
         assert subtb_coef_matrix is not None
 
     init_states = torch.zeros(batch_size, energy.ndim).to(device)
@@ -167,7 +169,9 @@ def fwd_train_step(
             if smoothing == "mix_with_uniform":
                 normalized_weights = log_weights.softmax(dim=0)
                 mixing_ratio = solve_mixing_ratio(normalized_weights, target_ess=target_ess)
-                normalized_weights = (1 - mixing_ratio) * normalized_weights + mixing_ratio / batch_size
+                normalized_weights = (
+                    1 - mixing_ratio
+                ) * normalized_weights + mixing_ratio / batch_size
             else:
                 func = get_func(smoothing)
                 value, _ = binary_search(log_weights, target_ess, func)
@@ -203,32 +207,33 @@ def bwd_train_step(
     buffer: ReplayBuffer | None = None,
     buffer_ls: ReplayBuffer | None = None,
     it=0,
-    device=torch.device('cpu'),
+    device=torch.device("cpu"),
 ) -> torch.Tensor:
-    if bwd_from == 'energy':
+    if bwd_from == "energy":
         samples = energy.sample(batch_size).to(device)
         raise NotImplementedError("Training from energy is not used for this project.")
 
-    elif bwd_from == 'buffer':
+    elif bwd_from == "buffer":
         assert buffer is not None
         if local_search:
             assert buffer_ls is not None
-            assert buffer_ls.prioritization in ["none", "reward"], (
-                "Local search buffer cannot be prioritized by loss or iw"
-            )
+            assert buffer_ls.prioritization in [
+                "none",
+                "reward",
+            ], "Local search buffer cannot be prioritized by loss or iw"
             assert ls_args is not None
             if it % ls_args.ls_cycle < 2:
                 samples, log_rs, log_iws, _ = buffer.sample(batch_size)
-                local_search_samples, log_rs = langevin_dynamics(samples, energy.log_reward, device, ls_args)
+                local_search_samples, log_rs = langevin_dynamics(
+                    samples, energy.log_reward, device, ls_args
+                )
                 buffer_ls.add(local_search_samples, log_rs)
             samples, log_rs, log_iws, indices = buffer_ls.sample(batch_size)
         else:
             samples, log_rs, log_iws, indices = buffer.sample(batch_size)
 
         ts = discretizer(batch_size).to(device)
-        _, log_pfs, log_pbs, log_fs = gfn_model.get_trajectory_bwd(
-            samples, ts, energy.log_reward
-        )
+        _, log_pfs, log_pbs, log_fs = gfn_model.get_trajectory_bwd(samples, ts, energy.log_reward)
 
         log_fs[:, -1] = log_rs
 
@@ -274,7 +279,7 @@ def solve_mixing_ratio(normalized_weights: torch.Tensor, target_ess: float) -> f
     """
     N = len(normalized_weights)
     nw_sum = 1.0
-    nw_squared_sum = (normalized_weights ** 2).sum().item()
+    nw_squared_sum = (normalized_weights**2).sum().item()
 
     ess_before = 1 / nw_squared_sum
     if ess_before >= target_ess:
@@ -284,13 +289,13 @@ def solve_mixing_ratio(normalized_weights: torch.Tensor, target_ess: float) -> f
     B = nw_squared_sum - nw_sum / N
     C = nw_squared_sum - 1 / target_ess
 
-    min_lhs = C - B ** 2 / A
+    min_lhs = C - B**2 / A
     if min_lhs >= 0:
         raise ValueError(f"Cannot achieve target ESS: {target_ess}")
         return 1.0
 
-    mixing_ratio_1 = (B + (B ** 2 - A * C) ** 0.5) / A
-    mixing_ratio_2 = (B - (B ** 2 - A * C) ** 0.5) / A
+    mixing_ratio_1 = (B + (B**2 - A * C) ** 0.5) / A
+    mixing_ratio_2 = (B - (B**2 - A * C) ** 0.5) / A
 
     valid_1 = mixing_ratio_1 >= 0.0 and mixing_ratio_1 <= 1.0
     valid_2 = mixing_ratio_2 >= 0.0 and mixing_ratio_2 <= 1.0
@@ -307,7 +312,7 @@ def solve_mixing_ratio(normalized_weights: torch.Tensor, target_ess: float) -> f
 
 def ess(log_weights: torch.Tensor) -> float:
     normalized_weights = log_weights.softmax(dim=0)
-    return 1 / (normalized_weights ** 2).sum().item()
+    return 1 / (normalized_weights**2).sum().item()
 
 
 def binary_search(
@@ -353,11 +358,11 @@ def temper(log_weights: torch.Tensor, value: float) -> torch.Tensor:
 
 
 def get_func(smoothing: str) -> Callable[[torch.Tensor, float], torch.Tensor]:
-    if smoothing == 'clip_below':
+    if smoothing == "clip_below":
         return clip_below
-    elif smoothing == 'clip_above':
+    elif smoothing == "clip_above":
         return clip_above
-    elif smoothing == 'temper':
+    elif smoothing == "temper":
         return temper
     else:
         raise ValueError(f"Invalid function: {smoothing}")

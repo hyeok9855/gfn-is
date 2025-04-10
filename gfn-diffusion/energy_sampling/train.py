@@ -23,15 +23,15 @@ from utils.train_utils import train_step
 
 
 def get_energy(target_energy: str, ndim: int, device: torch.device) -> BaseEnergy:
-    if target_energy == '25gmm':
+    if target_energy == "25gmm":
         if ndim != 2:
             raise ValueError("25GMM is only supported for 2D")
         energy = TwentyFiveGaussianMixture(device=device)
-    elif target_energy == 'gmm40':
+    elif target_energy == "gmm40":
         energy = GMM40(device=device, ndim=ndim)
-    elif target_energy == 'funnel':
+    elif target_energy == "funnel":
         energy = Funnel(device=device, ndim=ndim)
-    elif target_energy == 'many_well':
+    elif target_energy == "many_well":
         energy = ManyWell(device=device, ndim=ndim)
     elif target_energy == "lgcp":
         raise NotImplementedError
@@ -43,7 +43,7 @@ def get_energy(target_energy: str, ndim: int, device: torch.device) -> BaseEnerg
 
 
 def train(args):
-    device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
+    device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
     energy = get_energy(args.target_energy, args.ndim, device=device)
 
     energy_name = f"{args.target_energy}-{args.ndim}d"
@@ -63,7 +63,7 @@ def train(args):
     )
 
     subtb_coef_matrix = None
-    if args.loss_type == 'subtb':
+    if args.loss_type == "subtb":
         subtb_coef_matrix = cal_subtb_coef_matrix(args.subtb_lambda, args.T).to(device)
 
     ls_args = None
@@ -116,7 +116,7 @@ def train(args):
         args.lr_back,
         args.learn_pb,
         args.conditional_flow_model,
-        args.use_weight_decay,  
+        args.use_weight_decay,
         args.weight_decay,
     )
 
@@ -136,9 +136,7 @@ def train(args):
     train_discretizer = get_discretizer(
         discretizer=args.discretizer, T=args.T, max_ratio=args.discretizer_max_ratio
     )
-    eval_discretizer = get_discretizer(
-        discretizer="uniform", T=args.eval_T
-    )
+    eval_discretizer = get_discretizer(discretizer="uniform", T=args.eval_T)
 
     ######################
     # Main training loop #
@@ -147,7 +145,7 @@ def train(args):
     gfn_model.train()
     for i in trange(args.epochs + 1, dynamic_ncols=True):
         metrics = dict()
-        metrics['train/loss'] = train_step(
+        metrics["train/loss"] = train_step(
             energy,
             gfn_model,
             gfn_optimizer,
@@ -183,7 +181,7 @@ def train(args):
                 gfn_model,
                 energy,
                 discretizer=eval_discretizer,
-                pis=args.loss_type=="pis",
+                pis=args.loss_type == "pis",
                 resampling=args.eval_resampling,
                 weighting=args.eval_weighting,
                 buffer=buffer if args.eval_buffer else None,
@@ -198,18 +196,20 @@ def train(args):
                     assert model_trajs_r is not None
                     images_resample = plot_step(energy, model_trajs_r[:, -1])
                     images_resample = {
-                        k.replace("visualization/", "visualization_resample/"): v for k, v in images_resample.items()
+                        k.replace("visualization/", "visualization_resample/"): v
+                        for k, v in images_resample.items()
                     }
                     metrics.update(images_resample)
 
                 if args.eval_weighting:
                     images_weighted = plot_step(energy, model_trajs[:, -1], weights=weights)
                     images_weighted = {
-                        k.replace("visualization/", "visualization_weighted/"): v for k, v in images_weighted.items()
+                        k.replace("visualization/", "visualization_weighted/"): v
+                        for k, v in images_weighted.items()
                     }
                     metrics.update(images_weighted)
 
-                plt.close('all')
+                plt.close("all")
 
             wandb.log(metrics, step=i)
             # if i % 1000 == 0:
@@ -221,7 +221,7 @@ def train(args):
         gfn_model,
         energy,
         discretizer=eval_discretizer,
-        pis=args.loss_type=="pis",
+        pis=args.loss_type == "pis",
         final_eval=True,
         resampling=args.eval_resampling,
         weighting=args.eval_weighting,
@@ -232,126 +232,153 @@ def train(args):
     # torch.save(gfn_model.state_dict(), f'{save_dir}/model_final.pt')
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--target_energy', type=str, default='gmm40', choices=('25gmm', 'gmm40', 'funnel', 'many_well', 'lgcp'))
-    parser.add_argument('--ndim', type=int, default=2)
-    parser.add_argument('--exp_name', type=str, default='')
-    parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--cpu', action='store_true', default=False)
+    parser.add_argument(
+        "--target_energy",
+        type=str,
+        default="gmm40",
+        choices=("25gmm", "gmm40", "funnel", "many_well", "lgcp"),
+    )
+    parser.add_argument("--ndim", type=int, default=2)
+    parser.add_argument("--exp_name", type=str, default="")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--cpu", action="store_true", default=False)
 
-    parser.add_argument('--loss_type', type=str, default="tb", choices=('tb', 'tb-avg', 'db', 'subtb', "pis", "mle"))
-    parser.add_argument('--subtb_lambda', type=float, default=2.0)
-    parser.add_argument('--training_mode', type=str, default="fwd", choices=('fwd', 'bwd', 'both'))
-    parser.add_argument('--bwd_from', type=str, default="buffer", choices=('energy', 'buffer'))
-    parser.add_argument('--lr_policy', type=float, default=1e-3)
-    parser.add_argument('--lr_Z', type=float, default=1e-1)
-    parser.add_argument('--lr_flow', type=float, default=1e-2)
-    parser.add_argument('--lr_back', type=float, default=None)
-    parser.add_argument('--use_weight_decay', action='store_true', default=False)
-    parser.add_argument('--weight_decay', type=float, default=1e-7)
-    parser.add_argument('--clip_grad_norm', type=float, default=3.0)
-    parser.add_argument('--batch_size', type=int, default=2000)
-    parser.add_argument('--epochs', type=int, default=25000)
+    parser.add_argument(
+        "--loss_type",
+        type=str,
+        default="tb",
+        choices=("tb", "tb-avg", "db", "subtb", "pis", "mle"),
+    )
+    parser.add_argument("--subtb_lambda", type=float, default=2.0)
+    parser.add_argument("--training_mode", type=str, default="fwd", choices=("fwd", "bwd", "both"))
+    parser.add_argument("--bwd_from", type=str, default="buffer", choices=("energy", "buffer"))
+    parser.add_argument("--lr_policy", type=float, default=1e-3)
+    parser.add_argument("--lr_Z", type=float, default=1e-1)
+    parser.add_argument("--lr_flow", type=float, default=1e-2)
+    parser.add_argument("--lr_back", type=float, default=None)
+    parser.add_argument("--use_weight_decay", action="store_true", default=False)
+    parser.add_argument("--weight_decay", type=float, default=1e-7)
+    parser.add_argument("--clip_grad_norm", type=float, default=3.0)
+    parser.add_argument("--batch_size", type=int, default=2000)
+    parser.add_argument("--epochs", type=int, default=25000)
 
-    parser.add_argument('--hidden_dim', type=int, default=256)
+    parser.add_argument("--hidden_dim", type=int, default=256)
     # parser.add_argument('--s_emb_dim', type=int, default=256)
     # parser.add_argument('--t_emb_dim', type=int, default=256)
     # parser.add_argument('--harmonics_dim', type=int, default=256)
-    parser.add_argument('--lgv_layers', type=int, default=3)
-    parser.add_argument('--joint_layers', type=int, default=2)
-    parser.add_argument('--t_scale', type=float, default=1.)
-    parser.add_argument('--log_var_range', type=float, default=4.)
-    parser.add_argument('--lp', action='store_true', default=False)
-    parser.add_argument('--lp_scaling_per_dimension', action='store_true', default=False)
-    parser.add_argument('--conditional_flow_model', action='store_true', default=False)
-    parser.add_argument('--share_embeddings', action='store_true', default=False)
-    parser.add_argument('--learn_pb', action='store_true', default=False)
-    parser.add_argument('--pb_scale_range', type=float, default=0.1)
-    parser.add_argument('--learned_variance', action='store_true', default=False)
-    parser.add_argument('--partial_energy', action='store_true', default=False)
-    parser.add_argument('--no_clipping', action='store_false', dest='clipping')
-    parser.add_argument('--lgv_clip', type=float, default=1e2)
-    parser.add_argument('--gfn_clip', type=float, default=1e4)
-    parser.add_argument('--no_zero_init', action='store_false', dest='zero_init')
-    parser.add_argument('--no_pis_architectures', action='store_false', dest='pis_architectures')
+    parser.add_argument("--lgv_layers", type=int, default=3)
+    parser.add_argument("--joint_layers", type=int, default=2)
+    parser.add_argument("--t_scale", type=float, default=1.0)
+    parser.add_argument("--log_var_range", type=float, default=4.0)
+    parser.add_argument("--lp", action="store_true", default=False)
+    parser.add_argument("--lp_scaling_per_dimension", action="store_true", default=False)
+    parser.add_argument("--conditional_flow_model", action="store_true", default=False)
+    parser.add_argument("--share_embeddings", action="store_true", default=False)
+    parser.add_argument("--learn_pb", action="store_true", default=False)
+    parser.add_argument("--pb_scale_range", type=float, default=0.1)
+    parser.add_argument("--learned_variance", action="store_true", default=False)
+    parser.add_argument("--partial_energy", action="store_true", default=False)
+    parser.add_argument("--no_clipping", action="store_false", dest="clipping")
+    parser.add_argument("--lgv_clip", type=float, default=1e2)
+    parser.add_argument("--gfn_clip", type=float, default=1e4)
+    parser.add_argument("--no_zero_init", action="store_false", dest="zero_init")
+    parser.add_argument("--no_pis_architectures", action="store_false", dest="pis_architectures")
 
     ################################################################
     ### For discretizer
-    parser.add_argument('--T', type=int, default=100)
+    parser.add_argument("--T", type=int, default=100)
     # evaluation T
-    parser.add_argument('--eval_T', type=int, default=100)
+    parser.add_argument("--eval_T", type=int, default=100)
     # discretization scheme for training
-    parser.add_argument('--discretizer', type=str, default='uniform', choices=('uniform', 'random', 'equidistant'))
+    parser.add_argument(
+        "--discretizer",
+        type=str,
+        default="uniform",
+        choices=("uniform", "random", "equidistant"),
+    )
     # maximum ratio between the longest and the shortest step size (only for 'random' discretizer)
-    parser.add_argument('--discretizer_max_ratio', type=float, default=10.0)
+    parser.add_argument("--discretizer_max_ratio", type=float, default=10.0)
     ################################################################
 
     ################################################################
     ### For local search
-    parser.add_argument('--local_search', action='store_true', default=False)
+    parser.add_argument("--local_search", action="store_true", default=False)
     # How many iterations to run local search
-    parser.add_argument('--max_iter_ls', type=int, default=200)
+    parser.add_argument("--max_iter_ls", type=int, default=200)
     # How many iterations to burn in before making local search
-    parser.add_argument('--burn_in', type=int, default=100)
+    parser.add_argument("--burn_in", type=int, default=100)
     # How frequently to make local search
-    parser.add_argument('--ls_cycle', type=int, default=100)
+    parser.add_argument("--ls_cycle", type=int, default=100)
     # Step size of Langevin Dynamics
-    parser.add_argument('--ld_step', type=float, default=0.001)
-    parser.add_argument('--ld_schedule', action='store_true', default=False)
+    parser.add_argument("--ld_step", type=float, default=0.001)
+    parser.add_argument("--ld_schedule", action="store_true", default=False)
     # Target acceptance rate
-    parser.add_argument('--target_acceptance_rate', type=float, default=0.574)
+    parser.add_argument("--target_acceptance_rate", type=float, default=0.574)
     ################################################################
 
     ################################################################
     ### For replay buffer
-    parser.add_argument('--buffer_size', type=int, default=-1)  # 100 * batch_size by default
+    parser.add_argument("--buffer_size", type=int, default=-1)  # 100 * batch_size by default
     # prioritization
-    parser.add_argument('--prioritization', type=str, default="none", choices=('none', 'reward', 'loss', 'normalized_iw'))
+    parser.add_argument(
+        "--prioritization",
+        type=str,
+        default="none",
+        choices=("none", "reward", "loss", "normalized_iw"),
+    )
     # buffer sampling strategy  # TODO: support percentile-based sampling
     parser.add_argument(
-        '--buffer_sampling', type=str, default="proportional", choices=('proportional', 'rank')
+        "--buffer_sampling",
+        type=str,
+        default="proportional",
+        choices=("proportional", "rank"),
     )
     # low rank_k give steep priorization in rank-based replay sampling
-    parser.add_argument('--rank_k', type=float, default=1e-2)
+    parser.add_argument("--rank_k", type=float, default=1e-2)
     # logr_lb for filtering out samples with extremely low reward values for numerical stability
-    parser.add_argument('--logr_lb', type=float, default=-1e5)
+    parser.add_argument("--logr_lb", type=float, default=-1e5)
     # prefill to wait before starting to sample from buffer
-    parser.add_argument('--prefill', type=int, default=10)  # wait this amount of iterations to fill the buffer
+    parser.add_argument(
+        "--prefill", type=int, default=10
+    )  # wait this amount of iterations to fill the buffer
     ################################################################
 
     ################################################################
     ### Exploration with extra noise
-    parser.add_argument('--exploratory', action='store_true', default=False)
-    parser.add_argument('--exploration_factor', type=float, default=0.1)
-    parser.add_argument('--exploration_wd', action='store_true', default=False)
+    parser.add_argument("--exploratory", action="store_true", default=False)
+    parser.add_argument("--exploration_factor", type=float, default=0.1)
+    parser.add_argument("--exploration_wd", action="store_true", default=False)
     ################################################################
 
     ################################################################
     ### Eval & Plot
-    parser.add_argument('--eval_freq', type=int, default=100)
-    parser.add_argument('--eval_data_size', type=int, default=2000)
-    parser.add_argument('--final_eval_data_size', type=int, default=2000)
-    parser.add_argument('--plot_freq', type=int, default=2500)
-    parser.add_argument('--plot_data_size', type=int, default=2000)
+    parser.add_argument("--eval_freq", type=int, default=100)
+    parser.add_argument("--eval_data_size", type=int, default=2000)
+    parser.add_argument("--final_eval_data_size", type=int, default=2000)
+    parser.add_argument("--plot_freq", type=int, default=2500)
+    parser.add_argument("--plot_data_size", type=int, default=2000)
     ################################################################
 
     ################################################################
     ### Importance sampling related
-    parser.add_argument('--aux_target', type=str, default='target', choices=('target', 'loss', 'iw'))
-    parser.add_argument('--train_resampling', action='store_true', default=False)
-    parser.add_argument('--train_weighting', action='store_true', default=False)
-    parser.add_argument('--alternating', action='store_true', default=False)
-    parser.add_argument('--target_ess', type=float, default=0.0)  # 0.0 has no effect
     parser.add_argument(
-        '--smoothing',
-        type=str,
-        default='clip_above',
-        choices=('clip_above', 'clip_below', 'temper', 'mix_with_uniform'),
+        "--aux_target", type=str, default="target", choices=("target", "loss", "iw")
     )
-    parser.add_argument('--eval_resampling', action='store_true', default=False)
-    parser.add_argument('--eval_weighting', action='store_true', default=False)
-    parser.add_argument('--eval_buffer', action='store_true', default=False)
+    parser.add_argument("--train_resampling", action="store_true", default=False)
+    parser.add_argument("--train_weighting", action="store_true", default=False)
+    parser.add_argument("--alternating", action="store_true", default=False)
+    parser.add_argument("--target_ess", type=float, default=0.0)  # 0.0 has no effect
+    parser.add_argument(
+        "--smoothing",
+        type=str,
+        default="clip_above",
+        choices=("clip_above", "clip_below", "temper", "mix_with_uniform"),
+    )
+    parser.add_argument("--eval_resampling", action="store_true", default=False)
+    parser.add_argument("--eval_weighting", action="store_true", default=False)
+    parser.add_argument("--eval_buffer", action="store_true", default=False)
     ################################################################
 
     args = parser.parse_args()
@@ -361,7 +388,7 @@ if __name__ == '__main__':
         args.loss_type_str += f"-lambda{args.subtb_lambda}"
 
     set_seed(args.seed)
-    if 'SLURM_PROCID' in os.environ:
+    if "SLURM_PROCID" in os.environ:
         args.seed += int(os.environ["SLURM_PROCID"])
 
     if args.lr_back is None:
@@ -378,9 +405,10 @@ if __name__ == '__main__':
 
     if args.local_search:
         assert (
-            (args.training_mode == "both" or args.training_mode == "bwd")
-            and args.bwd_from == "buffer"
-        ), "We only support local search for backward sampling with buffer"
+            args.training_mode == "both" or args.training_mode == "bwd"
+        ) and args.bwd_from == "buffer", (
+            "We only support local search for backward sampling with buffer"
+        )
 
     assert args.plot_freq % args.eval_freq == 0
 

@@ -79,24 +79,26 @@ def get_gfn_optimizer(
     weight_decay=1e-7,
 ):
     param_groups = [
-        {'params': gfn_model.t_model.parameters()},
-        {'params': gfn_model.s_model.parameters()},
-        {'params': gfn_model.joint_model.parameters()},
+        {"params": gfn_model.t_model.parameters()},
+        {"params": gfn_model.s_model.parameters()},
+        {"params": gfn_model.joint_model.parameters()},
     ]
     if gfn_model.lp_scaling_model is not None:
-        param_groups += [{'params': gfn_model.lp_scaling_model.parameters()}]
+        param_groups += [{"params": gfn_model.lp_scaling_model.parameters()}]
 
     if conditional_flow_model:
         assert isinstance(gfn_model.flow_model, torch.nn.Module)
-        param_groups += [{'params': gfn_model.flow_model.parameters(), 'lr': lr_flow}]
+        param_groups += [{"params": gfn_model.flow_model.parameters(), "lr": lr_flow}]
     else:
-        param_groups += [{'params': [gfn_model.flow_model], 'lr': lr_Z} ]
+        param_groups += [{"params": [gfn_model.flow_model], "lr": lr_Z}]
 
     if back_model:
         assert gfn_model.back_model is not None
-        param_groups += [{'params': gfn_model.back_model.parameters(), 'lr': lr_back}]
+        param_groups += [{"params": gfn_model.back_model.parameters(), "lr": lr_back}]
 
-    gfn_optimizer = torch.optim.Adam(param_groups, lr_policy, weight_decay=weight_decay if use_weight_decay else 0.0)
+    gfn_optimizer = torch.optim.Adam(
+        param_groups, lr_policy, weight_decay=weight_decay if use_weight_decay else 0.0
+    )
     return gfn_optimizer
 
 
@@ -109,14 +111,14 @@ def get_exploration_std(
     if exploratory is False:
         return 0.0
     if exploration_wd:
-        exploration_std = exploration_factor * max(0, 1. - iter / 5000.)
+        exploration_std = exploration_factor * max(0, 1.0 - iter / 5000.0)
     else:
         exploration_std = exploration_factor
     return exploration_std
 
 
 def get_name(args):
-    name = ''
+    name = ""
 
     name += args.loss_type
     if args.loss_type == "subtb":
@@ -141,7 +143,11 @@ def get_name(args):
     if args.training_mode != "fwd":
         name += f"-{args.bwd_from}"
         if args.bwd_from == "buffer":
-            buffer_size_str = f"{args.buffer_size // 1000}K" if args.buffer_size >= 1000 else f"{args.buffer_size}"
+            buffer_size_str = (
+                f"{args.buffer_size // 1000}K"
+                if args.buffer_size >= 1000
+                else f"{args.buffer_size}"
+            )
             name += f"-{buffer_size_str}"
             if args.prioritization != "none":
                 name += f"-{args.prioritization}-{args.buffer_sampling}"

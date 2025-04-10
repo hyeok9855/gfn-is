@@ -88,10 +88,14 @@ class GFN(nn.Module):
 
             self.t_model = TimeEncodingPIS(harmonics_dim, t_emb_dim, hidden_dim)
             self.s_model = StateEncodingPIS(ndim, s_emb_dim)
-            self.joint_model = JointPolicyPIS(s_emb_dim, hidden_dim, out_dim, joint_layers, zero_init)
+            self.joint_model = JointPolicyPIS(
+                s_emb_dim, hidden_dim, out_dim, joint_layers, zero_init
+            )
 
             if learn_pb:
-                self.back_model = JointPolicyPIS(s_emb_dim, hidden_dim, out_dim, joint_layers, zero_init)
+                self.back_model = JointPolicyPIS(
+                    s_emb_dim, hidden_dim, out_dim, joint_layers, zero_init
+                )
 
             if self.conditional_flow_model:
                 self.t_model_flow = self.s_model_flow = None
@@ -103,7 +107,9 @@ class GFN(nn.Module):
                 self.flow_model = torch.nn.Parameter(torch.tensor(0.0).to(self.device))
 
             if self.lp:
-                self.lp_scaling_model = LangevinScalingModelPIS(t_emb_dim, hidden_dim, lv_out_dim, lgv_layers, zero_init)
+                self.lp_scaling_model = LangevinScalingModelPIS(
+                    t_emb_dim, hidden_dim, lv_out_dim, lgv_layers, zero_init
+                )
 
         else:
 
@@ -119,7 +125,9 @@ class GFN(nn.Module):
                 self.flow_model = torch.nn.Parameter(torch.tensor(0.0).to(self.device))
 
             if self.lp:
-                self.lp_scaling_model = LangevinScalingModel(s_emb_dim, t_emb_dim, hidden_dim, lv_out_dim, zero_init)
+                self.lp_scaling_model = LangevinScalingModel(
+                    s_emb_dim, t_emb_dim, hidden_dim, lv_out_dim, zero_init
+                )
 
     def split_params(self, tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if not self.learned_variance:
@@ -145,8 +153,13 @@ class GFN(nn.Module):
         s_new = self.joint_model(s_emb, t_emb)
 
         if self.conditional_flow_model:
-            s_emb_flow = self.s_model_flow(s) if not self.share_embeddings else s_emb
-            t_emb_flow = self.t_model_flow(t) if not self.share_embeddings else t_emb
+            if not self.share_embeddings:
+                assert self.s_model_flow is not None and self.t_model_flow is not None
+                s_emb_flow = self.s_model_flow(s)
+                t_emb_flow = self.t_model_flow(t)
+            else:
+                s_emb_flow = s_emb
+                t_emb_flow = t_emb
             flow = self.flow_model(s_emb_flow, t_emb_flow).squeeze(-1)
         else:
             flow = self.flow_model  # A learnable scalar
@@ -169,7 +182,7 @@ class GFN(nn.Module):
         ts: torch.Tensor,
         exploration_std=0.0,
         log_r_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
-        pis=False
+        pis=False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         bsz = s.shape[0]
         T = ts.shape[1] - 1
@@ -190,7 +203,9 @@ class GFN(nn.Module):
             if self.partial_energy:
                 assert log_r_fn is not None
                 ref_log_var = (self.t_scale * ts[:, max(1, i)]).log()
-                import pdb; pdb.set_trace()  # TODO: Check if this is correct
+                import pdb
+
+                pdb.set_trace()  # TODO: Check if this is correct
                 log_p_ref = -0.5 * (logtwopi + ref_log_var + (-ref_log_var).exp() * (s**2)).sum(1)
                 logf[:, i] += (1 - ts[:, i]) * log_p_ref + ts[:, i] * log_r_fn(s)
 
@@ -204,21 +219,29 @@ class GFN(nn.Module):
                 pflogvars_sample = pflogvars.detach()
                 # Add exploration noise
                 if exploration_std > 0.0:
-                    add_log_var = torch.ones_like(pflogvars_sample) * (exploration_std / dts.sqrt()).log() * 2
+                    add_log_var = (
+                        torch.ones_like(pflogvars_sample) * (exploration_std / dts.sqrt()).log() * 2
+                    )
                     pflogvars_sample = torch.logaddexp(pflogvars_sample, add_log_var)
 
             s_ = (
                 s
                 + dts * pfmean_sample
-                + dts.sqrt() * (pflogvars_sample / 2).exp() * torch.randn_like(s, device=self.device)
+                + dts.sqrt()
+                * (pflogvars_sample / 2).exp()
+                * torch.randn_like(s, device=self.device)
             )
 
             noise = ((s_ - s) - dts * pfmean) / (dts.sqrt() * (pflogvars / 2).exp())
             logpf[:, i] = -0.5 * (noise**2 + logtwopi + dts.log() + pflogvars).sum(1)
 
             if exploration_std > 0.0:
-                noise_exp = ((s_ - s) - dts * pfmean_sample) / (dts.sqrt() * (pflogvars_sample / 2).exp())
-                logpf_exp[:, i] = -0.5 * (noise_exp**2 + logtwopi + dts.log() + pflogvars_sample).sum(1)
+                noise_exp = ((s_ - s) - dts * pfmean_sample) / (
+                    dts.sqrt() * (pflogvars_sample / 2).exp()
+                )
+                logpf_exp[:, i] = -0.5 * (
+                    noise_exp**2 + logtwopi + dts.log() + pflogvars_sample
+                ).sum(1)
             else:
                 logpf_exp[:, i] = logpf[:, i].detach()
 
@@ -234,7 +257,12 @@ class GFN(nn.Module):
 
             if i > 0:
                 back_mean = s_ - s_ * dts / (ts[:, i + 1]).unsqueeze(1) * back_mean_correction
-                back_var = (self.pf_std_per_traj**2) * dts * (ts[:, i] / ts[:, i + 1]).unsqueeze(1) * back_var_correction
+                back_var = (
+                    (self.pf_std_per_traj**2)
+                    * dts
+                    * (ts[:, i] / ts[:, i + 1]).unsqueeze(1)
+                    * back_var_correction
+                )
                 noise_backward = (s - back_mean) / back_var.sqrt()
                 logpb[:, i] = -0.5 * (noise_backward**2 + logtwopi + back_var.log()).sum(1)
 
@@ -272,12 +300,15 @@ class GFN(nn.Module):
                     back_mean_correction = 1 + dmean.tanh() * self.pb_scale_range
                     back_var_correction = 1 + dvar.tanh() * self.pb_scale_range
                 else:
-                    back_mean_correction, back_var_correction = torch.ones_like(s), torch.ones_like(s)
+                    back_mean_correction, back_var_correction = torch.ones_like(s), torch.ones_like(
+                        s
+                    )
 
                 mean = s - s * dts / ts[:, T - i].unsqueeze(1) * back_mean_correction
                 var = (
                     (self.pf_std_per_traj**2)
-                    * dts * (ts[:, T - i - 1] / ts[:, T - i]).unsqueeze(1)
+                    * dts
+                    * (ts[:, T - i - 1] / ts[:, T - i]).unsqueeze(1)
                     * back_var_correction
                 )
 

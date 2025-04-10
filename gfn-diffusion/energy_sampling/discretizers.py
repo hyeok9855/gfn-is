@@ -26,9 +26,11 @@ def random_discretizer(batch_size: int, T: int, max_ratio=10.0, *args, **kwargs)
     return ts
 
 
-def shifted_equidistant_discretizer(batch_size: int, T: int, eps=1e-4, *args, **kwargs) -> torch.Tensor:
+def shifted_equidistant_discretizer(
+    batch_size: int, T: int, eps=1e-4, *args, **kwargs
+) -> torch.Tensor:
     bound = 1 / T - eps
-    noise = torch.empty(batch_size, 1).uniform_(- bound, bound)
+    noise = torch.empty(batch_size, 1).uniform_(-bound, bound)
     steps = (torch.arange(1, T) / T).unsqueeze(0) + noise
     ts = torch.cat([torch.zeros(batch_size, 1), steps, torch.ones(batch_size, 1)], dim=1)
     return ts

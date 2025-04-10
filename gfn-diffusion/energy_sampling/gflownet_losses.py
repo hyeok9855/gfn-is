@@ -8,7 +8,7 @@ def tb_loss(
     log_r: torch.Tensor,
 ) -> torch.Tensor:
     tb_discrepancy = log_Z + log_pfs.sum(-1) - log_r - log_pbs.sum(-1)
-    return tb_discrepancy ** 2
+    return tb_discrepancy**2
 
 
 def tb_avg_loss(
@@ -18,7 +18,7 @@ def tb_avg_loss(
 ) -> torch.Tensor:
     log_Z = (log_r + log_pbs.sum(-1) - log_pfs.sum(-1)).mean(dim=0, keepdim=True)
     tb_avg_discrepancy = log_r + log_pbs.sum(-1) - log_pfs.sum(-1) - log_Z
-    return tb_avg_discrepancy ** 2
+    return tb_avg_discrepancy**2
 
 
 def db_loss(
@@ -27,7 +27,7 @@ def db_loss(
     log_fs: torch.Tensor,
 ) -> torch.Tensor:
     db_discrepancy = log_fs[:, 1:] + log_pbs - log_pfs - log_fs[:, :-1]
-    return (db_discrepancy ** 2).sum(-1)
+    return (db_discrepancy**2).sum(-1)
 
 
 def subtb_loss(
@@ -43,9 +43,7 @@ def subtb_loss(
     )  # (bs, T+1)
     A1 = diff_logp_padded.unsqueeze(1) - diff_logp_padded.unsqueeze(2)  # (bs, T+1, T+1)
     A2 = log_fs[:, :, None] - log_fs[:, None, :] + A1  # (bs, T+1, T+1)
-    subtb_losses = torch.triu(
-        (A2 ** 2) * coef_matrix.unsqueeze(0), diagonal=1
-    ).sum((1, 2))
+    subtb_losses = torch.triu((A2**2) * coef_matrix.unsqueeze(0), diagonal=1).sum((1, 2))
     return subtb_losses
 
 
@@ -57,19 +55,19 @@ def get_gfn_loss(
     subtb_coef_matrix: torch.Tensor | None = None,
     ndim: int | None = None,
 ) -> torch.Tensor:
-    if loss_type == 'tb':
+    if loss_type == "tb":
         losses = tb_loss(log_pfs, log_pbs, log_fs[:, 0], log_fs[:, -1])
-    elif loss_type == 'tb-avg':
+    elif loss_type == "tb-avg":
         losses = tb_avg_loss(log_pfs, log_pbs, log_fs[:, -1])
-    elif loss_type == 'db':
+    elif loss_type == "db":
         losses = db_loss(log_pfs, log_pbs, log_fs)
-    elif loss_type == 'subtb':
+    elif loss_type == "subtb":
         assert subtb_coef_matrix is not None
         losses = subtb_loss(log_pfs, log_pbs, log_fs, subtb_coef_matrix)
-    elif loss_type == 'pis':
+    elif loss_type == "pis":
         assert ndim is not None
         losses = (1 / ndim) * (log_pfs.sum(-1) - log_pbs.sum(-1) - log_fs[:, -1])
     else:
-        raise ValueError(f'Invalid training loss: {loss_type}')
+        raise ValueError(f"Invalid training loss: {loss_type}")
 
     return losses

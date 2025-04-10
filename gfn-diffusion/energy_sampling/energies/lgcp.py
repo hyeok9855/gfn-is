@@ -6,7 +6,7 @@ import torch
 from energies.base import BaseEnergy
 
 _LGCP_DIM = 1600
-_CSV_PATH = 'energies/data/df_pines.csv'
+_CSV_PATH = "energies/data/df_pines.csv"
 
 
 # pylint: disable=invalid-name, too-many-instance-attributes
@@ -35,9 +35,7 @@ def get_bin_counts(array_in, num_bins_per_dim):
 
 def get_bin_vals(num_bins: int):
     grid_indices = np.arange(num_bins)
-    bin_vals = np.array(
-        [np.array(elem) for elem in itertools.product(grid_indices, grid_indices)]
-    )
+    bin_vals = np.array([np.array(elem) for elem in itertools.product(grid_indices, grid_indices)])
 
     return bin_vals
 
@@ -126,21 +124,16 @@ class Cox:
         # B, _ = white.shape
         quadratic_term = -0.5 * torch.sum(white**2, dim=1)  # (B,)
         prior_log_density = self._white_gaussian_log_normalizer + quadratic_term  # (B,)
-        latent_function = get_latents_from_white(
-            white, self._mu_zero, self._cholesky_gram
-        )  # (B,D)
+        latent_function = get_latents_from_white(white, self._mu_zero, self._cholesky_gram)  # (B,D)
         log_likelihood = poisson_process_log_likelihood(
             latent_function, self._poisson_a, self._flat_bin_counts
         )  # (B,)
         return prior_log_density + log_likelihood  # (B,)
 
     def unwhitened_posterior_log_density(self, latents):
-        white = get_white_from_latents(
-            latents, self._mu_zero, self._cholesky_gram
-        )  # (B,D)
+        white = get_white_from_latents(latents, self._mu_zero, self._cholesky_gram)  # (B,D)
         prior_log_density = (
-            -0.5 * torch.sum(white * white, dim=1)
-            + self._unwhitened_gaussian_log_normalizer
+            -0.5 * torch.sum(white * white, dim=1) + self._unwhitened_gaussian_log_normalizer
         )  # (B,)
         log_likelihood = poisson_process_log_likelihood(
             latents, self._poisson_a, self._flat_bin_counts
@@ -154,14 +147,15 @@ class LGCP(BaseEnergy):
         self.cox = Cox(_CSV_PATH, 40, use_whitened=False, device=device)
         super().__init__()
         self.device = device
-        self.data = torch.ones(_LGCP_DIM, dtype=float).to(self.device)  # pylint: disable= not-callable
+        self.data = torch.ones(_LGCP_DIM, dtype=float).to(
+            self.device
+        )  # pylint: disable= not-callable
         self.data_ndim = _LGCP_DIM
 
-    #TODO - check!
+    # TODO - check!
 
     # def log_pdf(self, x):
     #     return self.cox.evaluate_log_density(x)
 
     def energy(self, x):
         return -self.cox.evaluate_log_density(x)
-

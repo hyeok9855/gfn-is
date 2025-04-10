@@ -10,7 +10,10 @@ class TimeEncoding(nn.Module):
 
         pe = torch.arange(1, harmonics_dim + 1).float().unsqueeze(0) * 2 * math.pi
         self.t_model = nn.Sequential(
-            nn.Linear(2 * harmonics_dim, hidden_dim), nn.GELU(), nn.Linear(hidden_dim, t_emb_dim), nn.GELU()
+            nn.Linear(2 * harmonics_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, t_emb_dim),
+            nn.GELU(),
         )
         self.register_buffer("pe", pe)
 
@@ -30,7 +33,10 @@ class StateEncoding(nn.Module):
         super().__init__()
 
         self.x_model = nn.Sequential(
-            nn.Linear(ndim, hidden_dim), nn.GELU(), nn.Linear(hidden_dim, s_emb_dim), nn.GELU()
+            nn.Linear(ndim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, s_emb_dim),
+            nn.GELU(),
         )
 
     def forward(self, s_emb: torch.Tensor) -> torch.Tensor:
@@ -38,7 +44,9 @@ class StateEncoding(nn.Module):
 
 
 class JointPolicy(nn.Module):
-    def __init__(self, s_emb_dim: int, t_emb_dim: int, hidden_dim: int, out_dim: int, zero_init: bool = False) -> None:
+    def __init__(
+        self, s_emb_dim: int, t_emb_dim: int, hidden_dim: int, out_dim: int, zero_init: bool = False
+    ) -> None:
         super().__init__()
 
         self.model = nn.Sequential(
@@ -74,7 +82,9 @@ class FlowModel(nn.Module):
 
 
 class LangevinScalingModel(nn.Module):
-    def __init__(self, s_emb_dim: int, t_emb_dim: int, hidden_dim: int, out_dim: int, zero_init: bool = False) -> None:
+    def __init__(
+        self, s_emb_dim: int, t_emb_dim: int, hidden_dim: int, out_dim: int, zero_init: bool = False
+    ) -> None:
         super().__init__()
 
         self.model = nn.Sequential(
@@ -130,14 +140,24 @@ class StateEncodingPIS(nn.Module):
 
 
 class JointPolicyPIS(nn.Module):
-    def __init__(self, s_emb_dim: int, hidden_dim: int, out_dim: int, num_layers: int, zero_init: bool = False) -> None:
+    def __init__(
+        self,
+        s_emb_dim: int,
+        hidden_dim: int,
+        out_dim: int,
+        num_layers: int,
+        zero_init: bool = False,
+    ) -> None:
         super().__init__()
 
         self.model = nn.Sequential(
             nn.GELU(),
             nn.Linear(s_emb_dim, hidden_dim),
             nn.GELU(),
-            *[nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.GELU()) for _ in range(num_layers - 1)],
+            *[
+                nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.GELU())
+                for _ in range(num_layers - 1)
+            ],
             nn.Linear(hidden_dim, out_dim),
         )
 
@@ -150,14 +170,24 @@ class JointPolicyPIS(nn.Module):
 
 
 class FlowModelPIS(nn.Module):
-    def __init__(self, s_emb_dim: int, hidden_dim: int, out_dim: int, num_layers: int, zero_init: bool = False) -> None:
+    def __init__(
+        self,
+        s_emb_dim: int,
+        hidden_dim: int,
+        out_dim: int,
+        num_layers: int,
+        zero_init: bool = False,
+    ) -> None:
         super().__init__()
 
         self.model = nn.Sequential(
             nn.GELU(),
             nn.Linear(s_emb_dim, hidden_dim),
             nn.GELU(),
-            *[nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.GELU()) for _ in range(num_layers - 1)],
+            *[
+                nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.GELU())
+                for _ in range(num_layers - 1)
+            ],
             nn.Linear(hidden_dim, out_dim),
         )
 
@@ -170,7 +200,14 @@ class FlowModelPIS(nn.Module):
 
 
 class LangevinScalingModelPIS(nn.Module):
-    def __init__(self, t_emb_dim: int, hidden_dim: int, out_dim: int, num_layers: int, zero_init: bool = False) -> None:
+    def __init__(
+        self,
+        t_emb_dim: int,
+        hidden_dim: int,
+        out_dim: int,
+        num_layers: int,
+        zero_init: bool = False,
+    ) -> None:
         super().__init__()
 
         pe = torch.linspace(start=0.1, end=100, steps=t_emb_dim)[None]

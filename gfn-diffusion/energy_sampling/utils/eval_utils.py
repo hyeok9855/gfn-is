@@ -140,7 +140,11 @@ def _mmd2(K_XX, K_XY, K_YY, const_diagonal=False, biased=False):
     K_XY_sum = K_XY_sums_0.sum()  # e^T * K_{XY} * e
 
     if biased:
-        mmd2 = (Kt_XX_sum + sum_diag_X) / (m * m) + (Kt_YY_sum + sum_diag_Y) / (m * m) - 2.0 * K_XY_sum / (m * m)
+        mmd2 = (
+            (Kt_XX_sum + sum_diag_X) / (m * m)
+            + (Kt_YY_sum + sum_diag_Y) / (m * m)
+            - 2.0 * K_XY_sum / (m * m)
+        )
     else:
         mmd2 = Kt_XX_sum / (m * (m - 1)) + Kt_YY_sum / (m * (m - 1)) - 2.0 * K_XY_sum / (m * m)
 
@@ -148,7 +152,9 @@ def _mmd2(K_XX, K_XY, K_YY, const_diagonal=False, biased=False):
 
 
 def _mmd2_and_ratio(K_XX, K_XY, K_YY, const_diagonal=False, biased=False):
-    mmd2, var_est = _mmd2_and_variance(K_XX, K_XY, K_YY, const_diagonal=const_diagonal, biased=biased)
+    mmd2, var_est = _mmd2_and_variance(
+        K_XX, K_XY, K_YY, const_diagonal=const_diagonal, biased=biased
+    )
     loss = mmd2 / torch.sqrt(torch.clamp(var_est, min=MIN_VAR_EST))
     return loss, mmd2, var_est
 
@@ -184,21 +190,37 @@ def _mmd2_and_variance(K_XX, K_XY, K_YY, const_diagonal=False, biased=False):
     K_XY_2_sum = (K_XY**2).sum()  # \| K_{XY} \|_F^2
 
     if biased:
-        mmd2 = (Kt_XX_sum + sum_diag_X) / (m * m) + (Kt_YY_sum + sum_diag_Y) / (m * m) - 2.0 * K_XY_sum / (m * m)
+        mmd2 = (
+            (Kt_XX_sum + sum_diag_X) / (m * m)
+            + (Kt_YY_sum + sum_diag_Y) / (m * m)
+            - 2.0 * K_XY_sum / (m * m)
+        )
     else:
         mmd2 = Kt_XX_sum / (m * (m - 1)) + Kt_YY_sum / (m * (m - 1)) - 2.0 * K_XY_sum / (m * m)
 
     var_est = (
         2.0
         / (m**2 * (m - 1.0) ** 2)
-        * (2 * Kt_XX_sums.dot(Kt_XX_sums) - Kt_XX_2_sum + 2 * Kt_YY_sums.dot(Kt_YY_sums) - Kt_YY_2_sum)
+        * (
+            2 * Kt_XX_sums.dot(Kt_XX_sums)
+            - Kt_XX_2_sum
+            + 2 * Kt_YY_sums.dot(Kt_YY_sums)
+            - Kt_YY_2_sum
+        )
         - (4.0 * m - 6.0) / (m**3 * (m - 1.0) ** 3) * (Kt_XX_sum**2 + Kt_YY_sum**2)
-        + 4.0 * (m - 2.0) / (m**3 * (m - 1.0) ** 2) * (K_XY_sums_1.dot(K_XY_sums_1) + K_XY_sums_0.dot(K_XY_sums_0))
+        + 4.0
+        * (m - 2.0)
+        / (m**3 * (m - 1.0) ** 2)
+        * (K_XY_sums_1.dot(K_XY_sums_1) + K_XY_sums_0.dot(K_XY_sums_0))
         - 4.0 * (m - 3.0) / (m**3 * (m - 1.0) ** 2) * (K_XY_2_sum)
         - (8 * m - 12) / (m**5 * (m - 1)) * K_XY_sum**2
         + 8.0
         / (m**3 * (m - 1.0))
-        * (1.0 / m * (Kt_XX_sum + Kt_YY_sum) * K_XY_sum - Kt_XX_sums.dot(K_XY_sums_1) - Kt_YY_sums.dot(K_XY_sums_0))
+        * (
+            1.0 / m * (Kt_XX_sum + Kt_YY_sum) * K_XY_sum
+            - Kt_XX_sums.dot(K_XY_sums_1)
+            - Kt_YY_sums.dot(K_XY_sums_0)
+        )
     )
     return mmd2, var_est
 
@@ -365,7 +387,7 @@ def eval_step(
     metrics = {f"{'final_' if final_eval else ''}eval/{k}": v for k, v in metrics.items()}
 
     ### Resample or weighted
-    err = - (log_fs[:, 0] + log_pfs.sum(-1) - log_rewards - log_pbs.sum(-1))
+    err = -(log_fs[:, 0] + log_pfs.sum(-1) - log_rewards - log_pbs.sum(-1))
     weights = err.softmax(0)
 
     model_trajs_rs = None
@@ -391,7 +413,9 @@ def eval_step(
         assert gt_xs is not None
         metrics_w = {}
         metrics_w.update(
-            compute_distribution_distances(sample_xs.unsqueeze(1), gt_xs.unsqueeze(1), weights=weights)
+            compute_distribution_distances(
+                sample_xs.unsqueeze(1), gt_xs.unsqueeze(1), weights=weights
+            )
         )
         metrics_w = {
             f"{'final_' if final_eval else ''}eval_weighted/{k}": v for k, v in metrics_w.items()
@@ -403,9 +427,7 @@ def eval_step(
         assert gt_xs is not None
         buffer_xs, _, _, _ = buffer.sample(batch_size)
         metrics_b = {}
-        metrics_b.update(
-            compute_distribution_distances(buffer_xs.unsqueeze(1), gt_xs.unsqueeze(1))
-        )
+        metrics_b.update(compute_distribution_distances(buffer_xs.unsqueeze(1), gt_xs.unsqueeze(1)))
         metrics_b = {
             f"{'final_' if final_eval else ''}eval_buffer/{k}": v for k, v in metrics_b.items()
         }

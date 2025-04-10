@@ -26,7 +26,9 @@ class GMM40(BaseEnergy):
             scale = torch.ones(num_components, ndim, device=device) * scale_scaling
 
         mixture_dist = D.Categorical(logits=logits)
-        components_dist = D.Independent(D.Normal(loc=mean, scale=scale), reinterpreted_batch_ndims=1)
+        components_dist = D.Independent(
+            D.Normal(loc=mean, scale=scale), reinterpreted_batch_ndims=1
+        )
         self.distribution = D.MixtureSameFamily(mixture_dist, components_dist)
 
     def energy(self, x: torch.Tensor) -> torch.Tensor:

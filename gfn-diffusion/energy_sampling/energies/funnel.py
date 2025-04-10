@@ -12,9 +12,15 @@ class Funnel(BaseEnergy):
 
     def __init__(self, device: str | torch.device, ndim=10, sigma: float = 3.0) -> None:
         super().__init__(device=device, ndim=ndim, plot_bound=10.0)
-        self.dist_dominant = D.Normal(torch.tensor([0.0], device=self.device), torch.tensor([sigma], device=self.device))
+        self.dist_dominant = D.Normal(
+            torch.tensor([0.0], device=self.device), torch.tensor([sigma], device=self.device)
+        )
         self.mean_other = torch.zeros(self.ndim - 1, device=self.device).float()
-        self.cov_eye = torch.eye(self.ndim - 1, device=self.device).float().view(1, self.ndim - 1, self.ndim - 1)
+        self.cov_eye = (
+            torch.eye(self.ndim - 1, device=self.device)
+            .float()
+            .view(1, self.ndim - 1, self.ndim - 1)
+        )
 
     def energy(self, x: torch.Tensor) -> torch.Tensor:
         return -self._funnel_logprob(x)
