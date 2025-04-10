@@ -6,6 +6,7 @@ import numpy as np
 import ot as pot
 import torch
 
+from buffer import ReplayBuffer
 from energies import BaseEnergy
 from models import GFN
 from utils.misc_utils import logmeanexp
@@ -317,6 +318,7 @@ def eval_step(
     final_eval: bool = False,
     resampling: bool = False,
     weighting: bool = False,
+    buffer: ReplayBuffer | None = None,
 ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor | None]:
     metrics = {}
 
@@ -396,5 +398,17 @@ def eval_step(
         }
 
         metrics.update(metrics_w)
+
+    if buffer is not None:
+        assert gt_xs is not None
+        buffer_xs, _, _, _ = buffer.sample(batch_size)
+        metrics_b = {}
+        metrics_b.update(
+            compute_distribution_distances(buffer_xs.unsqueeze(1), gt_xs.unsqueeze(1))
+        )
+        metrics_b = {
+            f"{'final_' if final_eval else ''}eval_buffer/{k}": v for k, v in metrics_b.items()
+        }
+        metrics.update(metrics_b)
 
     return metrics, model_trajs, weights, model_trajs_rs

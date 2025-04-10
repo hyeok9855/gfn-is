@@ -184,6 +184,7 @@ def train(args):
                 pis=args.loss_type=="pis",
                 resampling=args.eval_resampling,
                 weighting=args.eval_weighting,
+                buffer=buffer if args.eval_buffer else None,
             )
             metrics.update(results)
 
@@ -222,6 +223,7 @@ def train(args):
         final_eval=True,
         resampling=args.eval_resampling,
         weighting=args.eval_weighting,
+        buffer=buffer if args.eval_buffer else None,
     )
     metrics.update(final_results)
     wandb.log(metrics, step=args.epochs)
@@ -346,6 +348,7 @@ if __name__ == '__main__':
     )
     parser.add_argument('--eval_resampling', action='store_true', default=False)
     parser.add_argument('--eval_weighting', action='store_true', default=False)
+    parser.add_argument('--eval_buffer', action='store_true', default=False)
     ################################################################
 
     args = parser.parse_args()
