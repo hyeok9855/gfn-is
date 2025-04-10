@@ -1,4 +1,5 @@
 from typing import Literal
+
 import torch
 from torch.utils.data import Dataset
 

@@ -1,6 +1,6 @@
 import math
 from functools import partial
-from typing import Callable, Optional, cast
+from typing import Callable, cast
 
 import numpy as np
 import ot as pot

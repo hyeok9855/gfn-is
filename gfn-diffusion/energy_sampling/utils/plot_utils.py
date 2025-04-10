@@ -1,16 +1,14 @@
 import itertools
 from typing import Callable
 
-from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
-import numpy as np
 import PIL
 import seaborn as sns
 import torch
 import wandb
-from einops import rearrange
+from matplotlib.figure import Figure
 
-from energies import BaseEnergy, Funnel, GMM40, ManyWell, TwentyFiveGaussianMixture
+from energies import GMM40, BaseEnergy, Funnel, ManyWell, TwentyFiveGaussianMixture
 
 
 def get_figure(bounds=(-10.0, 10.0)):

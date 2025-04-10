@@ -1,21 +1,13 @@
-from typing import Callable
-import torch
 import math
+from typing import Callable
+
 import numpy as np
+import torch
 import torch.nn as nn
 
-from models.architectures import (
-    FlowModel,
-    FlowModelPIS,
-    JointPolicy,
-    JointPolicyPIS,
-    LangevinScalingModel,
-    LangevinScalingModelPIS,
-    StateEncoding,
-    StateEncodingPIS,
-    TimeEncoding,
-    TimeEncodingPIS,
-)
+from models.architectures import (FlowModel, FlowModelPIS, JointPolicy, JointPolicyPIS,
+                                  LangevinScalingModel, LangevinScalingModelPIS, StateEncoding,
+                                  StateEncodingPIS, TimeEncoding, TimeEncodingPIS)
 
 logtwopi = math.log(2 * math.pi)
 

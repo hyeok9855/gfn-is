@@ -2,22 +2,17 @@ import argparse
 import os
 from copy import deepcopy
 
-import torch
 import matplotlib.pyplot as plt
+import torch
 import wandb
 from tqdm import trange
 
 from buffer import ReplayBuffer
 from discretizers import get_discretizer
-from energies import BaseEnergy, Funnel, ManyWell, GMM40, TwentyFiveGaussianMixture
+from energies import GMM40, BaseEnergy, Funnel, ManyWell, TwentyFiveGaussianMixture
 from models import GFN
 from utils.eval_utils import eval_step
-from utils.misc_utils import (
-    cal_subtb_coef_matrix,
-    get_gfn_optimizer,
-    get_name,
-    set_seed,
-)
+from utils.misc_utils import cal_subtb_coef_matrix, get_gfn_optimizer, get_name, set_seed
 from utils.plot_utils import plot_step
 from utils.train_utils import train_step
 

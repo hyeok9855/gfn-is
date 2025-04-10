@@ -1,6 +1,7 @@
+import itertools
+
 import numpy as np
 import pandas as pd
-import itertools
 import torch
 
 from energies.base import BaseEnergy
