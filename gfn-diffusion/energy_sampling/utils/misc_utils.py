@@ -72,9 +72,10 @@ def get_name(args):
         name += f"-lrZ{args.lr_Z}"
     elif args.loss_type in ["subtb", "db"]:
         name += f"-lrflow{args.lr_flow}"
-
     if args.use_weight_decay:
         name += f"-wd{args.weight_decay}"
+    if args.use_scheduler:
+        name += f"-lrsch"
 
     name += f"_{args.training_mode}"
     if args.training_mode != "fwd":
