@@ -20,6 +20,10 @@ class GFN(nn.Module):
         t_emb_dim: int,
         s_emb_dim: int,
         hidden_dim: int,
+        flow_harmonics_dim: int = 64,
+        flow_t_emb_dim: int = 64,
+        flow_s_emb_dim: int = 64,
+        flow_hidden_dim: int = 64,
         log_var_range: float = 4.0,
         t_scale: float = 1.0,
         lp: bool = False,
@@ -92,9 +96,14 @@ class GFN(nn.Module):
             if self.conditional_flow_model:
                 self.t_model_flow = self.s_model_flow = None
                 if not self.share_embeddings:
-                    self.t_model_flow = TimeEncodingPIS(harmonics_dim, t_emb_dim, hidden_dim)
-                    self.s_model_flow = StateEncodingPIS(ndim, s_emb_dim)
-                self.flow_model = FlowModelPIS(s_emb_dim, hidden_dim, 1, joint_layers)
+                    assert flow_t_emb_dim == flow_s_emb_dim
+                    self.t_model_flow = TimeEncodingPIS(
+                        flow_harmonics_dim, flow_t_emb_dim, flow_hidden_dim
+                    )
+                    self.s_model_flow = StateEncodingPIS(ndim, flow_s_emb_dim)
+                self.flow_model = FlowModelPIS(
+                    flow_s_emb_dim, flow_hidden_dim, 1, joint_layers, zero_init
+                )
             else:
                 self.flow_model = torch.nn.Parameter(torch.tensor(0.0).to(self.device))
 
@@ -104,7 +113,6 @@ class GFN(nn.Module):
                 )
 
         else:
-
             self.t_model = TimeEncoding(harmonics_dim, t_emb_dim, hidden_dim)
             self.s_model = StateEncoding(ndim, hidden_dim, s_emb_dim)
             self.joint_model = JointPolicy(s_emb_dim, t_emb_dim, hidden_dim, out_dim, zero_init)
@@ -112,7 +120,15 @@ class GFN(nn.Module):
                 self.back_model = JointPolicy(s_emb_dim, t_emb_dim, hidden_dim, out_dim, zero_init)
 
             if self.conditional_flow_model:
-                self.flow_model = FlowModel(s_emb_dim, t_emb_dim, hidden_dim, 1)
+                self.t_model_flow = self.s_model_flow = None
+                if not self.share_embeddings:
+                    self.t_model_flow = TimeEncoding(
+                        flow_harmonics_dim, flow_t_emb_dim, flow_hidden_dim
+                    )
+                    self.s_model_flow = StateEncoding(ndim, flow_hidden_dim, flow_s_emb_dim)
+                self.flow_model = FlowModel(
+                    flow_s_emb_dim, flow_t_emb_dim, hidden_dim, 1, joint_layers, zero_init
+                )
             else:
                 self.flow_model = torch.nn.Parameter(torch.tensor(0.0).to(self.device))
 

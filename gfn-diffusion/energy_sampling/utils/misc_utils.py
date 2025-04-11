@@ -128,7 +128,9 @@ def get_name(args):
     if args.partial_energy:
         name += "-partialE"
 
-    name += f"_t_scale{args.t_scale}-NNhidden{args.hidden_dim}"
+    name += f"_t_scale{args.t_scale}-NNdim{args.hidden_dim}"
+    if args.loss_type in ["subtb", "db"]:
+        name += f"-Fdim{args.flow_hidden_dim}"
 
     name += f"-lr{args.lr_policy}"
     if args.loss_type == "tb":

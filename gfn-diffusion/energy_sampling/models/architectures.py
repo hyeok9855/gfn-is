@@ -32,7 +32,7 @@ class StateEncoding(nn.Module):
     def __init__(self, ndim: int, hidden_dim: int, s_emb_dim: int) -> None:
         super().__init__()
 
-        self.x_model = nn.Sequential(
+        self.s_model = nn.Sequential(
             nn.Linear(ndim, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, s_emb_dim),
@@ -40,7 +40,7 @@ class StateEncoding(nn.Module):
         )
 
     def forward(self, s_emb: torch.Tensor) -> torch.Tensor:
-        return self.x_model(s_emb)
+        return self.s_model(s_emb)
 
 
 class JointPolicy(nn.Module):
@@ -66,16 +66,32 @@ class JointPolicy(nn.Module):
 
 
 class FlowModel(nn.Module):
-    def __init__(self, s_emb_dim: int, t_emb_dim: int, hidden_dim: int, out_dim: int) -> None:
+    def __init__(
+        self,
+        s_emb_dim: int,
+        t_emb_dim: int,
+        hidden_dim: int,
+        out_dim: int,
+        num_layers: int,
+        zero_init: bool = False,
+    ) -> None:
         super().__init__()
 
         self.model = nn.Sequential(
+            nn.GELU(),
             nn.Linear(s_emb_dim + t_emb_dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
+            *[
+                nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.GELU())
+                for _ in range(num_layers - 1)
+            ],
             nn.Linear(hidden_dim, out_dim),
         )
+
+        if zero_init:
+            self.model[-1].weight.data.fill_(0.0)
+            self.model[-1].bias.data.fill_(0.0)
+
 
     def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         return self.model(torch.cat([s_emb, t_emb], dim=-1))

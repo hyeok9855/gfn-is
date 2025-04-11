@@ -83,6 +83,10 @@ def train(args):
         args.hidden_dim,
         args.hidden_dim,
         args.hidden_dim,
+        flow_harmonics_dim=args.flow_hidden_dim,
+        flow_t_emb_dim=args.flow_hidden_dim,
+        flow_s_emb_dim=args.flow_hidden_dim,
+        flow_hidden_dim=args.flow_hidden_dim,
         log_var_range=args.log_var_range,
         t_scale=args.t_scale,
         lp=args.lp,
@@ -263,6 +267,10 @@ if __name__ == "__main__":
     # parser.add_argument('--s_emb_dim', type=int, default=256)
     # parser.add_argument('--t_emb_dim', type=int, default=256)
     # parser.add_argument('--harmonics_dim', type=int, default=256)
+    parser.add_argument("--flow_hidden_dim", type=int, default=64)
+    # parser.add_argument('--flow_s_emb_dim', type=int, default=64)
+    # parser.add_argument('--flow_t_emb_dim', type=int, default=64)
+    # parser.add_argument('--flow_harmonics_dim', type=int, default=64)
     parser.add_argument("--lgv_layers", type=int, default=3)
     parser.add_argument("--joint_layers", type=int, default=2)
     parser.add_argument("--t_scale", type=float, default=1.0)
