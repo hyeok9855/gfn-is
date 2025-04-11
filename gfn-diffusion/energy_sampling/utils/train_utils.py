@@ -24,7 +24,7 @@ def get_gfn_optimizer(
     weight_decay=1e-7,
     use_scheduler=False,
     milestones: list[int] = [100000],
-    gamma: float=1.0,
+    gamma: float = 1.0,
 ):
     param_groups = [
         {"params": gfn_model.t_model.parameters()},
@@ -50,7 +50,8 @@ def get_gfn_optimizer(
 
     gfn_scheduler = (
         torch.optim.lr_scheduler.MultiStepLR(gfn_optimizer, milestones=milestones, gamma=gamma)
-        if use_scheduler else None
+        if use_scheduler
+        else None
     )
     return gfn_optimizer, gfn_scheduler
 

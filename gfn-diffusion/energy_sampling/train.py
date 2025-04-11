@@ -1,4 +1,5 @@
 import argparse
+from functools import partial
 import os
 from copy import deepcopy
 
@@ -9,7 +10,7 @@ from tqdm import trange
 
 from buffer import ReplayBuffer
 from discretizers import get_discretizer
-from energies import GMM40, BaseEnergy, Funnel, ManyWell, TwentyFiveGaussianMixture
+from energies import get_energy
 from gflownet_losses import cal_subtb_coef_matrix
 from models import GFN
 from utils.eval_utils import eval_step
@@ -18,31 +19,11 @@ from utils.plot_utils import plot_step
 from utils.train_utils import get_gfn_optimizer, train_step
 
 
-def get_energy(target_energy: str, ndim: int, device: torch.device) -> BaseEnergy:
-    if target_energy == "25gmm":
-        if ndim != 2:
-            raise ValueError("25GMM is only supported for 2D")
-        energy = TwentyFiveGaussianMixture(device=device)
-    elif target_energy == "gmm40":
-        energy = GMM40(device=device, ndim=ndim)
-    elif target_energy == "funnel":
-        energy = Funnel(device=device, ndim=ndim)
-    elif target_energy == "many_well":
-        energy = ManyWell(device=device, ndim=ndim)
-    elif target_energy == "lgcp":
-        raise NotImplementedError
-        # TODO: ndim?
-        energy = LGCP(device=device)
-    else:
-        raise ValueError(f"Unknown energy: {target_energy}")
-    return energy
-
-
 def train(args):
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
-    energy = get_energy(args.target_energy, args.ndim, device=device)
+    energy = get_energy(args.energy_name, args.ndim, device=device)
 
-    energy_name = f"{args.target_energy}-{args.ndim}d"
+    energy_name = f"{args.energy_name}-{args.ndim}d"
     exp_name = get_name(args)
 
     # parent_dir = os.path.dirname(os.path.abspath(__file__))
@@ -141,13 +122,46 @@ def train(args):
     )
     eval_discretizer = get_discretizer(discretizer="uniform", T=args.eval_T)
 
+    eval_step_partial = partial(
+        eval_step,
+        gt_xs=gt_xs,
+        gfn_model=gfn_model,
+        energy=energy,
+        discretizer=eval_discretizer,
+        pis=args.loss_type == "pis",
+        resampling=args.eval_resampling,
+        weighting=args.eval_weighting,
+        buffer=buffer if args.eval_buffer else None,
+    )
+    plot_step_partial = partial(
+        plot_step,
+        energy=energy,
+        resampling=args.eval_resampling,
+        weighting=args.eval_weighting,
+    )
+
     ######################
     # Main training loop #
     ######################
 
     gfn_model.train()
-    for i in trange(args.epochs + 1, dynamic_ncols=True):
+    for i in trange(args.epochs, dynamic_ncols=True):
         metrics = dict()
+
+        ### Eval ###
+        if i % args.eval_freq == 0:
+            results, model_trajs, weights, model_trajs_r = eval_step_partial(args.eval_data_size)
+            metrics.update(results)
+            if i % args.plot_freq == 0:
+                images = plot_step_partial(
+                    model_trajs[:, -1], resampled_samples=model_trajs_r, weights=weights
+                )
+                metrics.update(images)
+            wandb.log(metrics, step=i)
+            # if i % 1000 == 0:
+            #     torch.save(gfn_model.state_dict(), f'{save_dir}/model.pt')
+
+        ### Train ###
         metrics["train/loss"] = train_step(
             energy,
             gfn_model,
@@ -178,60 +192,15 @@ def train(args):
             alternating=args.alternating,
         )
 
-        if i % args.eval_freq == 0:
-            results, model_trajs, weights, model_trajs_r = eval_step(
-                args.eval_data_size,
-                gt_xs,
-                gfn_model,
-                energy,
-                discretizer=eval_discretizer,
-                pis=args.loss_type == "pis",
-                resampling=args.eval_resampling,
-                weighting=args.eval_weighting,
-                buffer=buffer if args.eval_buffer else None,
-            )
-            metrics.update(results)
-
-            if i % args.plot_freq == 0:
-                images = plot_step(energy, model_trajs[:, -1])
-                metrics.update(images)
-
-                if args.eval_resampling:
-                    assert model_trajs_r is not None
-                    images_resample = plot_step(energy, model_trajs_r[:, -1])
-                    images_resample = {
-                        k.replace("visualization/", "visualization_resample/"): v
-                        for k, v in images_resample.items()
-                    }
-                    metrics.update(images_resample)
-
-                if args.eval_weighting:
-                    images_weighted = plot_step(energy, model_trajs[:, -1], weights=weights)
-                    images_weighted = {
-                        k.replace("visualization/", "visualization_weighted/"): v
-                        for k, v in images_weighted.items()
-                    }
-                    metrics.update(images_weighted)
-
-                plt.close("all")
-
-            wandb.log(metrics, step=i)
-            # if i % 1000 == 0:
-            #     torch.save(gfn_model.state_dict(), f'{save_dir}/model.pt')
-
-    final_results, _, _, _ = eval_step(
-        args.final_eval_data_size,
-        gt_xs,
-        gfn_model,
-        energy,
-        discretizer=eval_discretizer,
-        pis=args.loss_type == "pis",
-        final_eval=True,
-        resampling=args.eval_resampling,
-        weighting=args.eval_weighting,
-        buffer=buffer if args.eval_buffer else None,
+    ### Final eval ###
+    final_results, model_trajs, weights, model_trajs_r = eval_step_partial(
+        args.final_eval_data_size, final_eval=True
     )
     metrics.update(final_results)
+    final_images = plot_step_partial(
+        model_trajs[:, -1], resampled_samples=model_trajs_r, weights=weights
+    )
+    metrics.update(final_images)
     wandb.log(metrics, step=args.epochs)
     # torch.save(gfn_model.state_dict(), f'{save_dir}/model_final.pt')
 
@@ -239,7 +208,7 @@ def train(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--target_energy",
+        "--energy_name",
         type=str,
         default="gmm40",
         choices=("25gmm", "gmm40", "funnel", "many_well", "lgcp"),
@@ -270,7 +239,7 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay", type=float, default=1e-7)
     parser.add_argument("--use_scheduler", action="store_true", default=False)
     parser.add_argument("--milestones", type=float, nargs="+", default=[0.5, 0.9])
-    parser.add_argument("--gamma", type=float, default=(10) ** (-1/2))
+    parser.add_argument("--gamma", type=float, default=(10) ** (-1 / 2))
 
     parser.add_argument("--hidden_dim", type=int, default=256)
     # parser.add_argument('--s_emb_dim', type=int, default=256)

@@ -92,7 +92,6 @@ class FlowModel(nn.Module):
             self.model[-1].weight.data.fill_(0.0)
             self.model[-1].bias.data.fill_(0.0)
 
-
     def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         return self.model(torch.cat([s_emb, t_emb], dim=-1))
 

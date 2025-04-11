@@ -334,7 +334,7 @@ def eval_step(
     batch_size: int,
     gt_xs: torch.Tensor | None,
     gfn_model: GFN,
-    target_energy: BaseEnergy,
+    energy: BaseEnergy,
     discretizer: Callable[[int], torch.Tensor],
     pis: bool = False,
     final_eval: bool = False,
@@ -344,26 +344,26 @@ def eval_step(
 ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor | None]:
     metrics = {}
 
-    init_state = torch.zeros(batch_size, target_energy.ndim).to(gfn_model.device)
+    init_state = torch.zeros(batch_size, energy.ndim).to(gfn_model.device)
     ts = discretizer(batch_size).to(gfn_model.device)
 
     with torch.no_grad():
         model_trajs, log_pfs, log_pbs, log_fs, _ = gfn_model.get_trajectory_fwd(
-            init_state, ts, 0.0, target_energy.log_reward, pis=pis
+            init_state, ts, 0.0, energy.log_reward, pis=pis
         )
         sample_xs = model_trajs[:, -1]
-        log_rewards = target_energy.log_reward(sample_xs)
+        log_rewards = energy.log_reward(sample_xs)
 
         if gt_xs is not None:
             _, gt_log_pfs, gt_log_pbs, _ = gfn_model.get_trajectory_bwd(
-                gt_xs, ts, target_energy.log_reward
+                gt_xs, ts, energy.log_reward
             )
-            gt_log_rewards = target_energy.log_reward(gt_xs)
+            gt_log_rewards = energy.log_reward(gt_xs)
         else:
             gt_log_pfs = gt_log_pbs = gt_log_rewards = None
 
     try:
-        gt_log_Z = target_energy.gt_logz()
+        gt_log_Z = energy.gt_logz()
     except NotImplementedError:
         gt_log_Z = None
 

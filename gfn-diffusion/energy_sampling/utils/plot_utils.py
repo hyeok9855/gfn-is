@@ -248,24 +248,51 @@ def viz_contour_sample2d(
     return fig, ax
 
 
-def plot_step(
+def _plot_step(
     energy: BaseEnergy,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
 ):
     if isinstance(energy, ManyWell):
         out_dict = viz_manywell(energy, samples, weights)
-
     elif isinstance(energy, Funnel):
         out_dict = viz_funnel(energy, samples, weights)
-
     elif isinstance(energy, (TwentyFiveGaussianMixture, GMM40)):
         out_dict = viz_gmm(energy, samples, weights)
-
     else:
         print(
             f"Warning: {energy.__class__.__name__} is not supported for visualization."
             + " Skipping..."
         )
-
+    plt.close("all")
     return out_dict
+
+
+def plot_step(
+    energy: BaseEnergy,
+    samples: torch.Tensor,
+    resampling: bool = False,
+    weighting: bool = False,
+    resampled_samples: torch.Tensor | None = None,
+    weights: torch.Tensor | None = None,
+):
+    images = _plot_step(energy, samples)
+    if resampling:
+        assert resampled_samples is not None
+        images_resample = _plot_step(energy, resampled_samples)
+        images.update(
+            {
+                k.replace("visualization/", "visualization_resample/"): v
+                for k, v in images_resample.items()
+            }
+        )
+    if weighting:
+        assert weights is not None
+        images_weighted = _plot_step(energy, samples, weights)
+        images.update(
+            {
+                k.replace("visualization/", "visualization_weighted/"): v
+                for k, v in images_weighted.items()
+            }
+        )
+    return images
