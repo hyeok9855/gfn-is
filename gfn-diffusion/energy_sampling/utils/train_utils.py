@@ -12,10 +12,54 @@ from models import GFN
 from utils.misc_utils import get_exploration_std
 
 
+def get_gfn_optimizer(
+    gfn_model: GFN,
+    lr_policy: float,
+    lr_Z: float,
+    lr_flow: float,
+    lr_back: float,
+    back_model=False,
+    conditional_flow_model=False,
+    use_weight_decay=False,
+    weight_decay=1e-7,
+    use_scheduler=False,
+    milestones: list[int] = [100000],
+    gamma: float=1.0,
+):
+    param_groups = [
+        {"params": gfn_model.t_model.parameters()},
+        {"params": gfn_model.s_model.parameters()},
+        {"params": gfn_model.joint_model.parameters()},
+    ]
+    if gfn_model.lp_scaling_model is not None:
+        param_groups += [{"params": gfn_model.lp_scaling_model.parameters()}]
+
+    if conditional_flow_model:
+        assert isinstance(gfn_model.flow_model, torch.nn.Module)
+        param_groups += [{"params": gfn_model.flow_model.parameters(), "lr": lr_flow}]
+    else:
+        param_groups += [{"params": [gfn_model.flow_model], "lr": lr_Z}]
+
+    if back_model:
+        assert gfn_model.back_model is not None
+        param_groups += [{"params": gfn_model.back_model.parameters(), "lr": lr_back}]
+
+    gfn_optimizer = torch.optim.Adam(
+        param_groups, lr_policy, weight_decay=weight_decay if use_weight_decay else 0.0
+    )
+
+    gfn_scheduler = (
+        torch.optim.lr_scheduler.MultiStepLR(gfn_optimizer, milestones=milestones, gamma=gamma)
+        if use_scheduler else None
+    )
+    return gfn_optimizer, gfn_scheduler
+
+
 def train_step(
     energy: BaseEnergy,
     gfn_model: GFN,
     gfn_optimizer: torch.optim.Optimizer,
+    gfn_scheduler: torch.optim.lr_scheduler.MultiStepLR | None,
     it: int,
     batch_size: int,
     loss_type: str,
@@ -106,6 +150,8 @@ def train_step(
     if clip_grad_norm > 0.0:
         torch.nn.utils.clip_grad_norm_(gfn_model.parameters(), clip_grad_norm)
     gfn_optimizer.step()
+    if gfn_scheduler is not None:
+        gfn_scheduler.step()
     gfn_model.zero_grad()
     return loss.item()
 

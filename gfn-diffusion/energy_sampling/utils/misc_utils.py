@@ -5,8 +5,6 @@ import random
 import numpy as np
 import torch
 
-from models import GFN
-
 
 def set_seed(seed):
     torch.manual_seed(seed)
@@ -37,69 +35,6 @@ def temp_seed(seed):
 
 def logmeanexp(x, dim=0):
     return x.logsumexp(dim) - math.log(x.shape[dim])
-
-
-def cal_subtb_coef_matrix(lamda: float, N: int) -> torch.Tensor:
-    """
-    diff_matrix: (N+1, N+1)
-     0,  1,  2, ...,   N
-    -1,  0,  1, ..., N-1
-    -2, -1,  0, .... N-2
-    ...
-
-    self.coef[i, j] = lamda^(j-i) / total_lambda  if i < j else 0.
-    """
-    assert lamda >= 0
-    if lamda == 0:  # DB
-        ones = torch.ones(N + 1, N + 1)
-        coef = torch.triu(ones, diagonal=1) - torch.triu(ones, diagonal=2)
-        coef = coef / N
-    elif lamda == float("inf"):  # TB if lambda is inf
-        coef = torch.zeros(N + 1, N + 1)
-        coef[0, -1] = 1.0
-    else:
-        range_vals = torch.arange(N + 1)
-        diff_matrix = range_vals - range_vals.view(-1, 1)
-        B = np.log(lamda) * diff_matrix
-        B[diff_matrix <= 0] = -np.inf
-        log_total_lambda = torch.logsumexp(B.view(-1), dim=0)
-        coef = torch.exp(B - log_total_lambda)
-    return coef
-
-
-def get_gfn_optimizer(
-    gfn_model: GFN,
-    lr_policy: float,
-    lr_Z: float,
-    lr_flow: float,
-    lr_back: float,
-    back_model=False,
-    conditional_flow_model=False,
-    use_weight_decay=False,
-    weight_decay=1e-7,
-):
-    param_groups = [
-        {"params": gfn_model.t_model.parameters()},
-        {"params": gfn_model.s_model.parameters()},
-        {"params": gfn_model.joint_model.parameters()},
-    ]
-    if gfn_model.lp_scaling_model is not None:
-        param_groups += [{"params": gfn_model.lp_scaling_model.parameters()}]
-
-    if conditional_flow_model:
-        assert isinstance(gfn_model.flow_model, torch.nn.Module)
-        param_groups += [{"params": gfn_model.flow_model.parameters(), "lr": lr_flow}]
-    else:
-        param_groups += [{"params": [gfn_model.flow_model], "lr": lr_Z}]
-
-    if back_model:
-        assert gfn_model.back_model is not None
-        param_groups += [{"params": gfn_model.back_model.parameters(), "lr": lr_back}]
-
-    gfn_optimizer = torch.optim.Adam(
-        param_groups, lr_policy, weight_decay=weight_decay if use_weight_decay else 0.0
-    )
-    return gfn_optimizer
 
 
 def get_exploration_std(

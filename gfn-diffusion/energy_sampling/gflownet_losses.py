@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 
 
@@ -71,3 +72,31 @@ def get_gfn_loss(
         raise ValueError(f"Invalid training loss: {loss_type}")
 
     return losses
+
+
+def cal_subtb_coef_matrix(lamda: float, N: int) -> torch.Tensor:
+    """
+    diff_matrix: (N+1, N+1)
+     0,  1,  2, ...,   N
+    -1,  0,  1, ..., N-1
+    -2, -1,  0, .... N-2
+    ...
+
+    self.coef[i, j] = lamda^(j-i) / total_lambda  if i < j else 0.
+    """
+    assert lamda >= 0
+    if lamda == 0:  # DB
+        ones = torch.ones(N + 1, N + 1)
+        coef = torch.triu(ones, diagonal=1) - torch.triu(ones, diagonal=2)
+        coef = coef / N
+    elif lamda == float("inf"):  # TB if lambda is inf
+        coef = torch.zeros(N + 1, N + 1)
+        coef[0, -1] = 1.0
+    else:
+        range_vals = torch.arange(N + 1)
+        diff_matrix = range_vals - range_vals.view(-1, 1)
+        B = np.log(lamda) * diff_matrix
+        B[diff_matrix <= 0] = -np.inf
+        log_total_lambda = torch.logsumexp(B.view(-1), dim=0)
+        coef = torch.exp(B - log_total_lambda)
+    return coef

@@ -10,11 +10,12 @@ from tqdm import trange
 from buffer import ReplayBuffer
 from discretizers import get_discretizer
 from energies import GMM40, BaseEnergy, Funnel, ManyWell, TwentyFiveGaussianMixture
+from gflownet_losses import cal_subtb_coef_matrix
 from models import GFN
 from utils.eval_utils import eval_step
-from utils.misc_utils import cal_subtb_coef_matrix, get_gfn_optimizer, get_name, set_seed
+from utils.misc_utils import get_name, set_seed
 from utils.plot_utils import plot_step
-from utils.train_utils import train_step
+from utils.train_utils import get_gfn_optimizer, train_step
 
 
 def get_energy(target_energy: str, ndim: int, device: torch.device) -> BaseEnergy:
@@ -107,7 +108,7 @@ def train(args):
         device=device,
     ).to(device)
 
-    gfn_optimizer = get_gfn_optimizer(
+    gfn_optimizer, gfn_scheduler = get_gfn_optimizer(
         gfn_model,
         args.lr_policy,
         args.lr_Z,
@@ -117,6 +118,9 @@ def train(args):
         args.conditional_flow_model,
         args.use_weight_decay,
         args.weight_decay,
+        args.use_scheduler,
+        [int(args.epochs * m) for m in args.milestones],
+        args.gamma,
     )
 
     buffer = ReplayBuffer(
@@ -148,6 +152,7 @@ def train(args):
             energy,
             gfn_model,
             gfn_optimizer,
+            gfn_scheduler,
             i,
             batch_size=args.batch_size,
             loss_type=args.loss_type,
@@ -253,15 +258,19 @@ if __name__ == "__main__":
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
     parser.add_argument("--training_mode", type=str, default="fwd", choices=("fwd", "bwd", "both"))
     parser.add_argument("--bwd_from", type=str, default="buffer", choices=("energy", "buffer"))
+    parser.add_argument("--clip_grad_norm", type=float, default=3.0)
+    parser.add_argument("--batch_size", type=int, default=2000)
+    parser.add_argument("--epochs", type=int, default=25000)
+
     parser.add_argument("--lr_policy", type=float, default=1e-3)
     parser.add_argument("--lr_Z", type=float, default=1e-1)
     parser.add_argument("--lr_flow", type=float, default=1e-2)
     parser.add_argument("--lr_back", type=float, default=None)
     parser.add_argument("--use_weight_decay", action="store_true", default=False)
     parser.add_argument("--weight_decay", type=float, default=1e-7)
-    parser.add_argument("--clip_grad_norm", type=float, default=3.0)
-    parser.add_argument("--batch_size", type=int, default=2000)
-    parser.add_argument("--epochs", type=int, default=25000)
+    parser.add_argument("--use_scheduler", action="store_true", default=False)
+    parser.add_argument("--milestones", type=float, nargs="+", default=[0.5, 0.9])
+    parser.add_argument("--gamma", type=float, default=(10) ** (-1/2))
 
     parser.add_argument("--hidden_dim", type=int, default=256)
     # parser.add_argument('--s_emb_dim', type=int, default=256)
