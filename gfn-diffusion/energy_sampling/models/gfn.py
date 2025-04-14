@@ -218,11 +218,12 @@ class GFN(nn.Module):
             pfmean, pflogvars = self.split_params(pfs)
 
             logf[:, i] = flow
-            if self.partial_energy and i > 0:
-                assert log_r_fn is not None
-                ref_log_var = (self.t_scale * ts[:, i].unsqueeze(1)).log()
-                log_p_ref = -0.5 * (logtwopi + ref_log_var + (-ref_log_var).exp() * (s**2)).sum(1)
-                logf[:, i] += (1 - ts[:, i]) * log_p_ref + ts[:, i] * log_r_fn(s)
+            # Note: We instead use the vectorized version outside of the loop
+            # if self.partial_energy and i > 0:
+            #     assert log_r_fn is not None
+            #     ref_log_var = (self.t_scale * ts[:, i].unsqueeze(1)).log()
+            #     log_p_ref = -0.5 * (logtwopi + ref_log_var + (-ref_log_var).exp() * (s**2)).sum(1)
+            #     logf[:, i] += (1 - ts[:, i]) * log_p_ref + ts[:, i] * log_r_fn(s)
 
             # PIS requires gradients w.r.t. the parameters
             if pis:
@@ -284,6 +285,16 @@ class GFN(nn.Module):
             s = s_
             states[:, i + 1] = s
 
+        if self.partial_energy:
+            assert log_r_fn is not None
+            ref_log_var = (self.t_scale * ts[:, 1:-1]).log().unsqueeze(2)  # (bsz, T - 1, 1)
+            log_p_ref = -0.5 * (
+                logtwopi + ref_log_var + (-ref_log_var).exp() * (states[:, 1:-1] ** 2)
+            ).sum(-1)
+            logf[:, 1:-1] += (1 - ts[:, 1:-1]) * log_p_ref + ts[:, 1:-1] * log_r_fn(
+                states[:, 1:-1].reshape(-1, self.dim)
+            ).view(bsz, T - 1)
+
         logpf_exp = logpf_exp if exploration_std > 0.0 else logpf
 
         return states, logpf, logpb, logf, logpf_exp
@@ -337,17 +348,30 @@ class GFN(nn.Module):
             pfmean, pflogvars = self.split_params(pfs)
 
             logf[:, T - i - 1] = flow
-            if self.partial_energy and T - i - 1 > 0:
-                assert log_r_fn is not None
-                ref_log_var = (self.t_scale * ts[:, T - i - 1].unsqueeze(1)).log()
-                log_p_ref = -0.5 * (logtwopi + ref_log_var + (-ref_log_var).exp() * (s**2)).sum(1)
-                logf[:, T - i - 1] += ts[:, T - i - 1] * log_p_ref + ts[:, i + 1] * log_r_fn(s)
+            # Note: We instead use the vectorized version outside of the loop
+            # if self.partial_energy and T - i - 1 > 0:
+            #     assert log_r_fn is not None
+            #     ref_log_var = (self.t_scale * ts[:, T - i - 1].unsqueeze(1)).log()
+            #     log_p_ref = -0.5 * (logtwopi + ref_log_var + (-ref_log_var).exp() * (s_**2)).sum(1)
+            #     logf[:, T - i - 1] += (1 - ts[:, T - i - 1]) * log_p_ref + ts[
+            #         :, T - i - 1
+            #     ] * log_r_fn(s_)
 
             noise = ((s - s_) - dts * pfmean) / (dts.sqrt() * (pflogvars / 2).exp())
             logpf[:, T - i - 1] = -0.5 * (noise**2 + logtwopi + dts.log() + pflogvars).sum(1)
 
             s = s_
             states[:, T - i - 1] = s
+
+        if self.partial_energy:
+            assert log_r_fn is not None
+            ref_log_var = (self.t_scale * ts[:, 1:-1]).log().unsqueeze(2)  # (bsz, T - 1, 1)
+            log_p_ref = -0.5 * (
+                logtwopi + ref_log_var + (-ref_log_var).exp() * (states[:, 1:-1] ** 2)
+            ).sum(-1)
+            logf[:, 1:-1] += (1 - ts[:, 1:-1]) * log_p_ref + ts[:, 1:-1] * log_r_fn(
+                states[:, 1:-1].reshape(-1, self.dim)
+            ).view(bsz, T - 1)
 
         return states, logpf, logpb, logf
 

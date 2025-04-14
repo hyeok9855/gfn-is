@@ -61,11 +61,10 @@ class ManyWell(BaseEnergy):
 
     # ----- Energy-specific methods ----- #
     def _manywell_unnormed_logp(self, x: torch.Tensor) -> torch.Tensor:
-        assert x.ndim == 2
-        unnormed_logp = torch.stack(
-            [self._doublewell_unnormed_logp(x[:, i * 2 : i * 2 + 2]) for i in range(self.n_wells)],
-            dim=1,
-        ).sum(dim=1)
+        assert x.ndim == 2  # [batch_size, ndim]
+        x_reshaped = x.view(-1, self.n_wells, 2).reshape(-1, 2)  # [batch_size * n_wells, 2]
+        unnormed_logp = self._doublewell_unnormed_logp(x_reshaped)  # [batch_size * n_wells]
+        unnormed_logp = unnormed_logp.reshape(-1, self.n_wells).sum(dim=1)  # [batch_size]
         return unnormed_logp
 
     def _sample_doublewell(self, batch_size: int) -> torch.Tensor:
