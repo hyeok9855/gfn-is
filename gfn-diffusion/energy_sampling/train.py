@@ -156,7 +156,6 @@ def train(args):
                     samples=model_trajs[:, -1], resampled_samples=model_trajs_r, weights=weights
                 )
                 metrics.update(images)
-            wandb.log(metrics, step=i)
             # if i % 1000 == 0:
             #     torch.save(gfn_model.state_dict(), f'{save_dir}/model.pt')
 
@@ -190,6 +189,7 @@ def train(args):
             smoothing=args.smoothing,
             alternating=args.alternating,
         )
+        wandb.log(metrics, step=i)
 
     ### Final eval ###
     final_results, model_trajs, weights, model_trajs_r = eval_step_partial(
