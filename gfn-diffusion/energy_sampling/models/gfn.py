@@ -209,6 +209,7 @@ class GFN(nn.Module):
         logf = torch.zeros((bsz, T + 1), device=self.device)
         logpf_exp = torch.zeros((bsz, T), device=self.device)
         states = torch.zeros((bsz, T + 1, self.dim), device=self.device)
+        states[:, 0] = s
 
         for i in range(T):
             dts = (ts[:, i + 1] - ts[:, i]).unsqueeze(1)
@@ -217,12 +218,9 @@ class GFN(nn.Module):
             pfmean, pflogvars = self.split_params(pfs)
 
             logf[:, i] = flow
-            if self.partial_energy:
+            if self.partial_energy and i > 0:
                 assert log_r_fn is not None
-                ref_log_var = (self.t_scale * ts[:, max(1, i)]).log()
-                import pdb
-
-                pdb.set_trace()  # TODO: Check if this is correct
+                ref_log_var = (self.t_scale * ts[:, i].unsqueeze(1)).log()
                 log_p_ref = -0.5 * (logtwopi + ref_log_var + (-ref_log_var).exp() * (s**2)).sum(1)
                 logf[:, i] += (1 - ts[:, i]) * log_p_ref + ts[:, i] * log_r_fn(s)
 
@@ -339,9 +337,9 @@ class GFN(nn.Module):
             pfmean, pflogvars = self.split_params(pfs)
 
             logf[:, T - i - 1] = flow
-            if self.partial_energy:
+            if self.partial_energy and T - i - 1 > 0:
                 assert log_r_fn is not None
-                ref_log_var = (self.t_scale * ts[:, max(1, T - i - 1)]).log()
+                ref_log_var = (self.t_scale * ts[:, T - i - 1].unsqueeze(1)).log()
                 log_p_ref = -0.5 * (logtwopi + ref_log_var + (-ref_log_var).exp() * (s**2)).sum(1)
                 logf[:, T - i - 1] += ts[:, T - i - 1] * log_p_ref + ts[:, i + 1] * log_r_fn(s)
 

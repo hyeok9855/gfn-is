@@ -3,7 +3,6 @@ from functools import partial
 import os
 from copy import deepcopy
 
-import matplotlib.pyplot as plt
 import torch
 import wandb
 from tqdm import trange
@@ -154,7 +153,7 @@ def train(args):
             metrics.update(results)
             if i % args.plot_freq == 0:
                 images = plot_step_partial(
-                    model_trajs[:, -1], resampled_samples=model_trajs_r, weights=weights
+                    samples=model_trajs[:, -1], resampled_samples=model_trajs_r, weights=weights
                 )
                 metrics.update(images)
             wandb.log(metrics, step=i)
@@ -198,7 +197,7 @@ def train(args):
     )
     metrics.update(final_results)
     final_images = plot_step_partial(
-        model_trajs[:, -1], resampled_samples=model_trajs_r, weights=weights
+        samples=model_trajs[:, -1], resampled_samples=model_trajs_r, weights=weights
     )
     metrics.update(final_images)
     wandb.log(metrics, step=args.epochs)

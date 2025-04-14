@@ -423,7 +423,7 @@ def eval_step(
 
         metrics.update(metrics_w)
 
-    if buffer is not None:
+    if buffer is not None and len(buffer) > 0:
         assert gt_xs is not None
         buffer_xs, _, _, _ = buffer.sample(batch_size)
         metrics_b = {}
