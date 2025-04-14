@@ -364,6 +364,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     args.loss_type_str = args.loss_type
+    if args.loss_type in ["db", "subtb"] and args.partial_energy:
+        args.loss_type_str = "fl-" + args.loss_type_str
     if args.loss_type == "subtb":
         args.loss_type_str += f"-lambda{args.subtb_lambda}"
 
