@@ -40,7 +40,9 @@ def train(args):
 
     subtb_coef_matrix = None
     if args.loss_type == "subtb":
-        subtb_coef_matrix = cal_subtb_coef_matrix(args.subtb_lambda, args.T).to(device)
+        subtb_coef_matrix = cal_subtb_coef_matrix(
+            args.subtb_lambda, args.T, chunk_ratio=args.subtb_chunk_ratio
+        ).to(device)
 
     ls_args = None
     if args.local_search:
@@ -226,6 +228,7 @@ if __name__ == "__main__":
         choices=("tb", "tb-avg", "db", "subtb", "pis", "mle"),
     )
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
+    parser.add_argument("--subtb_chunk_ratio", type=float, default=0.1)
     parser.add_argument("--training_mode", type=str, default="both", choices=("fwd", "bwd", "both"))
     parser.add_argument("--bwd_from", type=str, default="buffer", choices=("energy", "buffer"))
     parser.add_argument("--clip_grad_norm", type=float, default=3.0)
@@ -369,7 +372,10 @@ if __name__ == "__main__":
     if args.loss_type in ["db", "subtb"] and args.partial_energy:
         args.loss_type_str = "fl-" + args.loss_type_str
     if args.loss_type == "subtb":
-        args.loss_type_str += f"-lambda{args.subtb_lambda}"
+        if args.subtb_chunk_ratio > 0.0:
+            args.loss_type_str += f"-chunk{args.subtb_chunk_ratio}"
+        else:
+            args.loss_type_str += f"-lambda{args.subtb_lambda}"
 
     set_seed(args.seed)
     if "SLURM_PROCID" in os.environ:

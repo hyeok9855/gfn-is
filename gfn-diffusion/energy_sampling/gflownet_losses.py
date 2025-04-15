@@ -76,7 +76,7 @@ def get_gfn_loss(
     return losses
 
 
-def cal_subtb_coef_matrix(lamda: float, N: int) -> torch.Tensor:
+def cal_subtb_coef_matrix(lamda: float, N: int, chunk_ratio: float = 0.0) -> torch.Tensor:
     """
     diff_matrix: (N+1, N+1)
      0,  1,  2, ...,   N
@@ -86,6 +86,17 @@ def cal_subtb_coef_matrix(lamda: float, N: int) -> torch.Tensor:
 
     self.coef[i, j] = lamda^(j-i) / total_lambda  if i < j else 0.
     """
+    if chunk_ratio > 0.0:
+        chunk_size = int(N * chunk_ratio)
+        coef = torch.zeros(N + 1, N + 1)
+        for i in range(0, N, chunk_size):
+            if i + chunk_size <= N:
+                coef[i, i + chunk_size] = 1.0
+            else:
+                coef[i, N] = 1.0
+        coef = coef / coef.sum()
+        return coef
+
     assert lamda >= 0
     if lamda == 0:  # DB
         ones = torch.ones(N + 1, N + 1)

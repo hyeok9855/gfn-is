@@ -55,9 +55,7 @@ def get_exploration_std(
 def get_name(args):
     name = ""
 
-    name += args.loss_type
-    if args.loss_type == "subtb":
-        name += f"-lambda{args.subtb_lambda}"
+    name += args.loss_type_str
     if args.lp:
         name += "-lp"
     if args.partial_energy:
