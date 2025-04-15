@@ -169,7 +169,7 @@ class ReplayBuffer:
 
     def sample(
         self, batch_size: int, prioritized=True
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         weights = torch.ones(len(self.dataset), device=self.device)
         if prioritized and self.prioritization != "none":
             match self.prioritization:
@@ -196,6 +196,6 @@ class ReplayBuffer:
 
         replacement = True if self.prioritization == "normalized_iw" else False
         indices = torch.multinomial(weights, batch_size, replacement=replacement)
-        xs, log_rewards, _, log_iws, _ = self.dataset[indices]
+        xs, log_rewards, _, _, _ = self.dataset[indices]
 
-        return xs, log_rewards, log_iws, indices
+        return xs, log_rewards, indices

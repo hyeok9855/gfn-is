@@ -103,16 +103,18 @@ def train(args):
         args.gamma,
     )
 
-    buffer = ReplayBuffer(
-        args.buffer_size,
-        device,
-        prioritization=args.prioritization,
-        sampling_strategy=args.buffer_sampling,
-        rank_k=args.rank_k,
-        logr_lb=args.logr_lb,
-    )
+    buffer = None
+    if args.training_mode != "fwd" and args.bwd_from == "buffer":
+        buffer = ReplayBuffer(
+            args.buffer_size,
+            device,
+            prioritization=args.prioritization,
+            sampling_strategy=args.buffer_sampling,
+            rank_k=args.rank_k,
+            logr_lb=args.logr_lb,
+        )
     buffer_ls = None
-    if args.local_search:
+    if buffer is not None and args.local_search:
         buffer_ls = deepcopy(buffer)
         buffer_ls.prioritization = "reward"
 
@@ -180,7 +182,6 @@ def train(args):
             local_search=args.local_search,
             ls_args=ls_args,
             subtb_coef_matrix=subtb_coef_matrix,
-            huber_quantile=args.huber_quantile,
             clip_grad_norm=args.clip_grad_norm,
             device=device,
             resampling=args.train_resampling,
@@ -224,9 +225,8 @@ if __name__ == "__main__":
         default="tb",
         choices=("tb", "tb-avg", "db", "subtb", "pis", "mle"),
     )
-    parser.add_argument("--huber_quantile", type=float, default=1.0)
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
-    parser.add_argument("--training_mode", type=str, default="fwd", choices=("fwd", "bwd", "both"))
+    parser.add_argument("--training_mode", type=str, default="both", choices=("fwd", "bwd", "both"))
     parser.add_argument("--bwd_from", type=str, default="buffer", choices=("energy", "buffer"))
     parser.add_argument("--clip_grad_norm", type=float, default=3.0)
     parser.add_argument("--batch_size", type=int, default=2000)

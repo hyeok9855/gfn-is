@@ -425,7 +425,7 @@ def eval_step(
 
     if buffer is not None and len(buffer) > 0:
         assert gt_xs is not None
-        buffer_xs, _, _, _ = buffer.sample(batch_size)
+        buffer_xs, _, _ = buffer.sample(batch_size)
         metrics_b = {}
         metrics_b.update(compute_distribution_distances(buffer_xs.unsqueeze(1), gt_xs.unsqueeze(1)))
         metrics_b = {
