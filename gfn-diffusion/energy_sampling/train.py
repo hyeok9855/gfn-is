@@ -228,7 +228,7 @@ if __name__ == "__main__":
         choices=("tb", "tb-avg", "db", "subtb", "pis", "mle"),
     )
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
-    parser.add_argument("--subtb_chunk_ratio", type=float, default=0.1)
+    parser.add_argument("--subtb_chunk_ratio", type=float, default=0.0)
     parser.add_argument("--training_mode", type=str, default="both", choices=("fwd", "bwd", "both"))
     parser.add_argument("--bwd_from", type=str, default="buffer", choices=("energy", "buffer"))
     parser.add_argument("--clip_grad_norm", type=float, default=3.0)
