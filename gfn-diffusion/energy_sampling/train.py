@@ -257,7 +257,7 @@ if __name__ == "__main__":
     parser.add_argument("--lp", action="store_true", default=False)
     parser.add_argument("--lp_scaling_per_dimension", action="store_true", default=False)
     parser.add_argument("--conditional_flow_model", action="store_true", default=False)
-    parser.add_argument("--share_embeddings", action="store_true", default=False)
+    parser.add_argument("--no_share_embeddings", action="store_false", dest="share_embeddings")
     parser.add_argument("--learn_pb", action="store_true", default=False)
     parser.add_argument("--pb_scale_range", type=float, default=0.1)
     parser.add_argument("--learned_variance", action="store_true", default=False)
