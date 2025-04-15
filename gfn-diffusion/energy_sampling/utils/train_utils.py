@@ -76,6 +76,7 @@ def train_step(
     local_search: bool = False,
     ls_args: Namespace | None = None,
     subtb_coef_matrix: torch.Tensor | None = None,
+    huber_quantile: float = 1.0,
     clip_grad_norm: float = 1.0,
     device=torch.device("cpu"),
     resampling: bool = False,
@@ -95,6 +96,7 @@ def train_step(
         loss_type=loss_type,
         discretizer=discretizer,
         subtb_coef_matrix=subtb_coef_matrix,
+        huber_quantile=huber_quantile,
         exploration_std=exploration_std,
         buffer=buffer,
         device=device,
@@ -111,6 +113,7 @@ def train_step(
         bwd_from=bwd_from,
         discretizer=discretizer,
         subtb_coef_matrix=subtb_coef_matrix,
+        huber_quantile=huber_quantile,
         local_search=local_search,
         ls_args=ls_args,
         buffer=buffer,
@@ -164,6 +167,7 @@ def fwd_train_step(
     loss_type: str,
     discretizer: Callable[[int], torch.Tensor],
     subtb_coef_matrix: torch.Tensor | None,
+    huber_quantile: float = 1.0,
     exploration_std=0.0,
     buffer: ReplayBuffer | None = None,
     device=torch.device("cpu"),
@@ -192,6 +196,7 @@ def fwd_train_step(
         log_fs,
         subtb_coef_matrix=subtb_coef_matrix,
         ndim=energy.ndim,
+        huber_quantile=huber_quantile,
     )
 
     match aux_target:
@@ -249,6 +254,7 @@ def bwd_train_step(
     bwd_from: str,
     discretizer: Callable[[int], torch.Tensor],
     subtb_coef_matrix: torch.Tensor | None,
+    huber_quantile: float = 1.0,
     local_search: bool = False,
     ls_args: Namespace | None = None,
     buffer: ReplayBuffer | None = None,
@@ -290,6 +296,7 @@ def bwd_train_step(
             log_pbs,
             log_fs,
             subtb_coef_matrix=subtb_coef_matrix,
+            huber_quantile=huber_quantile,
             ndim=energy.ndim,
         )
 

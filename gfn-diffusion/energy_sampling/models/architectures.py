@@ -73,7 +73,6 @@ class FlowModel(nn.Module):
         hidden_dim: int,
         out_dim: int,
         num_layers: int,
-        zero_init: bool = False,
     ) -> None:
         super().__init__()
 
@@ -87,10 +86,6 @@ class FlowModel(nn.Module):
             ],
             nn.Linear(hidden_dim, out_dim),
         )
-
-        if zero_init:
-            self.model[-1].weight.data.fill_(0.0)
-            self.model[-1].bias.data.fill_(0.0)
 
     def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         return self.model(torch.cat([s_emb, t_emb], dim=-1))
@@ -191,7 +186,6 @@ class FlowModelPIS(nn.Module):
         hidden_dim: int,
         out_dim: int,
         num_layers: int,
-        zero_init: bool = False,
     ) -> None:
         super().__init__()
 
@@ -205,10 +199,6 @@ class FlowModelPIS(nn.Module):
             ],
             nn.Linear(hidden_dim, out_dim),
         )
-
-        if zero_init:
-            self.model[-1].weight.data.fill_(0.0)
-            self.model[-1].bias.data.fill_(0.0)
 
     def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         return self.model(s_emb + t_emb)

@@ -110,9 +110,9 @@ class GFN(nn.Module):
                         flow_harmonics_dim, flow_t_emb_dim, flow_hidden_dim
                     )
                     self.s_model_flow = StateEncodingPIS(ndim, flow_s_emb_dim)
-                self.flow_model = FlowModelPIS(
-                    flow_s_emb_dim, flow_hidden_dim, 1, joint_layers, zero_init
-                )
+                else:
+                    flow_t_emb_dim, flow_s_emb_dim = t_emb_dim, s_emb_dim
+                self.flow_model = FlowModelPIS(flow_s_emb_dim, flow_hidden_dim, 1, joint_layers)
             else:
                 self.flow_model = torch.nn.Parameter(torch.tensor(0.0).to(self.device))
 
@@ -136,7 +136,7 @@ class GFN(nn.Module):
                     )
                     self.s_model_flow = StateEncoding(ndim, flow_hidden_dim, flow_s_emb_dim)
                 self.flow_model = FlowModel(
-                    flow_s_emb_dim, flow_t_emb_dim, hidden_dim, 1, joint_layers, zero_init
+                    flow_s_emb_dim, flow_t_emb_dim, hidden_dim, 1, joint_layers
                 )
             else:
                 self.flow_model = torch.nn.Parameter(torch.tensor(0.0).to(self.device))

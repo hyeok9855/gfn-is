@@ -1,41 +1,47 @@
 import numpy as np
 import torch
 
+from utils.misc_utils import huber_loss
+
 
 def tb_loss(
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
     log_Z: torch.Tensor,
     log_r: torch.Tensor,
+    quantile: float = 1.0,
 ) -> torch.Tensor:
     tb_discrepancy = log_Z + log_pfs.sum(-1) - log_r - log_pbs.sum(-1)
-    return tb_discrepancy**2
+    return huber_loss(tb_discrepancy, quantile=quantile)
 
 
 def tb_avg_loss(
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
     log_r: torch.Tensor,
+    quantile: float = 1.0,
 ) -> torch.Tensor:
     log_Z = (log_r + log_pbs.sum(-1) - log_pfs.sum(-1)).mean(dim=0, keepdim=True)
     tb_avg_discrepancy = log_r + log_pbs.sum(-1) - log_pfs.sum(-1) - log_Z
-    return tb_avg_discrepancy**2
+    return huber_loss(tb_avg_discrepancy, quantile=quantile)
 
 
 def db_loss(
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
     log_fs: torch.Tensor,
+    quantile: float = 1.0,
 ) -> torch.Tensor:
     db_discrepancy = log_fs[:, 1:] + log_pbs - log_pfs - log_fs[:, :-1]
-    return (db_discrepancy**2).sum(-1)
+    return huber_loss(db_discrepancy, quantile=quantile).sum(-1)
 
 
 def subtb_loss(
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
     log_fs: torch.Tensor,
-    coef_matrix: torch.Tensor,
+    coef_matrix: torch.Tensor,  # (T+1, T+1)
+    quantile: float = 1.0,
 ) -> torch.Tensor:
     diff_logp = log_pfs - log_pbs  # (bs, T)
     diff_logp_padded = torch.cat(
@@ -44,7 +50,8 @@ def subtb_loss(
     )  # (bs, T+1)
     A1 = diff_logp_padded.unsqueeze(1) - diff_logp_padded.unsqueeze(2)  # (bs, T+1, T+1)
     A2 = log_fs[:, :, None] - log_fs[:, None, :] + A1  # (bs, T+1, T+1)
-    subtb_losses = torch.triu((A2**2) * coef_matrix.unsqueeze(0), diagonal=1).sum((1, 2))
+    A2 = huber_loss(torch.triu(A2, diagonal=1), quantile=quantile)
+    subtb_losses = (A2 * coef_matrix.unsqueeze(0)).sum((1, 2))
     return subtb_losses
 
 
@@ -55,16 +62,17 @@ def get_gfn_loss(
     log_fs: torch.Tensor,
     subtb_coef_matrix: torch.Tensor | None = None,
     ndim: int | None = None,
+    huber_quantile: float = 1.0,
 ) -> torch.Tensor:
     if loss_type == "tb":
-        losses = tb_loss(log_pfs, log_pbs, log_fs[:, 0], log_fs[:, -1])
+        losses = tb_loss(log_pfs, log_pbs, log_fs[:, 0], log_fs[:, -1], quantile=huber_quantile)
     elif loss_type == "tb-avg":
-        losses = tb_avg_loss(log_pfs, log_pbs, log_fs[:, -1])
+        losses = tb_avg_loss(log_pfs, log_pbs, log_fs[:, -1], quantile=huber_quantile)
     elif loss_type == "db":
-        losses = db_loss(log_pfs, log_pbs, log_fs)
+        losses = db_loss(log_pfs, log_pbs, log_fs, quantile=huber_quantile)
     elif loss_type == "subtb":
         assert subtb_coef_matrix is not None
-        losses = subtb_loss(log_pfs, log_pbs, log_fs, subtb_coef_matrix)
+        losses = subtb_loss(log_pfs, log_pbs, log_fs, subtb_coef_matrix, quantile=huber_quantile)
     elif loss_type == "pis":
         assert ndim is not None
         losses = (1 / ndim) * (log_pfs.sum(-1) - log_pbs.sum(-1) - log_fs[:, -1])

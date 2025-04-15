@@ -25,6 +25,89 @@ def fig_to_image(fig):
     return PIL.Image.frombytes("RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb())  # type: ignore
 
 
+def viz_kde2d(
+    points: torch.Tensor,
+    title: str,
+    weights: torch.Tensor | None = None,
+    lim=3.0,
+):
+    fig, ax = plt.subplots(1, 1, figsize=(7, 7), dpi=200)
+    if title is not None:
+        ax.set_title(title)
+    try:
+        sns.kdeplot(
+            x=points[:, 0],
+            y=points[:, 1],
+            weights=weights if weights is not None else None,
+            cmap="coolwarm",
+            fill=True,
+            ax=ax,
+            warn_singular=False,
+        )
+    except Exception as e:
+        print(f"Error in kde plot: {e}")
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
+    return fig, ax
+
+
+def viz_contour_with_ax(
+    ax: plt.Axes,
+    log_prob_func: Callable[[torch.Tensor], torch.Tensor],
+    lim=3.0,
+    n_contour_levels=50,
+    grid_width_n_points=200,
+    clamp_min=-1000.0,
+    zorder=1,
+):
+    x_points_dim1 = torch.linspace(-lim, lim, grid_width_n_points)
+    x_points_dim2 = x_points_dim1
+    x_points = torch.tensor(list(itertools.product(x_points_dim1, x_points_dim2)))
+    log_p_x = log_prob_func(x_points).detach().cpu()
+    log_p_x = torch.clamp_min(log_p_x, clamp_min)
+    log_p_x = log_p_x.reshape((grid_width_n_points, grid_width_n_points))
+    x_points_dim1 = x_points[:, 0].reshape((grid_width_n_points, grid_width_n_points)).numpy()
+    x_points_dim2 = x_points[:, 1].reshape((grid_width_n_points, grid_width_n_points)).numpy()
+    ax.contour(x_points_dim1, x_points_dim2, log_p_x, levels=n_contour_levels, zorder=zorder)
+
+
+def viz_contour_sample2d(
+    points: torch.Tensor,
+    log_prob_func: Callable[[torch.Tensor], torch.Tensor],
+    weights: torch.Tensor | None = None,
+    lim=3.0,
+    alpha=0.7,
+    n_contour_levels=50,
+    grid_width_n_points=200,
+    clamp_min=-1000.0,
+):
+    fig, ax = plt.subplots(1, 1, figsize=(7, 7))
+
+    viz_contour_with_ax(
+        ax,
+        log_prob_func,
+        lim=lim,
+        n_contour_levels=n_contour_levels,
+        grid_width_n_points=grid_width_n_points,
+        clamp_min=clamp_min,
+        zorder=2,
+    )
+
+    samples = torch.clamp(points, -lim, lim)
+
+    # weights are used for the size of the markers
+    ax.scatter(
+        samples[:, 0],
+        samples[:, 1],
+        alpha=alpha,
+        marker="o",
+        s=weights[: len(samples)] * len(samples) * 5 if weights is not None else 5,
+        zorder=1,
+    )
+
+    return fig, ax
+
+
 def viz_2d_slice(
     energy: BaseEnergy,
     dims: tuple,
@@ -33,6 +116,7 @@ def viz_2d_slice(
     lim=3.0,
     alpha=0.8,
     n_contour_levels=50,
+    grid_width_n_points=200,
     clamp_min=-1000.0,
     kde=True,
 ):
@@ -44,7 +128,7 @@ def viz_2d_slice(
     else:
         fig_kde, ax_kde = None, None
 
-    def logp_func(x_2d):
+    def logp_func(x_2d: torch.Tensor) -> torch.Tensor:
         _x = torch.zeros((x_2d.shape[0], energy.ndim))
         _x[:, dims] = x_2d
         return energy.log_reward(_x.to(energy.device))
@@ -56,6 +140,7 @@ def viz_2d_slice(
         lim=lim,
         alpha=alpha,
         n_contour_levels=n_contour_levels,
+        grid_width_n_points=grid_width_n_points,
         clamp_min=clamp_min,
     )
 
@@ -124,8 +209,7 @@ def viz_gmm(
     energy: TwentyFiveGaussianMixture | GMM40,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
-    n_contour_levels=20,
-    clamp_min=-100000.0,
+    clamp_min=-1000.0,
 ) -> dict:
     lim = energy.plot_bound
     viz_lst = []
@@ -137,7 +221,6 @@ def viz_gmm(
                 samples,
                 weights=weights,
                 lim=lim,
-                n_contour_levels=n_contour_levels,
                 clamp_min=clamp_min,
             )
         )
@@ -155,97 +238,6 @@ def viz_gmm(
         plt.close(fig_contour)
 
     return out_dict
-
-
-def viz_kde2d(
-    points: torch.Tensor,
-    title: str,
-    weights: torch.Tensor | None = None,
-    lim=7.0,
-    sample_num=2000,
-):
-    fig, ax = plt.subplots(1, 1, figsize=(7, 7), dpi=200)
-    if title is not None:
-        ax.set_title(title)
-    try:
-        sns.kdeplot(
-            x=points[:sample_num, 0],
-            y=points[:sample_num, 1],
-            weights=weights[:sample_num] if weights is not None else None,
-            cmap="coolwarm",
-            fill=True,
-            ax=ax,
-            warn_singular=False,
-        )
-    except Exception as e:
-        print(f"Error in kde plot: {e}")
-    ax.set_xlim(-lim, lim)
-    ax.set_ylim(-lim, lim)
-    return fig, ax
-
-
-def viz_contour_with_ax(
-    ax,
-    log_prob_func,
-    lim=3.0,
-    n_contour_levels=None,
-    clamp_min=-1000.0,
-    zorder=1,
-):
-    grid_width_n_points = 100
-    x_points_dim1 = torch.linspace(-lim, lim, grid_width_n_points)
-    x_points_dim2 = x_points_dim1
-    x_points = torch.tensor(list(itertools.product(x_points_dim1, x_points_dim2)))
-    log_p_x = log_prob_func(x_points).detach().cpu()
-    log_p_x = torch.clamp_min(log_p_x, clamp_min)
-    log_p_x = log_p_x.reshape((grid_width_n_points, grid_width_n_points))
-    x_points_dim1 = x_points[:, 0].reshape((grid_width_n_points, grid_width_n_points)).numpy()
-    x_points_dim2 = x_points[:, 1].reshape((grid_width_n_points, grid_width_n_points)).numpy()
-    ax.contour(x_points_dim1, x_points_dim2, log_p_x, levels=n_contour_levels, zorder=zorder)
-
-
-def viz_contour_sample2d(
-    points: torch.Tensor,
-    log_prob_func: Callable,
-    weights: torch.Tensor | None = None,
-    lim=3.0,
-    alpha=0.7,
-    n_contour_levels=None,
-    clamp_min=-1000.0,
-):
-    fig, ax = plt.subplots(1, 1, figsize=(7, 7))
-
-    viz_contour_with_ax(
-        ax,
-        log_prob_func,
-        lim=lim,
-        n_contour_levels=n_contour_levels,
-        clamp_min=clamp_min,
-        zorder=2,
-    )
-
-    samples = torch.clamp(points, -lim, lim)
-
-    # ax.plot(
-    #     samples[:, 0],
-    #     samples[:, 1],
-    #     linewidth=0,
-    #     marker=".",
-    #     markersize=1.5,
-    #     alpha=alpha,
-    # )
-
-    # weights are used for the size of the markers
-    ax.scatter(
-        samples[:, 0],
-        samples[:, 1],
-        alpha=alpha,
-        marker="o",
-        s=weights[: len(samples)] * len(samples) * 5 if weights is not None else 5,
-        zorder=1,
-    )
-
-    return fig, ax
 
 
 def _plot_step(

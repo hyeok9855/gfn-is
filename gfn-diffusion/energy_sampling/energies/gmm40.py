@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.distributions as D
 
@@ -11,8 +12,8 @@ class GMM40(BaseEnergy):
         device: str | torch.device,
         ndim: int = 2,
         num_components: int = 40,
-        loc_scaling: float = 4.0,
-        scale_scaling: float = 0.1,
+        loc_scaling: float = 40.0,
+        scale_scaling: float = 1.0,
         seed: int = 0,
     ) -> None:
         super().__init__(device=device, ndim=ndim, plot_bound=loc_scaling * 1.5)
@@ -20,10 +21,14 @@ class GMM40(BaseEnergy):
 
         self.seed = seed
 
-        with temp_seed(seed):
-            logits = torch.ones(num_components, device=device)
-            mean = (torch.rand(num_components, ndim, device=device) * 2 - 1) * loc_scaling
-            scale = torch.ones(num_components, ndim, device=device) * scale_scaling
+        try:
+            mean = torch.from_numpy(np.load(f"energies/data/gmm40-{ndim}d_means.npy"))
+        except FileNotFoundError:
+            with temp_seed(seed):
+                mean = torch.rand(num_components, ndim) * 2 - 1
+        mean = mean.to(dtype=torch.float32, device=device) * loc_scaling
+        scale = torch.ones(num_components, ndim, device=device) * scale_scaling
+        logits = torch.ones(num_components, device=device)
 
         mixture_dist = D.Categorical(logits=logits)
         components_dist = D.Independent(
