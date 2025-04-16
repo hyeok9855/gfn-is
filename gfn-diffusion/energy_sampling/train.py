@@ -358,7 +358,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--smoothing",
         type=str,
-        default="clip_above",
+        default="temper",
         choices=("clip_above", "clip_below", "temper", "mix_with_uniform"),
     )
     parser.add_argument("--eval_resampling", action="store_true", default=False)

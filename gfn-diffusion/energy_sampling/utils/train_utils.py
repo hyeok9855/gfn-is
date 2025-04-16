@@ -81,7 +81,7 @@ def train_step(
     resampling: bool = False,
     weighting: bool = False,
     aux_target: str = "target",  # target, loss, iw
-    target_ess: float = 1.0,
+    target_ess: float = 0.0,
     smoothing: str = "clip_above",
     alternating: bool = False,
 ):
@@ -204,7 +204,10 @@ def fwd_train_step(
         case _:
             raise ValueError(f"Invalid aux_target: {aux_target}")
 
-    if target_ess != 0.0:
+    if target_ess != 0.0 and (
+        (buffer is not None and buffer.prioritization == "normalized_iw")
+        or (weighting or resampling)
+    ):
         if 0.0 <= target_ess <= 1.0:
             target_ess = target_ess * batch_size
         else:
