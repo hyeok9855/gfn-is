@@ -20,13 +20,12 @@ wandb login --relogin ...
 ENERGY_NAME=$1  # many_well, gmm40
 BUFFER_PRIORITIZATION=${2:-normalized_iw}  # normalized_iw, none
 SHARE_EMBEDDINGS=${3:-embshare}  # embshare, noembshare
+T_SCALE=${4:-1.0}
 
 if [ "$ENERGY_NAME" = "gmm40" ]; then
     N_DIM=2
-    T_SCALE=100.0
 elif [ "$ENERGY_NAME" = "many_well" ]; then
     N_DIM=32
-    T_SCALE=1.0
 fi
 
 EXP_NAME=db_buf-${BUFFER_PRIORITIZATION}_${SHARE_EMBEDDINGS}
