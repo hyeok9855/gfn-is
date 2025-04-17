@@ -19,8 +19,6 @@ def get_gfn_optimizer(
     lr_flow: float,
     lr_beta: float,
     lr_back: float,
-    learn_pb=False,
-    conditional_flow_model=False,
     use_weight_decay=False,
     weight_decay=1e-7,
     use_scheduler=False,
@@ -35,8 +33,7 @@ def get_gfn_optimizer(
     if gfn_model.lp_scaling_model is not None:
         param_groups += [{"params": gfn_model.lp_scaling_model.parameters()}]
 
-    if conditional_flow_model:
-        assert isinstance(gfn_model.flow_model, torch.nn.Module)
+    if isinstance(gfn_model.flow_model, torch.nn.Module):
         param_groups += [{"params": gfn_model.flow_model.parameters(), "lr": lr_flow}]
         if gfn_model.t_model_flow is not None:
             param_groups += [{"params": gfn_model.t_model_flow.parameters(), "lr": lr_flow}]
@@ -48,8 +45,7 @@ def get_gfn_optimizer(
     if gfn_model.beta_model is not None:
         param_groups += [{"params": gfn_model.beta_model, "lr": lr_beta}]
 
-    if learn_pb:
-        assert gfn_model.back_model is not None
+    if gfn_model.back_model is not None:
         param_groups += [{"params": gfn_model.back_model.parameters(), "lr": lr_back}]
 
     gfn_optimizer = torch.optim.Adam(
