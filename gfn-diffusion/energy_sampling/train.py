@@ -75,6 +75,7 @@ def train(args):
         lp=args.lp,
         learned_variance=args.learned_variance,
         partial_energy=args.partial_energy,
+        learn_beta_T=args.T if args.learn_beta else 0,
         clipping=args.clipping,
         lgv_clip=args.lgv_clip,
         gfn_clip=args.gfn_clip,
@@ -95,6 +96,7 @@ def train(args):
         args.lr_policy,
         args.lr_Z,
         args.lr_flow,
+        args.lr_beta,
         args.lr_back,
         args.learn_pb,
         args.conditional_flow_model,
@@ -238,6 +240,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr_policy", type=float, default=1e-3)
     parser.add_argument("--lr_Z", type=float, default=1e-1)
     parser.add_argument("--lr_flow", type=float, default=1e-2)
+    parser.add_argument("--lr_beta", type=float, default=1e-3)
     parser.add_argument("--lr_back", type=float, default=None)
     parser.add_argument("--use_weight_decay", action="store_true", default=False)
     parser.add_argument("--weight_decay", type=float, default=1e-7)
@@ -265,6 +268,7 @@ if __name__ == "__main__":
     parser.add_argument("--pb_scale_range", type=float, default=0.1)
     parser.add_argument("--learned_variance", action="store_true", default=False)
     parser.add_argument("--partial_energy", action="store_true", default=False)
+    parser.add_argument("--learn_beta", action="store_true", default=False)
     parser.add_argument("--no_clipping", action="store_false", dest="clipping")
     parser.add_argument("--lgv_clip", type=float, default=1e2)
     parser.add_argument("--gfn_clip", type=float, default=1e4)

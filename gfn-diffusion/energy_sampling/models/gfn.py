@@ -38,6 +38,7 @@ class GFN(nn.Module):
         lp: bool = False,
         learned_variance: bool = True,
         partial_energy: bool = False,
+        learn_beta_T: int = 0,
         clipping: bool = False,
         lgv_clip: float = 1e2,
         gfn_clip: float = 1e4,
@@ -85,6 +86,18 @@ class GFN(nn.Module):
         lv_out_dim = ndim if self.lp_scaling_per_dimension else 1
 
         self.back_model = self.lp_scaling_model = None
+
+        self.beta_model = None
+        if learn_beta_T > 0:
+            self.beta_model = torch.nn.Parameter(
+                torch.cat(
+                    [
+                        torch.tensor([-float("inf")], device=self.device),
+                        torch.ones(learn_beta_T, device=self.device) * -1.0,
+                    ],
+                )
+            )
+            self.softplus = nn.Softplus()
 
         if self.pis_architectures:
             assert s_emb_dim == t_emb_dim, print(
@@ -291,7 +304,15 @@ class GFN(nn.Module):
             log_p_ref = -0.5 * (
                 logtwopi + ref_log_var + (-ref_log_var).exp() * (states[:, 1:-1] ** 2)
             ).sum(-1)
-            logf[:, 1:-1] += (1 - ts[:, 1:-1]) * log_p_ref + ts[:, 1:-1] * log_r_fn(
+
+            if self.beta_model is not None:
+                betas = self.softplus(self.beta_model).cumsum(0)
+                betas = betas / betas[-1]
+                betas = betas.quantile(ts[:, 1:-1].flatten()).reshape(bsz, -1)
+            else:
+                betas = ts[:, 1:-1]
+
+            logf[:, 1:-1] += (1 - betas) * log_p_ref + betas * log_r_fn(
                 states[:, 1:-1].reshape(-1, self.dim)
             ).view(bsz, T - 1)
 
@@ -369,7 +390,15 @@ class GFN(nn.Module):
             log_p_ref = -0.5 * (
                 logtwopi + ref_log_var + (-ref_log_var).exp() * (states[:, 1:-1] ** 2)
             ).sum(-1)
-            logf[:, 1:-1] += (1 - ts[:, 1:-1]) * log_p_ref + ts[:, 1:-1] * log_r_fn(
+
+            if self.beta_model is not None:
+                betas = self.softplus(self.beta_model).cumsum(0)
+                betas = betas / betas[-1]
+                betas = betas.quantile(ts[:, 1:-1].flatten()).reshape(bsz, -1)
+            else:
+                betas = ts[:, 1:-1]
+
+            logf[:, 1:-1] += (1 - betas) * log_p_ref + betas * log_r_fn(
                 states[:, 1:-1].reshape(-1, self.dim)
             ).view(bsz, T - 1)
 

@@ -90,7 +90,7 @@ def get_name(args):
 
     name += f"-T{args.T}-{args.discretizer}"
     if args.discretizer == "random":
-        name += f"-maxr{args.max_ratio}"
+        name += f"-maxr{args.discretizer_max_ratio}"
 
     if args.exploratory:
         name += f"_expl{args.exploration_factor}"

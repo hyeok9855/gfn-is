@@ -17,8 +17,9 @@ def get_gfn_optimizer(
     lr_policy: float,
     lr_Z: float,
     lr_flow: float,
+    lr_beta: float,
     lr_back: float,
-    back_model=False,
+    learn_pb=False,
     conditional_flow_model=False,
     use_weight_decay=False,
     weight_decay=1e-7,
@@ -37,10 +38,17 @@ def get_gfn_optimizer(
     if conditional_flow_model:
         assert isinstance(gfn_model.flow_model, torch.nn.Module)
         param_groups += [{"params": gfn_model.flow_model.parameters(), "lr": lr_flow}]
+        if gfn_model.t_model_flow is not None:
+            param_groups += [{"params": gfn_model.t_model_flow.parameters(), "lr": lr_flow}]
+        if gfn_model.s_model_flow is not None:
+            param_groups += [{"params": gfn_model.s_model_flow.parameters(), "lr": lr_flow}]
     else:
         param_groups += [{"params": [gfn_model.flow_model], "lr": lr_Z}]
 
-    if back_model:
+    if gfn_model.beta_model is not None:
+        param_groups += [{"params": gfn_model.beta_model, "lr": lr_beta}]
+
+    if learn_pb:
         assert gfn_model.back_model is not None
         param_groups += [{"params": gfn_model.back_model.parameters(), "lr": lr_back}]
 
