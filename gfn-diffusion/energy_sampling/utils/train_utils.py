@@ -4,7 +4,7 @@ from typing import Callable
 
 import torch
 
-from buffer import ReplayBuffer
+from buffers import TerminalStateBuffer
 from energies import BaseEnergy
 from gflownet_losses import get_gfn_loss
 from langevin import langevin_dynamics
@@ -74,8 +74,8 @@ def train_step(
     exploratory: bool = False,
     exploration_factor: float = 0.0,
     exploration_wd: bool = False,
-    buffer: ReplayBuffer | None = None,
-    buffer_ls: ReplayBuffer | None = None,
+    buffer: TerminalStateBuffer | None = None,
+    buffer_ls: TerminalStateBuffer | None = None,
     prefill: int = 0,
     local_search: bool = False,
     ls_args: Namespace | None = None,
@@ -169,7 +169,7 @@ def fwd_train_step(
     discretizer: Callable[[int], torch.Tensor],
     subtb_coef_matrix: torch.Tensor | None,
     exploration_std=0.0,
-    buffer: ReplayBuffer | None = None,
+    buffer: TerminalStateBuffer | None = None,
     device=torch.device("cpu"),
     resampling: bool = False,
     weighting: bool = False,
@@ -258,8 +258,8 @@ def bwd_train_step(
     subtb_coef_matrix: torch.Tensor | None,
     local_search: bool = False,
     ls_args: Namespace | None = None,
-    buffer: ReplayBuffer | None = None,
-    buffer_ls: ReplayBuffer | None = None,
+    buffer: TerminalStateBuffer | None = None,
+    buffer_ls: TerminalStateBuffer | None = None,
     it=0,
     device=torch.device("cpu"),
 ) -> torch.Tensor:

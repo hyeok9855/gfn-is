@@ -6,7 +6,7 @@ import numpy as np
 import ot as pot
 import torch
 
-from buffer import ReplayBuffer
+from buffers import TerminalStateBuffer
 from energies import BaseEnergy
 from models import GFN
 from utils.misc_utils import logmeanexp
@@ -340,7 +340,7 @@ def eval_step(
     final_eval: bool = False,
     resampling: bool = False,
     weighting: bool = False,
-    buffer: ReplayBuffer | None = None,
+    buffer: TerminalStateBuffer | None = None,
 ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor | None]:
     metrics = {}
 

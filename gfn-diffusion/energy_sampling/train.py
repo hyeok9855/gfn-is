@@ -7,7 +7,7 @@ import torch
 import wandb
 from tqdm import trange
 
-from buffer import ReplayBuffer
+from buffers import TerminalStateBuffer
 from discretizers import get_discretizer
 from energies import get_energy
 from gflownet_losses import cal_subtb_coef_matrix
@@ -107,7 +107,7 @@ def train(args):
 
     buffer = None
     if args.training_mode != "fwd" and args.bwd_from == "buffer":
-        buffer = ReplayBuffer(
+        buffer = TerminalStateBuffer(
             args.buffer_size,
             device,
             prioritization=args.prioritization,
