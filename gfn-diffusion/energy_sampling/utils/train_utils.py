@@ -1,13 +1,11 @@
-from argparse import Namespace
 from functools import partial
 from typing import Callable
 
 import torch
 
-from buffers import TerminalStateBuffer
+from buffers import BaseBuffer, TerminalStateBuffer, IntermediateStateBuffer
 from energies import BaseEnergy
 from gflownet_losses import get_gfn_loss
-from langevin import langevin_dynamics
 from models import GFN
 from utils.misc_utils import get_exploration_std
 
@@ -74,17 +72,14 @@ def train_step(
     exploratory: bool = False,
     exploration_factor: float = 0.0,
     exploration_wd: bool = False,
-    buffer: TerminalStateBuffer | None = None,
-    buffer_ls: TerminalStateBuffer | None = None,
+    buffer: BaseBuffer | None = None,
     prefill: int = 0,
-    local_search: bool = False,
-    ls_args: Namespace | None = None,
     subtb_coef_matrix: torch.Tensor | None = None,
     clip_grad_norm: float = 1.0,
     device=torch.device("cpu"),
     resampling: bool = False,
     weighting: bool = False,
-    aux_target: str = "target",  # target, loss, iw
+    aux_target: str = "target",  # target, loss
     target_ess: float = 0.0,
     smoothing: str = "clip_above",
     alternating: bool = False,
@@ -115,11 +110,7 @@ def train_step(
         bwd_from=bwd_from,
         discretizer=discretizer,
         subtb_coef_matrix=subtb_coef_matrix,
-        local_search=local_search,
-        ls_args=ls_args,
         buffer=buffer,
-        buffer_ls=buffer_ls,
-        it=it,
         device=device,
     )
 
@@ -169,11 +160,11 @@ def fwd_train_step(
     discretizer: Callable[[int], torch.Tensor],
     subtb_coef_matrix: torch.Tensor | None,
     exploration_std=0.0,
-    buffer: TerminalStateBuffer | None = None,
+    buffer: BaseBuffer | None = None,
     device=torch.device("cpu"),
     resampling: bool = False,
     weighting: bool = False,
-    aux_target: str = "target",  # target, loss, iw
+    aux_target: str = "target",  # target, loss
     target_ess: float = 0.0,
     smoothing: str = "clip_above",
 ) -> torch.Tensor:
@@ -198,49 +189,80 @@ def fwd_train_step(
         ndim=energy.ndim,
     )
 
-    match aux_target:
-        case "target":  # r(x)p_B(\tau|x)
-            log_weights = (log_fs[:, -1] + log_pbs.sum(-1) - log_pfs_exp.sum(-1)).detach()
-        case "loss":
-            log_weights = (losses.log() - log_pfs_exp.sum(-1)).detach()
-        case "iw":  # For TB, log_iw = log_r + log_pbs.sum(-1) - log_pfs.sum(-1) - log_Z
-            log_weights = (log_fs[:, -1] + log_pbs.sum(-1) - 2 * log_pfs_exp.sum(-1)).detach()
-        case _:
-            raise ValueError(f"Invalid aux_target: {aux_target}")
+    normalized_iws_0t = None
+    if (buffer is not None and buffer.prioritization == "normalized_iw") or weighting or resampling:
+        # Compute importance weights
+        # log_iws_0t = torch.zeros(batch_size, ts.shape[1] - 1).to(device)  # shape: (bs, T)
+        # aux_target_measure_0t = torch.zeros_like(log_iws_0t)
+        # match aux_target:
+        #     case "target":  # r(x)p_B(\tau|x)
+        #         aux_target_measure_0t = log_fs[:, 1:] + log_pbs.cumsum(-1)
+        #     case "loss":
+        #         match loss_type:
+        #             case "tb" | "tb-avg" | "pis":  # compute only for the complete trajectory
+        #                 aux_target_measure_0t[:, -1] = losses.log()  # (bs,)
+        #             case "db":
+        #                 aux_target_measure_0t = losses.log().cumsum(-1)  # (bs, T)
+        #             case "subtb":
+        #                 assert subtb_chunk_size > 0  # only chunk-based SubTB is supported
 
-    if target_ess != 0.0 and (
-        (buffer is not None and buffer.prioritization == "normalized_iw")
-        or (weighting or resampling)
-    ):
-        if 0.0 <= target_ess <= 1.0:
-            target_ess = target_ess * batch_size
-        else:
+        #                 aux_target_measure_0t[:, subtb_chunk_size - 1 :: subtb_chunk_size] = (
+        #                     losses.log().cumsum(-1)
+        #                 )
+        #                 # (bs, T/L)
+        #     case _:
+        #         raise ValueError(f"Invalid aux_target: {aux_target}")
+        # proposal_measure_0t = log_pfs_exp.cumsum(-1)
+        # log_iws_0t = (aux_target_measure_0t - proposal_measure_0t).detach()
+
+        log_iws_0t = torch.zeros(batch_size, ts.shape[1] - 1).to(device)  # shape: (bs, T)
+        match aux_target:
+            case "target":  # r(x)p_B(\tau|x)
+                log_iws_0t[:, -1] = (log_fs[:, -1] + log_pbs.sum(-1) - log_pfs_exp.sum(-1)).detach()
+            case "loss":
+                log_iws_0t[:, -1] = (losses.log() - log_pfs_exp.sum(-1)).detach()
+            case "iw":  # For TB, log_iw = log_r + log_pbs.sum(-1) - log_pfs.sum(-1) - log_Z
+                log_iws_0t[:, -1] = (
+                    log_fs[:, -1] + log_pbs.sum(-1) - 2 * log_pfs_exp.sum(-1)
+                ).detach()
+            case _:
+                raise ValueError(f"Invalid aux_target: {aux_target}")
+
+        # Importance weight smoothing
+        normalized_iws_0t = log_iws_0t.softmax(dim=0)  # (bs, T)
+        if target_ess != 0.0:
+            target_ess = target_ess * batch_size if 0.0 <= target_ess <= 1.0 else target_ess
             assert 1.0 < target_ess <= batch_size, f"Invalid target ESS: {target_ess}"
 
-        if ess(log_weights) >= target_ess:
-            normalized_weights = log_weights.softmax(dim=0)
-        else:
-            if smoothing == "mix_with_uniform":
-                normalized_weights = log_weights.softmax(dim=0)
-                mixing_ratio = solve_mixing_ratio(normalized_weights, target_ess=target_ess)
-                normalized_weights = (
-                    1 - mixing_ratio
-                ) * normalized_weights + mixing_ratio / batch_size
-            else:
-                func = get_func(smoothing)
-                value, _ = binary_search(log_weights, target_ess, func)
-                log_weights = func(log_weights, value)
-                normalized_weights = log_weights.softmax(dim=0)
-    else:
-        normalized_weights = log_weights.softmax(dim=0)
+            if (ess(normalized_weights=normalized_iws_0t) < target_ess).any():
+                if smoothing == "mix_with_uniform":
+                    raise NotImplementedError("TODO: Implement this")
+                    mixing_ratio = solve_mixing_ratio(normalized_iws_0t, target_ess=target_ess)
+                    normalized_iws_0t = (
+                        1 - mixing_ratio
+                    ) * normalized_iws_0t + mixing_ratio / batch_size
+                else:  # binary search
+                    log_iws_0t = smoothing_with_binary_search(
+                        log_iws_0t, target_ess, get_func(smoothing)
+                    )
+                    normalized_iws_0t = log_iws_0t.softmax(dim=0)
 
+    # Add data to buffer
     if buffer is not None:
-        buffer.add(states[:, -1], log_fs[:, -1], losses.detach(), log_weights, normalized_weights)
+        data_dict = {"states": states[:, 1:], "log_fs": log_fs[:, 1:]}  # (bs, T) both
+        if buffer.prioritization == "loss":
+            data_dict["losses"] = losses.unsqueeze(1)  # (bs, 1)
+        elif buffer.prioritization == "normalized_iw":
+            assert normalized_iws_0t is not None
+            data_dict["normalized_iws"] = normalized_iws_0t  # (bs, T)
 
+        buffer.add(**data_dict)
     if weighting:
-        loss = (normalized_weights * losses).sum()
+        assert normalized_iws_0t is not None
+        loss = (normalized_iws_0t[:, -1] * losses).sum()
     elif resampling:
-        indices = torch.multinomial(normalized_weights, batch_size, replacement=True)
+        assert normalized_iws_0t is not None
+        indices = torch.multinomial(normalized_iws_0t[:, -1], batch_size, replacement=True)
         loss = losses[indices].mean()
     else:
         loss = losses.mean()
@@ -256,40 +278,30 @@ def bwd_train_step(
     bwd_from: str,
     discretizer: Callable[[int], torch.Tensor],
     subtb_coef_matrix: torch.Tensor | None,
-    local_search: bool = False,
-    ls_args: Namespace | None = None,
-    buffer: TerminalStateBuffer | None = None,
-    buffer_ls: TerminalStateBuffer | None = None,
-    it=0,
+    buffer: BaseBuffer | None = None,
     device=torch.device("cpu"),
 ) -> torch.Tensor:
     if bwd_from == "energy":
-        samples = energy.sample(batch_size).to(device)
         raise NotImplementedError("Training from energy is not used for this project.")
+        samples = energy.sample(batch_size).to(device)
 
     elif bwd_from == "buffer":
         assert buffer is not None
-        if local_search:
-            assert buffer_ls is not None
-            assert buffer_ls.prioritization in [
-                "none",
-                "reward",
-            ], "Local search buffer cannot be prioritized by loss or iw"
-            assert ls_args is not None
-            if it % ls_args.ls_cycle < 2:
-                samples, log_rs, _ = buffer.sample(batch_size)
-                local_search_samples, log_rs = langevin_dynamics(
-                    samples, energy.log_reward, device, ls_args
-                )
-                buffer_ls.add(local_search_samples, log_rs)
-            samples, log_rs, indices = buffer_ls.sample(batch_size)
+        if isinstance(buffer, TerminalStateBuffer):
+            buf_xs, buf_log_rs, indices = buffer.sample(batch_size)
+            # each with shape (bs,)
+
+            # Construct complete trajectory
+            ts = discretizer(batch_size).to(device)
+            _, log_pfs, log_pbs, log_fs = gfn_model.get_trajectory_bwd(
+                buf_xs, ts, energy.log_reward
+            )
+            log_fs[:, -1] = buf_log_rs
+
+        elif isinstance(buffer, IntermediateStateBuffer):
+            raise NotImplementedError
         else:
-            samples, log_rs, indices = buffer.sample(batch_size)
-
-        ts = discretizer(batch_size).to(device)
-        _, log_pfs, log_pbs, log_fs = gfn_model.get_trajectory_bwd(samples, ts, energy.log_reward)
-
-        log_fs[:, -1] = log_rs
+            raise ValueError(f"Invalid buffer type: {type(buffer)}")
 
         losses = get_gfn_loss(
             loss_type,
@@ -301,7 +313,7 @@ def bwd_train_step(
         )
 
         if buffer.prioritization == "loss":
-            buffer.update(indices, samples, log_rs, losses.detach())
+            buffer.update(indices, losses=losses)
 
     return losses.mean()
 
@@ -364,54 +376,66 @@ def solve_mixing_ratio(normalized_weights: torch.Tensor, target_ess: float) -> f
         raise ValueError(f"No valid solution: {mixing_ratio_1}, {mixing_ratio_2}")
 
 
-def ess(log_weights: torch.Tensor) -> float:
-    normalized_weights = log_weights.softmax(dim=0)
-    return 1 / (normalized_weights**2).sum().item()
+def ess(
+    log_weights: torch.Tensor | None = None,  # shape: (bs, T)
+    normalized_weights: torch.Tensor | None = None,  # shape: (bs, T)
+) -> torch.Tensor:
+    if normalized_weights is None:
+        assert log_weights is not None
+        normalized_weights = log_weights.softmax(dim=0)  # shape: (bs, T)
+    return 1 / (normalized_weights**2).sum(dim=0)  # shape: (T,)
 
 
-def binary_search(
-    log_weights: torch.Tensor,
+def smoothing_with_binary_search(
+    log_weights: torch.Tensor,  # shape: (bs, T)
     target_ess: float,
-    func: Callable[[torch.Tensor, float], torch.Tensor],
+    func: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
     tol=1e-2,
     max_steps=1000,
-) -> tuple[float, int]:
+) -> torch.Tensor:
     search_min, search_max = get_min_max(func, log_weights)
+    search_min = torch.tensor(search_min, device=log_weights.device).repeat(1, log_weights.shape[1])
+    search_max = torch.tensor(search_max, device=log_weights.device).repeat(1, log_weights.shape[1])
+    mid = (search_min + search_max) / 2  # shape: (1, T)
+    original_order = ess(func(log_weights, search_min)) < ess(func(log_weights, search_max))
+
+    dones = ess(log_weights=log_weights) >= target_ess  # shape: (T,)
+    log_weights_smoothed = log_weights.clone()  # shape: (bs, T)
 
     steps = 0
-    original_order = ess(func(log_weights, search_min)) < ess(func(log_weights, search_max))
-    while True:
+    while not dones.all():
         steps += 1
-        mid = (search_min + search_max) / 2
-        if mid == search_min or mid == search_max:
+        mid[0, ~dones] = (search_min[0, ~dones] + search_max[0, ~dones]) / 2  # shape: (1, T)
+        if (mid == search_min).all() or (mid == search_max).all():
             break  # Avoid meaningless loop; maybe the tolerance is too small
 
-        log_weights_smoothed = func(log_weights, mid)
-        _ess = ess(log_weights_smoothed)
-        if (_ess > target_ess) == original_order:
-            search_max = mid
-        else:
-            search_min = mid
-        if abs(_ess - target_ess) < tol:
-            break
+        new_log_weights = func(log_weights, mid)  # shape: (bs, T)
+        new_ess = ess(log_weights=new_log_weights)  # shape: (T,)
+        new_dones = (~dones) & (abs(new_ess - target_ess) < tol)  # shape: (T,)
+        log_weights_smoothed[:, new_dones] = new_log_weights[:, new_dones]
+        dones = dones | new_dones
+
+        search_max = torch.where((new_ess > target_ess) == original_order, mid, search_max)
+        search_min = torch.where((new_ess < target_ess) == original_order, mid, search_min)
+
         if steps > max_steps:
             raise ValueError(f"Binary search failed in {max_steps} steps")
-    return mid, steps
+    return log_weights_smoothed
 
 
-def clip_below(log_weights: torch.Tensor, value: float) -> torch.Tensor:
+def clip_below(log_weights: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
     return log_weights.clamp(min=value)
 
 
-def clip_above(log_weights: torch.Tensor, value: float) -> torch.Tensor:
+def clip_above(log_weights: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
     return log_weights.clamp(max=value)
 
 
-def temper(log_weights: torch.Tensor, value: float) -> torch.Tensor:
+def temper(log_weights: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
     return log_weights / value
 
 
-def get_func(smoothing: str) -> Callable[[torch.Tensor, float], torch.Tensor]:
+def get_func(smoothing: str) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
     if smoothing == "clip_below":
         return clip_below
     elif smoothing == "clip_above":
@@ -426,6 +450,6 @@ def get_min_max(func: Callable, log_weights: torch.Tensor) -> tuple[float, float
     if func == clip_above or func == clip_below:
         return log_weights.min().item(), log_weights.max().item()
     elif func == temper:
-        return 1.0, 50.0
+        return 1.0, 100.0
     else:
         raise ValueError(f"Invalid function: {func}")

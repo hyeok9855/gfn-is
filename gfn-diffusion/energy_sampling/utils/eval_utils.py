@@ -6,7 +6,7 @@ import numpy as np
 import ot as pot
 import torch
 
-from buffers import TerminalStateBuffer
+from buffers import BaseBuffer
 from energies import BaseEnergy
 from models import GFN
 from utils.misc_utils import logmeanexp
@@ -340,7 +340,7 @@ def eval_step(
     final_eval: bool = False,
     resampling: bool = False,
     weighting: bool = False,
-    buffer: TerminalStateBuffer | None = None,
+    buffer: BaseBuffer | None = None,
 ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor | None]:
     metrics = {}
 
@@ -425,7 +425,7 @@ def eval_step(
 
     if buffer is not None and len(buffer) > 0:
         assert gt_xs is not None
-        buffer_xs, _, _ = buffer.sample(batch_size)
+        buffer_xs, _ = buffer.sample_terminal(batch_size)
         metrics_b = {}
         metrics_b.update(compute_distribution_distances(buffer_xs.unsqueeze(1), gt_xs.unsqueeze(1)))
         metrics_b = {

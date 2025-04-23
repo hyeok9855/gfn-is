@@ -1,7 +1,6 @@
 import argparse
 from functools import partial
 import os
-from copy import deepcopy
 
 import torch
 import wandb
@@ -44,17 +43,6 @@ def train(args):
         subtb_coef_matrix = cal_subtb_coef_matrix(
             args.subtb_lambda, args.T, chunk_ratio=args.subtb_chunk_ratio
         ).to(device)
-
-    ls_args = None
-    if args.local_search:
-        ls_args = argparse.Namespace(
-            max_iter_ls=args.max_iter_ls,
-            burn_in=args.burn_in,
-            ls_cycle=args.ls_cycle,
-            ld_step=args.ld_step,
-            ld_schedule=args.ld_schedule,
-            target_acceptance_rate=args.target_acceptance_rate,
-        )
 
     try:
         gt_xs = energy.sample(args.eval_data_size).to(device)
@@ -108,7 +96,9 @@ def train(args):
 
     buffer = None
     if args.training_mode != "fwd" and args.bwd_from == "buffer":
-        buffer = TerminalStateBuffer(
+        buffer_class = TerminalStateBuffer
+        # TODO: if args.buffer_type == "terminal" else IntermediateStateBuffer
+        buffer = buffer_class(
             args.buffer_size,
             device,
             prioritization=args.prioritization,
@@ -116,10 +106,6 @@ def train(args):
             rank_k=args.rank_k,
             logr_lb=args.logr_lb,
         )
-    buffer_ls = None
-    if buffer is not None and args.local_search:
-        buffer_ls = deepcopy(buffer)
-        buffer_ls.prioritization = "reward"
 
     train_discretizer = get_discretizer(
         discretizer=args.discretizer, T=args.T, max_ratio=args.discretizer_max_ratio
@@ -180,10 +166,7 @@ def train(args):
             exploration_factor=args.exploration_factor,
             exploration_wd=args.exploration_wd,
             buffer=buffer,
-            buffer_ls=buffer_ls,
             prefill=args.prefill,
-            local_search=args.local_search,
-            ls_args=ls_args,
             subtb_coef_matrix=subtb_coef_matrix,
             clip_grad_norm=args.clip_grad_norm,
             device=device,
@@ -301,30 +284,17 @@ if __name__ == "__main__":
     ################################################################
 
     ################################################################
-    ### For local search
-    parser.add_argument("--local_search", action="store_true", default=False)
-    # How many iterations to run local search
-    parser.add_argument("--max_iter_ls", type=int, default=200)
-    # How many iterations to burn in before making local search
-    parser.add_argument("--burn_in", type=int, default=100)
-    # How frequently to make local search
-    parser.add_argument("--ls_cycle", type=int, default=100)
-    # Step size of Langevin Dynamics
-    parser.add_argument("--ld_step", type=float, default=0.001)
-    parser.add_argument("--ld_schedule", action="store_true", default=False)
-    # Target acceptance rate
-    parser.add_argument("--target_acceptance_rate", type=float, default=0.574)
-    ################################################################
-
-    ################################################################
     ### For replay buffer
     parser.add_argument("--buffer_size", type=int, default=-1)  # 100 * batch_size by default
+    parser.add_argument(
+        "--buffer_type", type=str, default="terminal", choices=("terminal", "intermediate")
+    )
     # prioritization
     parser.add_argument(
         "--prioritization",
         type=str,
         default="none",
-        choices=("none", "reward", "loss", "normalized_iw"),
+        choices=("none", "target", "loss", "normalized_iw"),
     )
     # buffer sampling strategy  # TODO: support percentile-based sampling
     parser.add_argument(
@@ -362,9 +332,7 @@ if __name__ == "__main__":
 
     ################################################################
     ### Importance sampling related
-    parser.add_argument(
-        "--aux_target", type=str, default="target", choices=("target", "loss", "iw")
-    )
+    parser.add_argument("--aux_target", type=str, default="target", choices=("target", "loss"))
     parser.add_argument("--train_resampling", action="store_true", default=False)
     parser.add_argument("--train_weighting", action="store_true", default=False)
     parser.add_argument("--alternating", action="store_true", default=False)
@@ -406,13 +374,6 @@ if __name__ == "__main__":
 
     if args.loss_type in ["db", "subtb"]:
         args.conditional_flow_model = True
-
-    if args.local_search:
-        assert (
-            args.training_mode == "both" or args.training_mode == "bwd"
-        ) and args.bwd_from == "buffer", (
-            "We only support local search for backward sampling with buffer"
-        )
 
     assert args.plot_freq % args.eval_freq == 0
 
