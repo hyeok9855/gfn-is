@@ -29,14 +29,15 @@ def train(args):
     # save_dir = f"{parent_dir}/results/{energy_name}/{exp_name}"
     # os.makedirs(save_dir, exist_ok=True)
 
-    config = args.__dict__
-    config["Experiment"] = "{args.energy}"
-    wandb.init(
-        project=f"GFN-Diffusion-{energy_name}",
-        config=config,
-        name=exp_name,
-        tags=[f"seed{args.seed}"],
-    )
+    if args.use_wandb:
+        config = args.__dict__
+        config["Experiment"] = "{args.energy}"
+        wandb.init(
+            project=f"GFN-Diffusion-{energy_name}",
+            config=config,
+            name=exp_name,
+            tags=[f"seed{args.seed}"],
+        )
 
     subtb_coef_matrix = None
     if args.loss_type == "subtb":
@@ -193,7 +194,11 @@ def train(args):
             smoothing=args.smoothing,
             alternating=args.alternating,
         )
-        wandb.log(metrics, step=i)
+        if args.use_wandb:
+            wandb.log(metrics, step=i)
+        else:
+            if "eval/elbo" in metrics and "eval/eubo" in metrics:
+                print(f"Step {i}: ELBO: {metrics['eval/elbo']}, EUBO: {metrics['eval/eubo']}")
 
     ### Final eval ###
     final_results, model_trajs, weights, model_trajs_r = eval_step_partial(
@@ -204,7 +209,13 @@ def train(args):
         samples=model_trajs[:, -1], resampled_samples=model_trajs_r, weights=weights
     )
     metrics.update(final_images)
-    wandb.log(metrics, step=args.epochs)
+    if args.use_wandb:
+        wandb.log(metrics, step=args.epochs)
+    else:
+        if "final_eval/elbo" in metrics and "final_eval/eubo" in metrics:
+            print(
+                f"Step Final: ELBO: {metrics['final_eval/elbo']}, EUBO: {metrics['final_eval/eubo']}"
+            )
     # torch.save(gfn_model.state_dict(), f'{save_dir}/model_final.pt')
 
 
@@ -341,6 +352,7 @@ if __name__ == "__main__":
 
     ################################################################
     ### Eval & Plot
+    parser.add_argument("--disable_wandb", action="store_false", dest="use_wandb")
     parser.add_argument("--eval_freq", type=int, default=100)
     parser.add_argument("--eval_data_size", type=int, default=2000)
     parser.add_argument("--final_eval_data_size", type=int, default=2000)
