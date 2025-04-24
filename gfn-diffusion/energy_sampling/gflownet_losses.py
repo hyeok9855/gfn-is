@@ -37,7 +37,6 @@ def subtb_loss(
     log_fs: torch.Tensor,
     coef_matrix: torch.Tensor,  # (T+1, T+1)
 ) -> torch.Tensor:
-    T = log_fs.shape[1]
     diff_logp = log_pfs - log_pbs  # (bs, T)
     diff_logp_padded = torch.cat(
         (torch.zeros((diff_logp.shape[0], 1)).to(diff_logp), diff_logp.cumsum(dim=-1)),
@@ -50,12 +49,31 @@ def subtb_loss(
     return subtb_losses
 
 
+def subtb_chunk_loss(
+    log_pfs: torch.Tensor,
+    log_pbs: torch.Tensor,
+    log_fs: torch.Tensor,
+    subtb_chunk_size: int,
+) -> torch.Tensor:
+    db_discrepancy = log_fs[:, :-1] + log_pfs - log_fs[:, 1:] - log_pbs
+    # (bs, T)
+    bs, T = db_discrepancy.shape
+    assert T % subtb_chunk_size == 0
+
+    db_discrepancy_chunked = db_discrepancy.reshape(bs, -1, subtb_chunk_size)
+    # (bs, T/L, L)
+    subtb_chunk_losses = db_discrepancy_chunked.sum(dim=-1)
+    # (bs, T/L)
+    return (subtb_chunk_losses**2).mean(-1)
+
+
 def get_gfn_loss(
     loss_type: str,
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
     log_fs: torch.Tensor,
     subtb_coef_matrix: torch.Tensor | None = None,
+    subtb_chunk_size: int = 0,
     ndim: int | None = None,
 ) -> torch.Tensor:
     if loss_type == "tb":
@@ -65,8 +83,11 @@ def get_gfn_loss(
     elif loss_type == "db":
         losses = db_loss(log_pfs, log_pbs, log_fs)
     elif loss_type == "subtb":
-        assert subtb_coef_matrix is not None
-        losses = subtb_loss(log_pfs, log_pbs, log_fs, subtb_coef_matrix)
+        if subtb_chunk_size > 0:  # Chunk-based subtb
+            losses = subtb_chunk_loss(log_pfs, log_pbs, log_fs, subtb_chunk_size)
+        else:
+            assert subtb_coef_matrix is not None
+            losses = subtb_loss(log_pfs, log_pbs, log_fs, subtb_coef_matrix)
     elif loss_type == "pis":
         assert ndim is not None
         losses = (1 / ndim) * (log_pfs.sum(-1) - log_pbs.sum(-1) - log_fs[:, -1])
@@ -76,7 +97,7 @@ def get_gfn_loss(
     return losses
 
 
-def cal_subtb_coef_matrix(lamda: float, N: int, chunk_ratio: float = 0.0) -> torch.Tensor:
+def cal_subtb_coef_matrix(lamda: float, T: int) -> torch.Tensor:
     """
     diff_matrix: (N+1, N+1)
      0,  1,  2, ...,   N
@@ -86,27 +107,16 @@ def cal_subtb_coef_matrix(lamda: float, N: int, chunk_ratio: float = 0.0) -> tor
 
     self.coef[i, j] = lamda^(j-i) / total_lambda  if i < j else 0.
     """
-    if chunk_ratio > 0.0:
-        chunk_size = int(N * chunk_ratio)
-        coef = torch.zeros(N + 1, N + 1)
-        for i in range(0, N, chunk_size):
-            if i + chunk_size <= N:
-                coef[i, i + chunk_size] = 1.0
-            else:
-                coef[i, N] = 1.0
-        coef = coef / coef.sum()
-        return coef
-
     assert lamda >= 0
     if lamda == 0:  # DB
-        ones = torch.ones(N + 1, N + 1)
+        ones = torch.ones(T + 1, T + 1)
         coef = torch.triu(ones, diagonal=1) - torch.triu(ones, diagonal=2)
-        coef = coef / N
+        coef = coef / T
     elif lamda == float("inf"):  # TB if lambda is inf
-        coef = torch.zeros(N + 1, N + 1)
+        coef = torch.zeros(T + 1, T + 1)
         coef[0, -1] = 1.0
     else:
-        range_vals = torch.arange(N + 1)
+        range_vals = torch.arange(T + 1)
         diff_matrix = range_vals - range_vals.view(-1, 1)
         B = np.log(lamda) * diff_matrix
         B[diff_matrix <= 0] = -np.inf

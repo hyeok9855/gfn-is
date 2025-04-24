@@ -4,13 +4,13 @@ from typing import Callable
 import torch
 
 
-def get_discretizer(discretizer: str, T: int, *args, **kwargs) -> Callable[[int], torch.Tensor]:
+def get_discretizer(discretizer: str, *args, **kwargs) -> Callable[[int, int], torch.Tensor]:
     if discretizer == "uniform":
-        return partial(uniform_discretizer, T=T)
+        return uniform_discretizer
     elif discretizer == "random":
-        return partial(random_discretizer, T=T, *args, **kwargs)
+        return partial(random_discretizer, *args, **kwargs)
     elif discretizer == "equidistant":
-        return partial(shifted_equidistant_discretizer, T=T, *args, **kwargs)
+        return partial(shifted_equidistant_discretizer, *args, **kwargs)
     else:
         raise ValueError(f"Unknown discretizer: {discretizer}")
 

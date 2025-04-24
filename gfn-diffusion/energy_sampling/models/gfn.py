@@ -168,12 +168,12 @@ class GFN(nn.Module):
             logvar = torch.tanh(logvar) * self.log_var_range
         return mean, logvar + np.log(self.pf_std_per_traj) * 2.0
 
-    def predict_next_state(self, s, t, log_r_fn: Callable | None = None):
+    def predict_next_state(self, s, t, logr_fn: Callable | None = None):
         if self.lp:
-            assert log_r_fn is not None
+            assert logr_fn is not None
             s.requires_grad_(True)
             with torch.enable_grad():
-                grad_log_r = torch.autograd.grad(log_r_fn(s).sum(), s)[0].detach()
+                grad_log_r = torch.autograd.grad(logr_fn(s).sum(), s)[0].detach()
                 grad_log_r = torch.nan_to_num(grad_log_r)
                 if self.clipping:
                     grad_log_r = torch.clip(grad_log_r, -self.lgv_clip, self.lgv_clip)
@@ -210,8 +210,8 @@ class GFN(nn.Module):
         self,
         s: torch.Tensor,
         ts: torch.Tensor,
+        logr_fn: Callable[[torch.Tensor], torch.Tensor],
         exploration_std=0.0,
-        log_r_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
         pis=False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         bsz = s.shape[0]
@@ -227,16 +227,16 @@ class GFN(nn.Module):
         for i in range(T):
             dts = (ts[:, i + 1] - ts[:, i]).unsqueeze(1)
 
-            pfs, flow = self.predict_next_state(s, ts[:, i], log_r_fn)
+            pfs, flow = self.predict_next_state(s, ts[:, i], logr_fn)
             pfmean, pflogvars = self.split_params(pfs)
 
             logf[:, i] = flow
             # Note: We instead use the vectorized version outside of the loop
             # if self.partial_energy and i > 0:
-            #     assert log_r_fn is not None
+            #     assert logr_fn is not None
             #     ref_log_var = (self.t_scale * ts[:, i].unsqueeze(1)).log()
             #     log_p_ref = -0.5 * (logtwopi + ref_log_var + (-ref_log_var).exp() * (s**2)).sum(1)
-            #     logf[:, i] += (1 - ts[:, i]) * log_p_ref + ts[:, i] * log_r_fn(s)
+            #     logf[:, i] += (1 - ts[:, i]) * log_p_ref + ts[:, i] * logr_fn(s)
 
             # PIS requires gradients w.r.t. the parameters
             if pis:
@@ -299,22 +299,27 @@ class GFN(nn.Module):
             states[:, i + 1] = s
 
         if self.partial_energy:
-            assert log_r_fn is not None
-            ref_log_var = (self.t_scale * ts[:, 1:-1]).log().unsqueeze(2)  # (bsz, T - 1, 1)
+            ref_log_var = (self.t_scale * ts[:, 1:]).log().unsqueeze(2)  # (bsz, T, 1)
             log_p_ref = -0.5 * (
-                logtwopi + ref_log_var + (-ref_log_var).exp() * (states[:, 1:-1] ** 2)
+                logtwopi
+                + ref_log_var
+                + (-ref_log_var).exp() * (states[:, 1:] ** 2)  # (bsz, T, ndim)
             ).sum(-1)
 
             if self.beta_model is not None:
                 betas = self.softplus(self.beta_model).cumsum(0)
                 betas = betas / betas[-1]
-                betas = betas.quantile(ts[:, 1:-1].flatten()).reshape(bsz, -1)
+                betas = betas.quantile(ts.flatten()).reshape(bsz, -1)
             else:
-                betas = ts[:, 1:-1]
+                betas = ts
 
-            logf[:, 1:-1] += (1 - betas) * log_p_ref + betas * log_r_fn(
-                states[:, 1:-1].reshape(-1, self.dim)
-            ).view(bsz, T - 1)
+            logf[:, 1:] += (1 - betas[:, 1:]) * log_p_ref + betas[:, 1:] * logr_fn(
+                states[:, 1:].reshape(-1, self.dim)
+            ).view(bsz, T)
+
+        # Assign the terminal reward
+        with torch.no_grad():
+            logf[:, -1] = logr_fn(states[:, -1])
 
         logpf_exp = logpf_exp if exploration_std > 0.0 else logpf
 
@@ -324,8 +329,12 @@ class GFN(nn.Module):
         self,
         s: torch.Tensor,
         ts: torch.Tensor,
-        log_r_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        logf_last: torch.Tensor,  # buf_log_rs or buf_log_fs[:, -1]
+        logr_fn: Callable[[torch.Tensor], torch.Tensor],
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        is_from_initial = ts[:, 0] == 0
+        is_to_terminal = ts[:, -1] == 1
+
         bsz = s.shape[0]
         T = ts.shape[1] - 1
 
@@ -335,10 +344,19 @@ class GFN(nn.Module):
         states = torch.zeros((bsz, T + 1, self.dim), device=self.device)
         states[:, -1] = s
 
+        # For terminal states, we use the provided buf_log_rs
+        logf[is_to_terminal, T] = logf_last[is_to_terminal]
+        if (~is_to_terminal).any():
+            # For non-terminal states, we predict the flow at the last step
+            _, flow = self.predict_next_state(
+                s[~is_to_terminal], ts[~is_to_terminal, T - 1], logr_fn
+            )
+            logf[~is_to_terminal, T] = flow
+
         for i in range(T):
             dts = (ts[:, T - i] - ts[:, T - i - 1]).unsqueeze(1)
 
-            if i < T - 1:
+            if i < T - 1 or (~is_from_initial).any():
                 if self.learn_pb:
                     assert self.back_model is not None
                     t = self.t_model(ts[:, T - i])
@@ -361,22 +379,29 @@ class GFN(nn.Module):
 
                 s_ = mean.detach() + var.sqrt().detach() * torch.randn_like(s, device=self.device)
                 noise_backward = (s_ - mean) / var.sqrt()
-                logpb[:, T - i - 1] = -0.5 * (noise_backward**2 + logtwopi + var.log()).sum(1)
+                _logpb = -0.5 * (noise_backward**2 + logtwopi + var.log()).sum(1)
+
+                if i < T - 1:
+                    logpb[:, T - i - 1] = _logpb
+                else:  # i == T - 1, i.e., the first step (idx 0)
+                    logpb[~is_from_initial, 0] = _logpb[~is_from_initial]
+                    logpb[is_from_initial, 0] = 0
+
             else:
                 s_ = torch.zeros_like(s)
 
-            pfs, flow = self.predict_next_state(s_, ts[:, T - i - 1], log_r_fn)
+            pfs, flow = self.predict_next_state(s_, ts[:, T - i - 1], logr_fn)
             pfmean, pflogvars = self.split_params(pfs)
 
             logf[:, T - i - 1] = flow
             # Note: We instead use the vectorized version outside of the loop
             # if self.partial_energy and T - i - 1 > 0:
-            #     assert log_r_fn is not None
+            #     assert logr_fn is not None
             #     ref_log_var = (self.t_scale * ts[:, T - i - 1].unsqueeze(1)).log()
             #     log_p_ref = -0.5 * (logtwopi + ref_log_var + (-ref_log_var).exp() * (s_**2)).sum(1)
             #     logf[:, T - i - 1] += (1 - ts[:, T - i - 1]) * log_p_ref + ts[
             #         :, T - i - 1
-            #     ] * log_r_fn(s_)
+            #     ] * logr_fn(s_)
 
             noise = ((s - s_) - dts * pfmean) / (dts.sqrt() * (pflogvars / 2).exp())
             logpf[:, T - i - 1] = -0.5 * (noise**2 + logtwopi + dts.log() + pflogvars).sum(1)
@@ -385,25 +410,40 @@ class GFN(nn.Module):
             states[:, T - i - 1] = s
 
         if self.partial_energy:
-            assert log_r_fn is not None
-            ref_log_var = (self.t_scale * ts[:, 1:-1]).log().unsqueeze(2)  # (bsz, T - 1, 1)
+            ref_log_var = (self.t_scale * ts[:, 1:]).log().unsqueeze(2)  # (bsz, T, 1)
             log_p_ref = -0.5 * (
-                logtwopi + ref_log_var + (-ref_log_var).exp() * (states[:, 1:-1] ** 2)
+                logtwopi
+                + ref_log_var
+                + (-ref_log_var).exp() * (states[:, 1:] ** 2)  # (bsz, T, ndim)
             ).sum(-1)
 
             if self.beta_model is not None:
                 betas = self.softplus(self.beta_model).cumsum(0)
                 betas = betas / betas[-1]
-                betas = betas.quantile(ts[:, 1:-1].flatten()).reshape(bsz, -1)
+                betas = betas.quantile(ts.flatten()).reshape(bsz, -1)
             else:
-                betas = ts[:, 1:-1]
+                betas = ts
 
-            logf[:, 1:-1] += (1 - betas) * log_p_ref + betas * log_r_fn(
-                states[:, 1:-1].reshape(-1, self.dim)
-            ).view(bsz, T - 1)
+            logf[:, 1:] += (1 - betas[:, 1:]) * log_p_ref + betas[:, 1:] * logr_fn(
+                states[:, 1:].reshape(-1, self.dim)
+            ).view(bsz, T)
+
+            # We may need to apply the partial energy correction to the first step
+            if (~is_from_initial).any():
+                ref_log_var = (
+                    (self.t_scale * ts[~is_from_initial, 0]).log().unsqueeze(1)
+                )  # (bsz, 1)
+                log_p_ref = -0.5 * (
+                    logtwopi
+                    + ref_log_var
+                    + (-ref_log_var).exp() * (states[~is_from_initial, 0] ** 2)  # (bsz, ndim)
+                ).sum(-1)
+                logf[~is_from_initial, 0] += (1 - betas[~is_from_initial, 0]) * log_p_ref + betas[
+                    ~is_from_initial, 0
+                ] * logr_fn(states[~is_from_initial, 0])
 
         return states, logpf, logpb, logf
 
     # Not used for now
-    def forward(self, s, exploration_std=0.0, log_r_fn: Callable | None = None):
+    def forward(self, s, exploration_std=0.0, logr_fn: Callable | None = None):
         raise NotImplementedError

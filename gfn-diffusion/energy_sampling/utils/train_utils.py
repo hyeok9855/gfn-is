@@ -68,13 +68,15 @@ def train_step(
     loss_type: str,
     training_mode: str,
     bwd_from: str,
-    discretizer: Callable[[int], torch.Tensor],
+    discretizer: Callable[[int, int], torch.Tensor],
+    T: int,
     exploratory: bool = False,
     exploration_factor: float = 0.0,
     exploration_wd: bool = False,
     buffer: BaseBuffer | None = None,
     prefill: int = 0,
     subtb_coef_matrix: torch.Tensor | None = None,
+    subtb_chunk_size: int = 0,
     clip_grad_norm: float = 1.0,
     device=torch.device("cpu"),
     resampling: bool = False,
@@ -93,7 +95,9 @@ def train_step(
         batch_size=batch_size,
         loss_type=loss_type,
         discretizer=discretizer,
+        T=T,
         subtb_coef_matrix=subtb_coef_matrix,
+        subtb_chunk_size=subtb_chunk_size,
         exploration_std=exploration_std,
         buffer=buffer,
         device=device,
@@ -109,7 +113,9 @@ def train_step(
         loss_type=loss_type,
         bwd_from=bwd_from,
         discretizer=discretizer,
+        T=T,
         subtb_coef_matrix=subtb_coef_matrix,
+        subtb_chunk_size=subtb_chunk_size,
         buffer=buffer,
         device=device,
     )
@@ -157,8 +163,10 @@ def fwd_train_step(
     gfn_model: GFN,
     batch_size: int,
     loss_type: str,
-    discretizer: Callable[[int], torch.Tensor],
+    discretizer: Callable[[int, int], torch.Tensor],
+    T: int,
     subtb_coef_matrix: torch.Tensor | None,
+    subtb_chunk_size: int = 0,
     exploration_std=0.0,
     buffer: BaseBuffer | None = None,
     device=torch.device("cpu"),
@@ -168,65 +176,40 @@ def fwd_train_step(
     target_ess: float = 0.0,
     smoothing: str = "clip_above",
 ) -> torch.Tensor:
-    if loss_type == "subtb":
-        assert subtb_coef_matrix is not None
-
     init_states = torch.zeros(batch_size, energy.ndim).to(device)
-    ts = discretizer(batch_size).to(device)
+    ts = discretizer(batch_size, T).to(device)
 
+    # Forward sampling
     states, log_pfs, log_pbs, log_fs, log_pfs_exp = gfn_model.get_trajectory_fwd(
-        init_states, ts, exploration_std, energy.log_reward
+        init_states, ts, energy.log_reward, exploration_std=exploration_std
     )
-    with torch.no_grad():
-        log_fs[:, -1] = energy.log_reward(states[:, -1])
 
+    # Compute losses
     losses = get_gfn_loss(
         loss_type,
         log_pfs,
         log_pbs,
         log_fs,
         subtb_coef_matrix=subtb_coef_matrix,
+        subtb_chunk_size=subtb_chunk_size,
         ndim=energy.ndim,
     )
 
     normalized_iws_0t = None
     if (buffer is not None and buffer.prioritization == "normalized_iw") or weighting or resampling:
         # Compute importance weights
-        # log_iws_0t = torch.zeros(batch_size, ts.shape[1] - 1).to(device)  # shape: (bs, T)
-        # aux_target_measure_0t = torch.zeros_like(log_iws_0t)
-        # match aux_target:
-        #     case "target":  # r(x)p_B(\tau|x)
-        #         aux_target_measure_0t = log_fs[:, 1:] + log_pbs.cumsum(-1)
-        #     case "loss":
-        #         match loss_type:
-        #             case "tb" | "tb-avg" | "pis":  # compute only for the complete trajectory
-        #                 aux_target_measure_0t[:, -1] = losses.log()  # (bs,)
-        #             case "db":
-        #                 aux_target_measure_0t = losses.log().cumsum(-1)  # (bs, T)
-        #             case "subtb":
-        #                 assert subtb_chunk_size > 0  # only chunk-based SubTB is supported
-
-        #                 aux_target_measure_0t[:, subtb_chunk_size - 1 :: subtb_chunk_size] = (
-        #                     losses.log().cumsum(-1)
-        #                 )
-        #                 # (bs, T/L)
-        #     case _:
-        #         raise ValueError(f"Invalid aux_target: {aux_target}")
-        # proposal_measure_0t = log_pfs_exp.cumsum(-1)
-        # log_iws_0t = (aux_target_measure_0t - proposal_measure_0t).detach()
-
         log_iws_0t = torch.zeros(batch_size, ts.shape[1] - 1).to(device)  # shape: (bs, T)
+        aux_target_measure_0t = torch.zeros_like(log_iws_0t)
         match aux_target:
             case "target":  # r(x)p_B(\tau|x)
-                log_iws_0t[:, -1] = (log_fs[:, -1] + log_pbs.sum(-1) - log_pfs_exp.sum(-1)).detach()
+                aux_target_measure_0t = log_fs[:, 1:] + log_pbs.cumsum(-1)
             case "loss":
-                log_iws_0t[:, -1] = (losses.log() - log_pfs_exp.sum(-1)).detach()
-            case "iw":  # For TB, log_iw = log_r + log_pbs.sum(-1) - log_pfs.sum(-1) - log_Z
-                log_iws_0t[:, -1] = (
-                    log_fs[:, -1] + log_pbs.sum(-1) - 2 * log_pfs_exp.sum(-1)
-                ).detach()
+                assert loss_type in ["tb", "tb-avg", "pis"]
+                aux_target_measure_0t[:, -1] = losses.log()  # (bs,)
             case _:
                 raise ValueError(f"Invalid aux_target: {aux_target}")
+        proposal_measure_0t = log_pfs_exp.cumsum(-1)
+        log_iws_0t = (aux_target_measure_0t - proposal_measure_0t).detach()
 
         # Importance weight smoothing
         normalized_iws_0t = log_iws_0t.softmax(dim=0)  # (bs, T)
@@ -237,10 +220,10 @@ def fwd_train_step(
             if (ess(normalized_weights=normalized_iws_0t) < target_ess).any():
                 if smoothing == "mix_with_uniform":
                     raise NotImplementedError("TODO: Implement this")
-                    mixing_ratio = solve_mixing_ratio(normalized_iws_0t, target_ess=target_ess)
-                    normalized_iws_0t = (
-                        1 - mixing_ratio
-                    ) * normalized_iws_0t + mixing_ratio / batch_size
+                    # mixing_ratio = solve_mixing_ratio(normalized_iws_0t, target_ess=target_ess)
+                    # normalized_iws_0t = (
+                    #     1 - mixing_ratio
+                    # ) * normalized_iws_0t + mixing_ratio / batch_size
                 else:  # binary search
                     log_iws_0t = smoothing_with_binary_search(
                         log_iws_0t, target_ess, get_func(smoothing)
@@ -251,19 +234,31 @@ def fwd_train_step(
     if buffer is not None:
         data_dict = {"states": states[:, 1:], "log_fs": log_fs[:, 1:]}  # (bs, T) both
         if buffer.prioritization == "loss":
+            assert isinstance(buffer, TerminalStateBuffer)
             data_dict["losses"] = losses.unsqueeze(1)  # (bs, 1)
         elif buffer.prioritization == "normalized_iw":
             assert normalized_iws_0t is not None
             data_dict["normalized_iws"] = normalized_iws_0t  # (bs, T)
 
+        if isinstance(buffer, TerminalStateBuffer):
+            data_dict = {k: v[:, -1] for k, v in data_dict.items()}
+        else:  # IntermediateStateBuffer
+            data_dict["ts"] = ts[:, 1:]  # (bs, T)
+            if subtb_chunk_size > 0:
+                data_dict = {
+                    k: v[:, subtb_chunk_size - 1 :: subtb_chunk_size] for k, v in data_dict.items()
+                }
         buffer.add(**data_dict)
-    if weighting:
+
+    # Weighting or resampling here is supported only on the trajectory level
+    # TODO: support for the transition-level weighting or resampling
+    if weighting or resampling:
         assert normalized_iws_0t is not None
-        loss = (normalized_iws_0t[:, -1] * losses).sum()
-    elif resampling:
-        assert normalized_iws_0t is not None
-        indices = torch.multinomial(normalized_iws_0t[:, -1], batch_size, replacement=True)
-        loss = losses[indices].mean()
+        if weighting:
+            loss = (normalized_iws_0t[:, -1] * losses).sum()
+        else:  # resampling
+            indices = torch.multinomial(normalized_iws_0t[:, -1], batch_size, replacement=True)
+            loss = losses[indices].mean()
     else:
         loss = losses.mean()
 
@@ -276,8 +271,10 @@ def bwd_train_step(
     batch_size: int,
     loss_type: str,
     bwd_from: str,
-    discretizer: Callable[[int], torch.Tensor],
+    discretizer: Callable[[int, int], torch.Tensor],
+    T: int,
     subtb_coef_matrix: torch.Tensor | None,
+    subtb_chunk_size: int = 0,
     buffer: BaseBuffer | None = None,
     device=torch.device("cpu"),
 ) -> torch.Tensor:
@@ -292,14 +289,28 @@ def bwd_train_step(
             # each with shape (bs,)
 
             # Construct complete trajectory
-            ts = discretizer(batch_size).to(device)
+            ts = discretizer(batch_size, T).to(device)
             _, log_pfs, log_pbs, log_fs = gfn_model.get_trajectory_bwd(
-                buf_xs, ts, energy.log_reward
+                buf_xs, ts, buf_log_rs, energy.log_reward
             )
-            log_fs[:, -1] = buf_log_rs
 
         elif isinstance(buffer, IntermediateStateBuffer):
-            raise NotImplementedError
+            # Construct transition / subtrajectory (a chunk)
+            assert (discretizer(1, T) == discretizer(1, T)).all()  # uniform discretizer is used
+            n_chunks = T // subtb_chunk_size  # assumption: T is divisible by subtb_chunk_size
+
+            buf_states, buf_ts, buf_log_fs, indices = buffer.sample(batch_size * n_chunks)
+            # each with shape (bs,)
+
+            # TODO: support for other discretizers with chunk-based SubTB
+            sub_ts = discretizer(batch_size * n_chunks, subtb_chunk_size).to(device) / n_chunks
+
+            # clamp to avoid negative time steps from floating point error
+            ts = (buf_ts.unsqueeze(-1) + sub_ts - sub_ts[:, [-1]]).clamp(min=0.0)
+            _, log_pfs, log_pbs, log_fs = gfn_model.get_trajectory_bwd(
+                buf_states, ts, buf_log_fs, energy.log_reward
+            )
+
         else:
             raise ValueError(f"Invalid buffer type: {type(buffer)}")
 
@@ -309,6 +320,7 @@ def bwd_train_step(
             log_pbs,
             log_fs,
             subtb_coef_matrix=subtb_coef_matrix,
+            subtb_chunk_size=subtb_chunk_size,
             ndim=energy.ndim,
         )
 

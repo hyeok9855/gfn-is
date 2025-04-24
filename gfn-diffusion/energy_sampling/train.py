@@ -6,7 +6,7 @@ import torch
 import wandb
 from tqdm import trange
 
-from buffers import TerminalStateBuffer
+from buffers import TerminalStateBuffer, IntermediateStateBuffer
 from discretizers import get_discretizer
 from energies import get_energy
 from gflownet_losses import cal_subtb_coef_matrix
@@ -39,10 +39,8 @@ def train(args):
         )
 
     subtb_coef_matrix = None
-    if args.loss_type == "subtb":
-        subtb_coef_matrix = cal_subtb_coef_matrix(
-            args.subtb_lambda, args.T, chunk_ratio=args.subtb_chunk_ratio
-        ).to(device)
+    if args.loss_type == "subtb" and args.subtb_chunk_size == 0:
+        subtb_coef_matrix = cal_subtb_coef_matrix(args.subtb_lambda, args.T).to(device)
 
     try:
         gt_xs = energy.sample(args.eval_data_size).to(device)
@@ -96,8 +94,9 @@ def train(args):
 
     buffer = None
     if args.training_mode != "fwd" and args.bwd_from == "buffer":
-        buffer_class = TerminalStateBuffer
-        # TODO: if args.buffer_type == "terminal" else IntermediateStateBuffer
+        buffer_class = (
+            TerminalStateBuffer if args.buffer_type == "terminal" else IntermediateStateBuffer
+        )
         buffer = buffer_class(
             args.buffer_size,
             device,
@@ -108,9 +107,9 @@ def train(args):
         )
 
     train_discretizer = get_discretizer(
-        discretizer=args.discretizer, T=args.T, max_ratio=args.discretizer_max_ratio
+        discretizer=args.discretizer, max_ratio=args.discretizer_max_ratio
     )
-    eval_discretizer = get_discretizer(discretizer="uniform", T=args.eval_T)
+    eval_discretizer = get_discretizer(discretizer="uniform")
 
     eval_step_partial = partial(
         eval_step,
@@ -118,6 +117,7 @@ def train(args):
         gfn_model=gfn_model,
         energy=energy,
         discretizer=eval_discretizer,
+        T=args.eval_T,
         pis=args.loss_type == "pis",
         resampling=args.eval_resampling,
         weighting=args.eval_weighting,
@@ -162,12 +162,14 @@ def train(args):
             training_mode=args.training_mode,
             bwd_from=args.bwd_from,
             discretizer=train_discretizer,
+            T=args.T,
             exploratory=args.exploratory,
             exploration_factor=args.exploration_factor,
             exploration_wd=args.exploration_wd,
             buffer=buffer,
             prefill=args.prefill,
             subtb_coef_matrix=subtb_coef_matrix,
+            subtb_chunk_size=args.subtb_chunk_size,
             clip_grad_norm=args.clip_grad_norm,
             device=device,
             resampling=args.train_resampling,
@@ -222,7 +224,7 @@ if __name__ == "__main__":
         choices=("tb", "tb-avg", "db", "subtb", "pis", "mle"),
     )
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
-    parser.add_argument("--subtb_chunk_ratio", type=float, default=0.0)
+    parser.add_argument("--subtb_chunk_size", type=int, default=0)
     parser.add_argument("--training_mode", type=str, default="both", choices=("fwd", "bwd", "both"))
     parser.add_argument("--bwd_from", type=str, default="buffer", choices=("energy", "buffer"))
     parser.add_argument("--clip_grad_norm", type=float, default=3.0)
@@ -354,8 +356,8 @@ if __name__ == "__main__":
     if args.loss_type in ["db", "subtb"] and args.partial_energy:
         args.loss_type_str = "fl-" + args.loss_type_str
     if args.loss_type == "subtb":
-        if args.subtb_chunk_ratio > 0.0:
-            args.loss_type_str += f"-chunk{args.subtb_chunk_ratio}"
+        if args.subtb_chunk_size > 0:
+            args.loss_type_str += f"-chunk{args.subtb_chunk_size}"
         else:
             args.loss_type_str += f"-lambda{args.subtb_lambda}"
 
