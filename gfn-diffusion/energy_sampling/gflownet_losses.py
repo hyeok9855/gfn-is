@@ -99,10 +99,10 @@ def get_gfn_loss(
 
 def cal_subtb_coef_matrix(lamda: float, T: int) -> torch.Tensor:
     """
-    diff_matrix: (N+1, N+1)
-     0,  1,  2, ...,   N
-    -1,  0,  1, ..., N-1
-    -2, -1,  0, .... N-2
+    diff_matrix: (T+1, T+1)
+     0,  1,  2, ...,   T
+    -1,  0,  1, ..., T-1
+    -2, -1,  0, .... T-2
     ...
 
     self.coef[i, j] = lamda^(j-i) / total_lambda  if i < j else 0.
