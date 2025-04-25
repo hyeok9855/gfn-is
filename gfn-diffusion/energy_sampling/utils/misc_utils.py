@@ -79,6 +79,7 @@ def get_name(args):
     if args.training_mode != "fwd":
         name += f"-{args.bwd_from}"
         if args.bwd_from == "buffer":
+            name += f"-{args.buffer_type}"
             buffer_size_str = (
                 f"{args.buffer_size // 1000}K"
                 if args.buffer_size >= 1000
