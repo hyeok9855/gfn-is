@@ -160,7 +160,7 @@ class TerminalStateBuffer(BaseBuffer):
                 if self.prioritization in ["loss", "normalized_iw"]:
                     weights = scores
                 else:  # target
-                    weights = scores.softmax(dim=-1)
+                    weights = scores.softmax(dim=0)
             elif self.sampling_strategy == "rank":
                 assert self.prioritization != "normalized_iw"
                 ranks = torch.argsort(torch.argsort(-scores))
@@ -249,7 +249,7 @@ class IntermediateStateBuffer(BaseBuffer):
                 if self.prioritization == "normalized_iw":
                     weights = scores
                 else:  # target
-                    weights = scores.softmax(dim=-1)
+                    weights = scores.softmax(dim=0)
             else:
                 raise NotImplementedError
 

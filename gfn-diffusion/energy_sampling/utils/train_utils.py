@@ -288,27 +288,36 @@ def bwd_train_step(
             buf_xs, buf_log_rs, indices = buffer.sample(batch_size)
             # each with shape (bs,)
 
-            # Construct complete trajectory
+            # Construct complete trajectories
             ts = discretizer(batch_size, T).to(device)
             _, log_pfs, log_pbs, log_fs = gfn_model.get_trajectory_bwd(
                 buf_xs, ts, buf_log_rs, energy.log_reward
             )
 
         elif isinstance(buffer, IntermediateStateBuffer):
-            # Construct transition / subtrajectory (a chunk)
-            assert (discretizer(1, T) == discretizer(1, T)).all()  # uniform discretizer is used
-            n_chunks = T // subtb_chunk_size  # assumption: T is divisible by subtb_chunk_size
+            # # Option 1: Construct transitions / subtrajectories (chunks)
+            # n_chunks = T // subtb_chunk_size  # assumption: T is divisible by subtb_chunk_size
+            # buf_states, buf_ts, buf_log_fs, indices = buffer.sample(batch_size * n_chunks)
+            # # each with shape (bs,)
 
-            buf_states, buf_ts, buf_log_fs, indices = buffer.sample(batch_size * n_chunks)
-            # each with shape (bs,)
+            # # TODO: support for other discretizers
+            # assert discretizer.__name__ == "uniform_discretizer"
+            # sub_ts = discretizer(batch_size * n_chunks, subtb_chunk_size).to(device) / n_chunks
 
-            # TODO: support for other discretizers with chunk-based SubTB
-            sub_ts = discretizer(batch_size * n_chunks, subtb_chunk_size).to(device) / n_chunks
+            # # clamp to avoid negative time steps from floating point error
+            # ts = (buf_ts.unsqueeze(-1) + sub_ts - sub_ts[:, [-1]]).clamp(min=0.0)
+            # _, log_pfs, log_pbs, log_fs = gfn_model.get_subtrajectory_bwd(
+            #     buf_states, ts, buf_log_fs, energy.log_reward
+            # )
 
-            # clamp to avoid negative time steps from floating point error
-            ts = (buf_ts.unsqueeze(-1) + sub_ts - sub_ts[:, [-1]]).clamp(min=0.0)
-            _, log_pfs, log_pbs, log_fs = gfn_model.get_trajectory_bwd(
-                buf_states, ts, buf_log_fs, energy.log_reward
+            # Option 2: Construct complete trajectories by sampling both backward and forward
+            buf_states, buf_ts, _, indices = buffer.sample(batch_size)
+
+            # TODO: support for other discretizers
+            assert discretizer.__name__ == "uniform_discretizer"
+            ts = discretizer(batch_size, T).to(device)
+            _, log_pfs, log_pbs, log_fs, _ = gfn_model.get_trajectory_fwd_and_bwd(
+                buf_states, ts, buf_ts, energy.log_reward, exploration_std=0.0
             )
 
         else:
