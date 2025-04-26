@@ -222,6 +222,7 @@ def viz_gmm(
                 weights=weights,
                 lim=lim,
                 clamp_min=clamp_min,
+                n_contour_levels=100,
             )
         )
 

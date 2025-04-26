@@ -432,8 +432,6 @@ def smoothing_with_binary_search(
     while not dones.all():
         steps += 1
         mid[0, ~dones] = (search_min[0, ~dones] + search_max[0, ~dones]) / 2  # shape: (1, T)
-        if (mid == search_min).all() or (mid == search_max).all():
-            break  # Avoid meaningless loop; maybe the tolerance is too small
 
         new_log_weights = func(log_weights, mid)  # shape: (bs, T)
         new_ess = ess(log_weights=new_log_weights)  # shape: (T,)
@@ -445,7 +443,8 @@ def smoothing_with_binary_search(
         search_min = torch.where((new_ess < target_ess) == original_order, mid, search_min)
 
         if steps > max_steps:
-            raise ValueError(f"Binary search failed in {max_steps} steps")
+            print(f"Warning: Binary search failed in {max_steps} steps")
+            break
     return log_weights_smoothed
 
 
