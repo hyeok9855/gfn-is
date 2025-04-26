@@ -4,6 +4,7 @@ from typing import Literal
 import torch
 
 from buffers.datasets import CustomDataset
+from utils.sampling_utils import get_sampling_func
 
 
 class BaseBuffer(ABC):
@@ -13,19 +14,20 @@ class BaseBuffer(ABC):
         buffer_size: int,
         device: torch.device,
         prioritization: Literal["none", "target", "loss", "normalized_iw"] = "none",
-        sampling_strategy: Literal["proportional", "rank"] = "proportional",
+        sampling_strategy: Literal[
+            "multinomial", "stratified", "systematic", "rank"
+        ] = "multinomial",
         rank_k: float = 0.01,
         logr_lb: float | None = None,
     ) -> None:
         assert prioritization in ["none", "target", "loss", "normalized_iw"]
         if prioritization == "normalized_iw":
-            assert sampling_strategy == "proportional"
+            assert sampling_strategy in ["multinomial", "stratified", "systematic"]
 
         self.buffer_size = buffer_size
         self.device = device
         self.prioritization = prioritization
-        self.sampling_strategy = sampling_strategy
-        self.rank_k = rank_k
+        self.sampling_func = get_sampling_func(sampling_strategy, rank_k)
         self.logr_lb = logr_lb
 
         self.states_dataset = CustomDataset(batch_dim, buffer_size, device)
@@ -103,7 +105,9 @@ class TerminalStateBuffer(BaseBuffer):
         buffer_size,
         device: torch.device,
         prioritization: Literal["none", "target", "loss", "normalized_iw"] = "none",
-        sampling_strategy: Literal["proportional", "rank"] = "proportional",
+        sampling_strategy: Literal[
+            "multinomial", "stratified", "systematic", "rank"
+        ] = "multinomial",
         rank_k: float = 0.01,
         logr_lb: float | None = None,
         **kwargs,
@@ -146,30 +150,19 @@ class TerminalStateBuffer(BaseBuffer):
         if prioritized and self.prioritization != "none":
             match self.prioritization:
                 case "target":
-                    scores = self.log_fs_dataset.data  # log_fs is log_rs, (bs,)
+                    weights = self.log_fs_dataset.data  # log_fs is log_rs, (bs,)
+                    weights = weights.softmax(dim=0)
                 case "loss":
                     assert self.losses_dataset is not None
-                    scores = self.losses_dataset.data  # (bs,)
+                    weights = self.losses_dataset.data  # (bs,)
                 case "normalized_iw":
                     assert self.normalized_iws_dataset is not None
-                    scores = self.normalized_iws_dataset.data  # (bs,)
+                    weights = self.normalized_iws_dataset.data  # (bs,)
                 case _:
                     raise NotImplementedError
 
-            if self.sampling_strategy == "proportional":
-                if self.prioritization in ["loss", "normalized_iw"]:
-                    weights = scores
-                else:  # target
-                    weights = scores.softmax(dim=0)
-            elif self.sampling_strategy == "rank":
-                assert self.prioritization != "normalized_iw"
-                ranks = torch.argsort(torch.argsort(-scores))
-                weights = 1.0 / (self.rank_k * len(scores) + ranks)
-            else:
-                raise NotImplementedError
-
         replacement = True if self.prioritization == "normalized_iw" else False
-        indices = torch.multinomial(weights, batch_size, replacement=replacement)
+        indices = self.sampling_func(weights, batch_size, replacement)
         states, log_fs = self.states_dataset[indices], self.log_fs_dataset[indices]
 
         return states, log_fs, indices
@@ -187,13 +180,15 @@ class IntermediateStateBuffer(BaseBuffer):
         buffer_size,
         device: torch.device,
         prioritization: Literal["none", "target", "normalized_iw"] = "none",
-        sampling_strategy: Literal["proportional"] = "proportional",
+        sampling_strategy: Literal[
+            "multinomial", "stratified", "systematic", "rank"
+        ] = "multinomial",
         rank_k: float = 0.01,
         logr_lb: float | None = None,
         **kwargs,
     ) -> None:
         assert prioritization in ["none", "target", "normalized_iw"]
-        assert sampling_strategy == "proportional"  # TODO: support rank-based sampling
+        assert sampling_strategy in ["multinomial", "stratified", "systematic"]
         batch_dim = 2  # (bs, n_timesteps)
         super().__init__(
             batch_dim=batch_dim,
@@ -238,25 +233,18 @@ class IntermediateStateBuffer(BaseBuffer):
         if prioritized and self.prioritization != "none":
             match self.prioritization:
                 case "target":
-                    scores = self.log_fs_dataset.data  # (len1, len2)
+                    weights = self.log_fs_dataset.data  # (len1, len2)
+                    weights = weights.softmax(dim=0)
                 case "normalized_iw":  # Already normalized for each timesteps
                     assert self.normalized_iws_dataset is not None
-                    scores = self.normalized_iws_dataset.data  # (len1, len2)
+                    weights = self.normalized_iws_dataset.data  # (len1, len2)
                 case _:
                     raise NotImplementedError
 
-            if self.sampling_strategy == "proportional":
-                if self.prioritization == "normalized_iw":
-                    weights = scores
-                else:  # target
-                    weights = scores.softmax(dim=0)
-            else:
-                raise NotImplementedError
-
         # TODO: Sample timestep first, and then sample state
-        # Below is a temporary solution only for the case of normalized_iw proportional sampling
+        # Below is a temporary solution only for the case of normalized_iw multinomial sampling
         replacement = True if self.prioritization == "normalized_iw" else False
-        indices = torch.multinomial(weights.flatten(), batch_size, replacement=replacement)
+        indices = self.sampling_func(weights.flatten(), batch_size, replacement)
         dim1_indices = indices // len2  # (bs,)
         dim2_indices = indices % len2  # (bs,)
 
@@ -278,24 +266,16 @@ class IntermediateStateBuffer(BaseBuffer):
         if prioritized and self.prioritization != "none":
             match self.prioritization:
                 case "target":
-                    scores = terminal_log_fs
+                    weights = terminal_log_fs
+                    weights = weights.softmax(dim=0)
                 case "normalized_iw":
                     assert self.normalized_iws_dataset is not None
-                    terminal_normalized_iws = self.normalized_iws_dataset[:, -1]
-                    scores = terminal_normalized_iws
+                    weights = self.normalized_iws_dataset[:, -1]
                 case _:
                     raise NotImplementedError
 
-            if self.sampling_strategy == "proportional":
-                if self.prioritization == "normalized_iw":
-                    weights = scores
-                else:  # target
-                    weights = scores.softmax(dim=-1)
-            else:
-                raise NotImplementedError
-
         replacement = True if self.prioritization == "normalized_iw" else False
-        indices = torch.multinomial(weights, batch_size, replacement=replacement)
+        indices = self.sampling_func(weights, batch_size, replacement)
         xs, log_rs = terminal_states[indices], terminal_log_fs[indices]
 
         return xs, log_rs

@@ -1,6 +1,6 @@
 import math
 from functools import partial
-from typing import Callable, cast
+from typing import Callable, Literal, cast
 
 import numpy as np
 import ot as pot
@@ -10,6 +10,7 @@ from buffers import BaseBuffer
 from energies import BaseEnergy
 from models import GFN
 from utils.misc_utils import logmeanexp
+from utils.sampling_utils import get_sampling_func
 
 MIN_VAR_EST = 1e-8
 
@@ -340,9 +341,10 @@ def eval_step(
     pis: bool = False,
     final_eval: bool = False,
     resampling: bool = False,
+    resampling_strategy: Literal["multinomial", "stratified", "systematic"] = "multinomial",
     weighting: bool = False,
     buffer: BaseBuffer | None = None,
-) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor | None]:
+) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
     metrics = {}
 
     init_state = torch.zeros(batch_size, energy.ndim).to(gfn_model.device)
@@ -391,16 +393,16 @@ def eval_step(
     err = -(log_fs[:, 0] + log_pfs.sum(-1) - log_rewards - log_pbs.sum(-1))
     weights = err.softmax(0)
 
-    model_trajs_rs = None
+    model_trajs_r = None
     if resampling:
         # We can't use `estimate_partition_function` with resampled trajectories
         # since we don't know the distribution of the resampled trajectories
         assert gt_xs is not None
 
         metrics_r = {}
-        sampled_idx = torch.distributions.Categorical(weights).sample((batch_size,))
-        model_trajs_rs = model_trajs[sampled_idx]
-        sample_xs_rs = model_trajs_rs[:, -1]
+        sampled_idx = get_sampling_func(resampling_strategy)(weights, batch_size, True)
+        model_trajs_r = model_trajs[sampled_idx]
+        sample_xs_rs = model_trajs_r[:, -1]
 
         metrics_r.update(
             compute_distribution_distances(sample_xs_rs.unsqueeze(1), gt_xs.unsqueeze(1))
@@ -424,6 +426,7 @@ def eval_step(
 
         metrics.update(metrics_w)
 
+    buffer_xs = None
     if buffer is not None and len(buffer) > 0:
         assert gt_xs is not None
         buffer_xs, _ = buffer.sample_terminal(batch_size)
@@ -434,4 +437,4 @@ def eval_step(
         }
         metrics.update(metrics_b)
 
-    return metrics, model_trajs, weights, model_trajs_rs
+    return metrics, model_trajs, weights, model_trajs_r, buffer_xs

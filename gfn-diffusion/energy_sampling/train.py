@@ -28,15 +28,15 @@ def train(args):
     # save_dir = f"{parent_dir}/results/{energy_name}/{exp_name}"
     # os.makedirs(save_dir, exist_ok=True)
 
-    if args.use_wandb:
-        config = args.__dict__
-        config["Experiment"] = "{args.energy}"
-        wandb.init(
-            project=f"GFN-Diffusion-{energy_name}",
-            config=config,
-            name=exp_name,
-            tags=[f"seed{args.seed}"],
-        )
+    config = args.__dict__
+    config["Experiment"] = "{args.energy}"
+    wandb.init(
+        project=f"GFN-Diffusion-{energy_name}",
+        config=config,
+        name=exp_name,
+        tags=[f"seed{args.seed}"],
+        mode="disabled" if args.disable_wandb else "online",
+    )
 
     subtb_coef_matrix = None
     if args.loss_type == "subtb" and args.subtb_chunk_size == 0:
@@ -120,6 +120,7 @@ def train(args):
         T=args.eval_T,
         pis=args.loss_type == "pis",
         resampling=args.eval_resampling,
+        resampling_strategy=args.resampling_strategy,
         weighting=args.eval_weighting,
         buffer=buffer if args.eval_buffer else None,
     )
@@ -140,11 +141,16 @@ def train(args):
 
         ### Eval ###
         if i % args.eval_freq == 0:
-            results, model_trajs, weights, model_trajs_r = eval_step_partial(args.eval_data_size)
+            results, model_trajs, weights, model_trajs_r, buffer_xs = eval_step_partial(
+                args.eval_data_size
+            )
             metrics.update(results)
             if i % args.plot_freq == 0:
                 images = plot_step_partial(
-                    samples=model_trajs[:, -1], resampled_samples=model_trajs_r, weights=weights
+                    samples=model_trajs[:, -1],
+                    resampled_samples=model_trajs_r,
+                    weights=weights,
+                    buffer_samples=buffer_xs,
                 )
                 metrics.update(images)
             # if i % 1000 == 0:
@@ -173,34 +179,28 @@ def train(args):
             clip_grad_norm=args.clip_grad_norm,
             device=device,
             resampling=args.train_resampling,
+            resampling_strategy=args.resampling_strategy,
             weighting=args.train_weighting,
             aux_target=args.aux_target,
             target_ess=args.target_ess,
             smoothing=args.smoothing,
             alternating=args.alternating,
         )
-        if args.use_wandb:
-            wandb.log(metrics, step=i)
-        else:
-            if "eval/elbo" in metrics and "eval/eubo" in metrics:
-                print(f"Step {i}: ELBO: {metrics['eval/elbo']}, EUBO: {metrics['eval/eubo']}")
+        wandb.log(metrics, step=i)
 
     ### Final eval ###
-    final_results, model_trajs, weights, model_trajs_r = eval_step_partial(
+    final_results, model_trajs, weights, model_trajs_r, buffer_xs = eval_step_partial(
         args.final_eval_data_size, final_eval=True
     )
     metrics.update(final_results)
     final_images = plot_step_partial(
-        samples=model_trajs[:, -1], resampled_samples=model_trajs_r, weights=weights
+        samples=model_trajs[:, -1],
+        resampled_samples=model_trajs_r,
+        weights=weights,
+        buffer_samples=buffer_xs,
     )
     metrics.update(final_images)
-    if args.use_wandb:
-        wandb.log(metrics, step=args.epochs)
-    else:
-        if "final_eval/elbo" in metrics and "final_eval/eubo" in metrics:
-            print(
-                f"Step Final: ELBO: {metrics['final_eval/elbo']}, EUBO: {metrics['final_eval/eubo']}"
-            )
+    wandb.log(metrics, step=args.epochs)
     # torch.save(gfn_model.state_dict(), f'{save_dir}/model_final.pt')
 
 
@@ -302,8 +302,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--buffer_sampling",
         type=str,
-        default="proportional",
-        choices=("proportional", "rank"),
+        default="multinomial",
+        choices=("multinomial", "stratified", "systematic", "rank"),
     )
     # low rank_k give steep priorization in rank-based replay sampling
     parser.add_argument("--rank_k", type=float, default=1e-2)
@@ -324,7 +324,7 @@ if __name__ == "__main__":
 
     ################################################################
     ### Eval & Plot
-    parser.add_argument("--disable_wandb", action="store_false", dest="use_wandb")
+    parser.add_argument("--disable_wandb", action="store_true", default=False)
     parser.add_argument("--eval_freq", type=int, default=100)
     parser.add_argument("--eval_data_size", type=int, default=2000)
     parser.add_argument("--final_eval_data_size", type=int, default=2000)
@@ -348,6 +348,12 @@ if __name__ == "__main__":
     parser.add_argument("--eval_resampling", action="store_true", default=False)
     parser.add_argument("--eval_weighting", action="store_true", default=False)
     parser.add_argument("--eval_buffer", action="store_true", default=False)
+    parser.add_argument(
+        "--resampling_strategy",
+        type=str,
+        default="multinomial",
+        choices=("multinomial", "stratified", "systematic"),
+    )
     ################################################################
 
     args = parser.parse_args()

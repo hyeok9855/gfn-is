@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable
+from typing import Callable, Literal
 
 import torch
 
@@ -8,6 +8,7 @@ from energies import BaseEnergy
 from gflownet_losses import get_gfn_loss
 from models import GFN
 from utils.misc_utils import get_exploration_std
+from utils.sampling_utils import get_sampling_func
 
 
 def get_gfn_optimizer(
@@ -79,8 +80,9 @@ def train_step(
     subtb_chunk_size: int = 0,
     clip_grad_norm: float = 1.0,
     device=torch.device("cpu"),
-    resampling: bool = False,
     weighting: bool = False,
+    resampling: bool = False,
+    resampling_strategy: Literal["multinomial", "stratified", "systematic"] = "multinomial",
     aux_target: str = "target",  # target, loss
     target_ess: float = 0.0,
     smoothing: str = "clip_above",
@@ -101,6 +103,7 @@ def train_step(
         exploration_std=exploration_std,
         buffer=buffer,
         device=device,
+        resampling_strategy=resampling_strategy,
         aux_target=aux_target,
         target_ess=target_ess,
         smoothing=smoothing,
@@ -170,8 +173,9 @@ def fwd_train_step(
     exploration_std=0.0,
     buffer: BaseBuffer | None = None,
     device=torch.device("cpu"),
-    resampling: bool = False,
     weighting: bool = False,
+    resampling: bool = False,
+    resampling_strategy: Literal["multinomial", "stratified", "systematic"] = "multinomial",
     aux_target: str = "target",  # target, loss
     target_ess: float = 0.0,
     smoothing: str = "clip_above",
@@ -254,10 +258,11 @@ def fwd_train_step(
     # TODO: support for the transition-level weighting or resampling
     if weighting or resampling:
         assert normalized_iws_0t is not None
+        x_iws = normalized_iws_0t[:, -1]
         if weighting:
-            loss = (normalized_iws_0t[:, -1] * losses).sum()
+            loss = (x_iws * losses).sum()
         else:  # resampling
-            indices = torch.multinomial(normalized_iws_0t[:, -1], batch_size, replacement=True)
+            indices = get_sampling_func(resampling_strategy)(x_iws, batch_size, True)
             loss = losses[indices].mean()
     else:
         loss = losses.mean()

@@ -267,6 +267,7 @@ def plot_step(
     weighting: bool = False,
     resampled_samples: torch.Tensor | None = None,
     weights: torch.Tensor | None = None,
+    buffer_samples: torch.Tensor | None = None,
 ):
     images = _plot_step(energy, samples)
     if resampling:
@@ -285,6 +286,14 @@ def plot_step(
             {
                 k.replace("visualization/", "visualization_weighted/"): v
                 for k, v in images_weighted.items()
+            }
+        )
+    if buffer_samples is not None:
+        images_buffer = _plot_step(energy, buffer_samples)
+        images.update(
+            {
+                k.replace("visualization/", "visualization_buffer/"): v
+                for k, v in images_buffer.items()
             }
         )
     return images
