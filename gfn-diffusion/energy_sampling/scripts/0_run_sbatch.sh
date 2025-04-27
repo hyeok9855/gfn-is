@@ -18,18 +18,18 @@ for LOSS in tb db subtb fldb flsubtb subtb_chunk flsubtb_chunk; do  # tb db subt
 
             # DB FL-DB
             elif [ "$LOSS" = "db" ] || [ "$LOSS" = "fldb" ]; then
-                                    sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $BUFFER_PRIORITIZATION $T_SCALE
-                
+                sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $BUFFER_PRIORITIZATION $T_SCALE
+
             # SubTB FL-SubTB
             elif [ "$LOSS" = "subtb" ] || [ "$LOSS" = "flsubtb" ]; then
-                                    for LAMBDA in 1.5 2.0; do
-                        sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $BUFFER_PRIORITIZATION $T_SCALE $LAMBDA
+                for LAMBDA in 1.5 2.0; do
+                    sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $BUFFER_PRIORITIZATION $T_SCALE $LAMBDA
                 done
 
             # SubTB chunking FL-SubTB chunking
             elif [ "$LOSS" = "subtb_chunk" ] || [ "$LOSS" = "flsubtb_chunk" ]; then
-                                    for CHUNK_SIZE in 10 20; do  # 10 20
-                        sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $BUFFER_PRIORITIZATION $T_SCALE $CHUNK_SIZE
+                for CHUNK_SIZE in 10 20; do  # 10 20
+                    sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $BUFFER_PRIORITIZATION $T_SCALE $CHUNK_SIZE
                 done
 
             else
