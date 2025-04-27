@@ -50,6 +50,7 @@ class GFN(nn.Module):
         pis_architectures: bool = False,
         lgv_layers: int = 3,
         joint_layers: int = 2,
+        flow_layers: int = 2,
         zero_init: bool = False,
         device=torch.device("cuda"),
     ) -> None:
@@ -149,7 +150,7 @@ class GFN(nn.Module):
                     )
                     self.s_model_flow = StateEncoding(ndim, flow_hidden_dim, flow_s_emb_dim)
                 self.flow_model = FlowModel(
-                    flow_s_emb_dim, flow_t_emb_dim, hidden_dim, 1, joint_layers
+                    flow_s_emb_dim, flow_t_emb_dim, hidden_dim, 1, flow_layers
                 )
             else:
                 self.flow_model = torch.nn.Parameter(torch.tensor(0.0).to(self.device))

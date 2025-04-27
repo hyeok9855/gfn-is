@@ -74,6 +74,7 @@ def train(args):
         pis_architectures=args.pis_architectures,
         lgv_layers=args.lgv_layers,
         joint_layers=args.joint_layers,
+        flow_layers=args.flow_layers,
         zero_init=args.zero_init,
         device=device,
     ).to(device)
@@ -246,12 +247,13 @@ if __name__ == "__main__":
     # parser.add_argument('--s_emb_dim', type=int, default=256)
     # parser.add_argument('--t_emb_dim', type=int, default=256)
     # parser.add_argument('--harmonics_dim', type=int, default=256)
-    parser.add_argument("--flow_hidden_dim", type=int, default=64)
-    # parser.add_argument('--flow_s_emb_dim', type=int, default=64)
-    # parser.add_argument('--flow_t_emb_dim', type=int, default=64)
-    # parser.add_argument('--flow_harmonics_dim', type=int, default=64)
+    parser.add_argument("--flow_hidden_dim", type=int, default=256)
+    # parser.add_argument('--flow_s_emb_dim', type=int, default=256)
+    # parser.add_argument('--flow_t_emb_dim', type=int, default=256)
+    # parser.add_argument('--flow_harmonics_dim', type=int, default=256)
     parser.add_argument("--lgv_layers", type=int, default=3)
     parser.add_argument("--joint_layers", type=int, default=2)
+    parser.add_argument("--flow_layers", type=int, default=2)
     parser.add_argument("--t_scale", type=float, default=1.0)
     parser.add_argument("--log_var_range", type=float, default=4.0)
     parser.add_argument("--lp", action="store_true", default=False)

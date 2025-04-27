@@ -27,12 +27,9 @@ elif [ "$ENERGY_NAME" = "many_well" ]; then
     N_DIM=32
 fi
 
-EXP_NAME=tb_buf-${BUFFER_PRIORITIZATION}
-
 for SEED in 0 1 2 3 4; do
     python train.py \
         --seed $SEED --energy_name $ENERGY_NAME --ndim $N_DIM --t_scale $T_SCALE --loss_type tb --eval_weighting --eval_buffer \
-        --prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper \
-        --exp_name $EXP_NAME &
+        --prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper &
 done
 wait
