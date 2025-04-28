@@ -30,7 +30,8 @@ def stratified(weights, N, replacement=True) -> torch.Tensor:
     cumsum = torch.cumsum(weights, dim=0)
     u = torch.arange(N, device=weights.device, dtype=torch.float32)
     u = (u + torch.rand(N, device=weights.device)) / N
-    return torch.searchsorted(cumsum, u)
+    u = torch.searchsorted(cumsum, u).clamp(0, len(weights) - 1)
+    return u
 
 
 def systematic(weights, N, replacement=True) -> torch.Tensor:
@@ -49,7 +50,8 @@ def systematic(weights, N, replacement=True) -> torch.Tensor:
     cumsum = torch.cumsum(weights, dim=0)
     u = torch.arange(N, device=weights.device, dtype=torch.float32)
     u = (u + torch.rand(1, device=weights.device)) / N
-    return torch.searchsorted(cumsum, u)
+    u = torch.searchsorted(cumsum, u).clamp(0, len(weights) - 1)
+    return u
 
 
 def rank(weights, N, replacement=True, rank_k=0.01) -> torch.Tensor:
