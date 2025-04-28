@@ -49,10 +49,10 @@ def train(args):
 
     gfn_model = GFN(
         energy.ndim,
-        args.hidden_dim,
-        args.hidden_dim,
-        args.hidden_dim,
-        args.hidden_dim,
+        harmonics_dim=args.hidden_dim,
+        t_emb_dim=args.hidden_dim,
+        s_emb_dim=args.hidden_dim,
+        hidden_dim=args.hidden_dim,
         flow_harmonics_dim=args.flow_hidden_dim,
         flow_t_emb_dim=args.flow_hidden_dim,
         flow_s_emb_dim=args.flow_hidden_dim,
@@ -244,13 +244,13 @@ if __name__ == "__main__":
     parser.add_argument("--gamma", type=float, default=(10) ** (-1 / 2))
 
     parser.add_argument("--hidden_dim", type=int, default=256)
-    # parser.add_argument('--s_emb_dim', type=int, default=256)
-    # parser.add_argument('--t_emb_dim', type=int, default=256)
-    # parser.add_argument('--harmonics_dim', type=int, default=256)
+    # parser.add_argument("--s_emb_dim", type=int, default=256)
+    # parser.add_argument("--t_emb_dim", type=int, default=256)
+    # parser.add_argument("--harmonics_dim", type=int, default=256)
     parser.add_argument("--flow_hidden_dim", type=int, default=256)
-    # parser.add_argument('--flow_s_emb_dim', type=int, default=256)
-    # parser.add_argument('--flow_t_emb_dim', type=int, default=256)
-    # parser.add_argument('--flow_harmonics_dim', type=int, default=256)
+    # parser.add_argument("--flow_s_emb_dim", type=int, default=256)
+    # parser.add_argument("--flow_t_emb_dim", type=int, default=256)
+    # parser.add_argument("--flow_harmonics_dim", type=int, default=256)
     parser.add_argument("--lgv_layers", type=int, default=3)
     parser.add_argument("--joint_layers", type=int, default=2)
     parser.add_argument("--flow_layers", type=int, default=2)

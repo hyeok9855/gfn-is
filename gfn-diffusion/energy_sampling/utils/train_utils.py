@@ -444,6 +444,7 @@ def smoothing_with_binary_search(
 
         if steps > max_steps:
             print(f"Warning: Binary search failed in {max_steps} steps")
+            log_weights_smoothed[:, ~dones] = new_log_weights[:, ~dones]
             break
     return log_weights_smoothed
 
