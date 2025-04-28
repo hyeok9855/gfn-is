@@ -29,9 +29,9 @@ elif [ "$ENERGY_NAME" = "many_well" ]; then
 fi
 
 for SEED in 0 1 2 3 4; do
-            python train.py \
-            --seed $SEED --energy_name $ENERGY_NAME --ndim $N_DIM --t_scale $T_SCALE --loss_type subtb --subtb_chunk_size $CHUNK_SIZE --eval_weighting --eval_buffer \
-            --partial_energy \
-            --prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper &
+    python train.py \
+        --seed $SEED --energy_name $ENERGY_NAME --ndim $N_DIM --t_scale $T_SCALE --loss_type subtb --subtb_chunk_size $CHUNK_SIZE --eval_weighting --eval_buffer \
+        --partial_energy \
+        --prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper &
 done
 wait

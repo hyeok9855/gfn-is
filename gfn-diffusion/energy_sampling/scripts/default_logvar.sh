@@ -16,7 +16,6 @@ module --quiet load cuda/12.6.0/cudnn/9.3
 conda activate gfn-is
 wandb login --relogin ...
 
-
 ENERGY_NAME=$1  # many_well, gmm40
 BUFFER_PRIORITIZATION=${2:-normalized_iw}  # normalized_iw, none
 T_SCALE=${3:-1.0}
@@ -29,7 +28,7 @@ fi
 
 for SEED in 0 1 2 3 4; do
     python train.py \
-        --seed $SEED --energy_name $ENERGY_NAME --ndim $N_DIM --t_scale $T_SCALE --loss_type db --eval_weighting --eval_buffer \
+        --seed $SEED --energy_name $ENERGY_NAME --ndim $N_DIM --t_scale $T_SCALE --loss_type logvar --eval_weighting --eval_buffer \
         --prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper &
 done
 wait

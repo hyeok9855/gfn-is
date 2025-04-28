@@ -2,7 +2,7 @@
 
 GMM40_T_SCALE=100.0
 
-for LOSS in tb db subtb fldb flsubtb subtb_chunk flsubtb_chunk; do  # tb db subtb fldb flsubtb subtb_chunk flsubtb_chunk
+for LOSS in tb logvar db fldb subtb_chunk flsubtb_chunk; do  # tb logvar db subtb fldb flsubtb subtb_chunk flsubtb_chunk
     for ENERGY_NAME in gmm40 many_well; do  # gmm40 many_well
         if [ "$ENERGY_NAME" = "gmm40" ]; then
             T_SCALE=$GMM40_T_SCALE
@@ -13,7 +13,7 @@ for LOSS in tb db subtb fldb flsubtb subtb_chunk flsubtb_chunk; do  # tb db subt
         for BUFFER_PRIORITIZATION in normalized_iw none; do  # normalized_iw none
 
             # TB
-            if [ "$LOSS" = "tb" ]; then
+            if [ "$LOSS" = "tb" ] || [ "$LOSS" = "logvar" ]; then
                 sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $BUFFER_PRIORITIZATION $T_SCALE
 
             # DB FL-DB
