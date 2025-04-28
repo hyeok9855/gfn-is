@@ -5,7 +5,7 @@ import torch
 
 from buffers import BaseBuffer, TerminalStateBuffer, IntermediateStateBuffer
 from energies import BaseEnergy
-from gflownet_losses import get_gfn_loss
+from losses import get_loss
 from models import GFN
 from utils.misc_utils import get_exploration_std
 from utils.sampling_utils import get_sampling_func
@@ -189,7 +189,7 @@ def fwd_train_step(
     )
 
     # Compute losses
-    losses = get_gfn_loss(
+    losses = get_loss(
         loss_type,
         log_pfs,
         log_pbs,
@@ -208,7 +208,7 @@ def fwd_train_step(
             case "target":  # r(x)p_B(\tau|x)
                 aux_target_measure_0t = log_fs[:, 1:] + log_pbs.cumsum(-1)
             case "loss":
-                assert loss_type in ["tb", "tb-avg", "pis"]
+                assert loss_type in ["tb", "logvar", "pis"]
                 aux_target_measure_0t[:, -1] = losses.log()  # (bs,)
             case _:
                 raise ValueError(f"Invalid aux_target: {aux_target}")
@@ -328,7 +328,7 @@ def bwd_train_step(
         else:
             raise ValueError(f"Invalid buffer type: {type(buffer)}")
 
-        losses = get_gfn_loss(
+        losses = get_loss(
             loss_type,
             log_pfs,
             log_pbs,

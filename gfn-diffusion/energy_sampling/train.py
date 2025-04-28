@@ -9,7 +9,7 @@ from tqdm import trange
 from buffers import TerminalStateBuffer, IntermediateStateBuffer
 from discretizers import get_discretizer
 from energies import get_energy
-from gflownet_losses import cal_subtb_coef_matrix
+from losses import cal_subtb_coef_matrix
 from models import GFN
 from utils.eval_utils import eval_step
 from utils.misc_utils import get_name, set_seed
@@ -222,7 +222,7 @@ if __name__ == "__main__":
         "--loss_type",
         type=str,
         default="tb",
-        choices=("tb", "tb-avg", "db", "subtb", "pis", "mle"),
+        choices=("tb", "logvar", "db", "subtb", "pis", "mle"),
     )
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
     parser.add_argument("--subtb_chunk_size", type=int, default=0)
