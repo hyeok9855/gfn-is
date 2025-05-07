@@ -1,5 +1,5 @@
 import torch
-from .base import BaseEnergy
+from .base import BaseEnergy, IntermediateEnergy
 from .funnel import Funnel
 from .gmm40 import GMM40
 from .lgcp import LGCP

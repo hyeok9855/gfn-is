@@ -8,7 +8,14 @@ import torch
 import wandb
 from matplotlib.figure import Figure
 
-from energies import GMM40, BaseEnergy, Funnel, ManyWell, TwentyFiveGaussianMixture
+from energies import (
+    BaseEnergy,
+    Funnel,
+    GMM40,
+    IntermediateEnergy,
+    ManyWell,
+    TwentyFiveGaussianMixture,
+)
 
 
 def get_figure(bounds=(-10.0, 10.0)):
@@ -148,7 +155,7 @@ def viz_2d_slice(
 
 
 def viz_manywell(
-    energy: ManyWell,
+    energy: BaseEnergy,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
 ) -> dict:
@@ -181,7 +188,7 @@ def viz_manywell(
 
 
 def viz_funnel(
-    energy: Funnel,
+    energy: BaseEnergy,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
 ) -> dict:
@@ -206,7 +213,7 @@ def viz_funnel(
 
 
 def viz_gmm(
-    energy: TwentyFiveGaussianMixture | GMM40,
+    energy: BaseEnergy,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
     clamp_min=-1000.0,
@@ -241,60 +248,25 @@ def viz_gmm(
     return out_dict
 
 
-def _plot_step(
+def plot_step(
     energy: BaseEnergy,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
-):
-    if isinstance(energy, ManyWell):
+    suffix: str = "",
+) -> dict:
+    _energy = energy.target_energy if isinstance(energy, IntermediateEnergy) else energy
+
+    if isinstance(_energy, ManyWell):
         out_dict = viz_manywell(energy, samples, weights)
-    elif isinstance(energy, Funnel):
+    elif isinstance(_energy, Funnel):
         out_dict = viz_funnel(energy, samples, weights)
-    elif isinstance(energy, (TwentyFiveGaussianMixture, GMM40)):
+    elif isinstance(_energy, (TwentyFiveGaussianMixture, GMM40)):
         out_dict = viz_gmm(energy, samples, weights)
     else:
         print(
             f"Warning: {energy.__class__.__name__} is not supported for visualization."
             + " Skipping..."
         )
+        return {}
     plt.close("all")
-    return out_dict
-
-
-def plot_step(
-    energy: BaseEnergy,
-    samples: torch.Tensor,
-    resampling: bool = False,
-    weighting: bool = False,
-    resampled_samples: torch.Tensor | None = None,
-    weights: torch.Tensor | None = None,
-    buffer_samples: torch.Tensor | None = None,
-):
-    images = _plot_step(energy, samples)
-    if resampling:
-        assert resampled_samples is not None
-        images_resample = _plot_step(energy, resampled_samples)
-        images.update(
-            {
-                k.replace("visualization/", "visualization_resample/"): v
-                for k, v in images_resample.items()
-            }
-        )
-    if weighting:
-        assert weights is not None
-        images_weighted = _plot_step(energy, samples, weights)
-        images.update(
-            {
-                k.replace("visualization/", "visualization_weighted/"): v
-                for k, v in images_weighted.items()
-            }
-        )
-    if buffer_samples is not None:
-        images_buffer = _plot_step(energy, buffer_samples)
-        images.update(
-            {
-                k.replace("visualization/", "visualization_buffer/"): v
-                for k, v in images_buffer.items()
-            }
-        )
-    return images
+    return {k.replace("visualization", f"visualization{suffix}"): v for k, v in out_dict.items()}

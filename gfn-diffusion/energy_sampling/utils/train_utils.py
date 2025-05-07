@@ -71,13 +71,14 @@ def train_step(
     bwd_from: str,
     discretizer: Callable[[int, int], torch.Tensor],
     T: int,
+    subtb_coef_matrix: torch.Tensor | None = None,
+    subtb_chunk_size: int = 0,
     exploratory: bool = False,
     exploration_factor: float = 0.0,
     exploration_wd: bool = False,
     buffer: BaseBuffer | None = None,
     prefill: int = 0,
-    subtb_coef_matrix: torch.Tensor | None = None,
-    subtb_chunk_size: int = 0,
+    buffer_save_interval: int = 0,
     clip_grad_norm: float = 1.0,
     device=torch.device("cpu"),
     weighting: bool = False,
@@ -102,6 +103,7 @@ def train_step(
         subtb_chunk_size=subtb_chunk_size,
         exploration_std=exploration_std,
         buffer=buffer,
+        buffer_save_interval=buffer_save_interval,
         device=device,
         resampling_strategy=resampling_strategy,
         aux_target=aux_target,
@@ -172,6 +174,7 @@ def fwd_train_step(
     subtb_chunk_size: int = 0,
     exploration_std=0.0,
     buffer: BaseBuffer | None = None,
+    buffer_save_interval: int = 0,
     device=torch.device("cpu"),
     weighting: bool = False,
     resampling: bool = False,
@@ -248,9 +251,10 @@ def fwd_train_step(
             data_dict = {k: v[:, -1] for k, v in data_dict.items()}
         else:  # IntermediateStateBuffer
             data_dict["ts"] = ts[:, 1:]  # (bs, T)
-            if subtb_chunk_size > 0:
+            if buffer_save_interval > 0:
                 data_dict = {
-                    k: v[:, subtb_chunk_size - 1 :: subtb_chunk_size] for k, v in data_dict.items()
+                    k: v[:, buffer_save_interval - 1 :: buffer_save_interval]
+                    for k, v in data_dict.items()
                 }
         buffer.add(**data_dict)
 
@@ -319,7 +323,10 @@ def bwd_train_step(
             buf_states, buf_ts, _, indices = buffer.sample(batch_size)
 
             # TODO: support for other discretizers
-            assert discretizer.__name__ == "uniform_discretizer"
+            try:
+                assert discretizer.__name__ == "uniform_discretizer"
+            except:  # for partial function
+                assert discretizer.func.__name__ == "uniform_discretizer"
             ts = discretizer(batch_size, T).to(device)
             _, log_pfs, log_pbs, log_fs, _ = gfn_model.get_trajectory_fwd_and_bwd(
                 buf_states, ts, buf_ts, energy.log_reward, exploration_std=0.0
@@ -476,6 +483,6 @@ def get_min_max(func: Callable, log_weights: torch.Tensor) -> tuple[float, float
     if func == clip_above or func == clip_below:
         return log_weights.min().item(), log_weights.max().item()
     elif func == temper:
-        return 1.0, 100.0
+        return 1.0, 1000.0
     else:
         raise ValueError(f"Invalid function: {func}")

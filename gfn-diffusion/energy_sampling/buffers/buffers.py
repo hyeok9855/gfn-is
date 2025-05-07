@@ -254,19 +254,22 @@ class IntermediateStateBuffer(BaseBuffer):
 
         return states, ts, log_fs, indices
 
-    def sample_terminal(
-        self, batch_size: int, prioritized=True
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def sample_timestep(
+        self, batch_size: int, t_idx: int, prioritized=True
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         assert len(self) > 0, "Buffer is empty"
+        assert self.ts_dataset is not None
+        assert t_idx < self.ts_dataset.data.shape[1]
 
-        terminal_states = self.states_dataset[:, -1]
-        terminal_log_fs = self.log_fs_dataset[:, -1]
+        t_states = self.states_dataset[:, t_idx]
+        t_ts = self.ts_dataset[:, t_idx]
+        t_log_fs = self.log_fs_dataset[:, t_idx]
 
-        weights = torch.ones(len(terminal_states), device=self.device)
+        weights = torch.ones(len(t_states), device=self.device)
         if prioritized and self.prioritization != "none":
             match self.prioritization:
                 case "target":
-                    weights = terminal_log_fs
+                    weights = t_log_fs
                     weights = weights.softmax(dim=0)
                 case "normalized_iw":
                     assert self.normalized_iws_dataset is not None
@@ -276,6 +279,14 @@ class IntermediateStateBuffer(BaseBuffer):
 
         replacement = True if self.prioritization == "normalized_iw" else False
         indices = self.sampling_func(weights, batch_size, replacement)
-        xs, log_rs = terminal_states[indices], terminal_log_fs[indices]
+        xs, ts, log_fs = t_states[indices], t_ts[indices], t_log_fs[indices]
+        return xs, ts, log_fs
 
+    def sample_terminal(
+        self, batch_size: int, prioritized=True
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        assert self.ts_dataset is not None
+        xs, _, log_rs = self.sample_timestep(
+            batch_size, self.ts_dataset.data.shape[1] - 1, prioritized
+        )
         return xs, log_rs

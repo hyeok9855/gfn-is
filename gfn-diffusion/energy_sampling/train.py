@@ -8,7 +8,7 @@ from tqdm import trange
 
 from buffers import TerminalStateBuffer, IntermediateStateBuffer
 from discretizers import get_discretizer
-from energies import get_energy
+from energies import get_energy, IntermediateEnergy
 from losses import cal_subtb_coef_matrix
 from models import GFN
 from utils.eval_utils import eval_step
@@ -125,12 +125,7 @@ def train(args):
         weighting=args.eval_weighting,
         buffer=buffer if args.eval_buffer else None,
     )
-    plot_step_partial = partial(
-        plot_step,
-        energy=energy,
-        resampling=args.eval_resampling,
-        weighting=args.eval_weighting,
-    )
+    plot_step_partial = partial(plot_step, energy=energy)
 
     ######################
     # Main training loop #
@@ -142,18 +137,42 @@ def train(args):
 
         ### Eval ###
         if i % args.eval_freq == 0:
-            results, model_trajs, weights, model_trajs_r, buffer_xs = eval_step_partial(
+            results, model_trajs, weights, sample_xs_r, buffer_xs = eval_step_partial(
                 args.eval_data_size
             )
             metrics.update(results)
             if i % args.plot_freq == 0:
-                images = plot_step_partial(
-                    samples=model_trajs[:, -1],
-                    resampled_samples=model_trajs_r,
-                    weights=weights,
-                    buffer_samples=buffer_xs,
-                )
-                metrics.update(images)
+                metrics.update(plot_step_partial(samples=model_trajs[:, -1]))
+                if weights is not None:
+                    metrics.update(
+                        plot_step_partial(
+                            samples=model_trajs[:, -1], weights=weights, suffix="_weighted"
+                        )
+                    )
+                if sample_xs_r is not None:
+                    metrics.update(plot_step_partial(samples=sample_xs_r, suffix="_resample"))
+                if buffer_xs is not None:
+                    metrics.update(plot_step_partial(samples=buffer_xs, suffix="_buffer"))
+
+                # Plot intermediate states
+                if len(args.plot_t_idx) > 0:
+                    eval_ts = eval_discretizer(args.eval_data_size, args.eval_T)
+                    for t_idx in args.plot_t_idx:
+                        inter_states = model_trajs[:, t_idx]
+                        assert (eval_ts[:, t_idx] == eval_ts[0, t_idx]).all()  # uniform discretizer
+                        eval_t = round(eval_ts[0, t_idx].item(), 3)
+                        inter_energy = IntermediateEnergy(energy, gfn_model, eval_t)
+                        metrics.update(plot_step(inter_energy, inter_states, suffix=f"-t{eval_t}"))
+                if buffer is not None and len(buffer) > 0 and len(args.plot_buffer_t_idx) > 0:
+                    assert isinstance(buffer, IntermediateStateBuffer)
+                    for t_idx in args.plot_buffer_t_idx:
+                        inter_states, buf_ts, _ = buffer.sample_timestep(args.eval_data_size, t_idx)
+                        assert (buf_ts == buf_ts[0]).all()  # uniform discretizer
+                        buf_t = round(buf_ts[0].item(), 3)
+                        inter_energy = IntermediateEnergy(energy, gfn_model, buf_t)
+                        metrics.update(
+                            plot_step(inter_energy, inter_states, suffix=f"_buffer-t{buf_t}")
+                        )
             # if i % 1000 == 0:
             #     torch.save(gfn_model.state_dict(), f'{save_dir}/model.pt')
 
@@ -170,13 +189,14 @@ def train(args):
             bwd_from=args.bwd_from,
             discretizer=train_discretizer,
             T=args.T,
+            subtb_coef_matrix=subtb_coef_matrix,
+            subtb_chunk_size=args.subtb_chunk_size,
             exploratory=args.exploratory,
             exploration_factor=args.exploration_factor,
             exploration_wd=args.exploration_wd,
             buffer=buffer,
             prefill=args.prefill,
-            subtb_coef_matrix=subtb_coef_matrix,
-            subtb_chunk_size=args.subtb_chunk_size,
+            buffer_save_interval=args.buffer_save_interval,
             clip_grad_norm=args.clip_grad_norm,
             device=device,
             resampling=args.train_resampling,
@@ -190,17 +210,11 @@ def train(args):
         wandb.log(metrics, step=i)
 
     ### Final eval ###
-    final_results, model_trajs, weights, model_trajs_r, buffer_xs = eval_step_partial(
+    final_results, model_trajs, weights, sample_xs_r, buffer_xs = eval_step_partial(
         args.final_eval_data_size, final_eval=True
     )
     metrics.update(final_results)
-    final_images = plot_step_partial(
-        samples=model_trajs[:, -1],
-        resampled_samples=model_trajs_r,
-        weights=weights,
-        buffer_samples=buffer_xs,
-    )
-    metrics.update(final_images)
+    metrics.update(plot_step_partial(samples=model_trajs[:, -1]))
     wandb.log(metrics, step=args.epochs)
     # torch.save(gfn_model.state_dict(), f'{save_dir}/model_final.pt')
 
@@ -222,7 +236,7 @@ if __name__ == "__main__":
         "--loss_type",
         type=str,
         default="tb",
-        choices=("tb", "logvar", "db", "subtb", "pis", "mle"),
+        choices=("tb", "db", "subtb", "logvar", "pis", "mle"),
     )
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
     parser.add_argument("--subtb_chunk_size", type=int, default=0)
@@ -311,6 +325,9 @@ if __name__ == "__main__":
     parser.add_argument("--rank_k", type=float, default=1e-2)
     # logr_lb for filtering out samples with extremely low reward values for numerical stability
     parser.add_argument("--logr_lb", type=float, default=-1e5)
+    # Interval between time indices at which to save intermediate states in the buffer
+    # (0 means only save terminal states, n>0 saves states at every nth timestep)
+    parser.add_argument("--buffer_save_interval", type=int, default=0)
     # prefill to wait before starting to sample from buffer
     parser.add_argument(
         "--prefill", type=int, default=10
@@ -331,7 +348,8 @@ if __name__ == "__main__":
     parser.add_argument("--eval_data_size", type=int, default=2000)
     parser.add_argument("--final_eval_data_size", type=int, default=2000)
     parser.add_argument("--plot_freq", type=int, default=2500)
-    parser.add_argument("--plot_data_size", type=int, default=2000)
+    parser.add_argument("--plot_t_idx", type=int, nargs="+", default=[])
+    parser.add_argument("--plot_buffer_t_idx", type=int, nargs="+", default=[])
     ################################################################
 
     ################################################################

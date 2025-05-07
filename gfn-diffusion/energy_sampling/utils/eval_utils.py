@@ -263,7 +263,11 @@ def compute_distribution_distances(
     dists = []
     to_return = []
     names = []
-    filtered_names = [name for name in NAMES if not is_jagged or not name.endswith("MMD")]
+    if weights is not None:
+        filtered_names = ["1-Wasserstein", "2-Wasserstein"]
+    else:
+        filtered_names = [name for name in NAMES if not is_jagged or not name.endswith("MMD")]
+
     ts = len(pred) if pred_is_jagged else pred.shape[1]
     for t in np.arange(ts):
         if pred_is_jagged:
@@ -393,7 +397,7 @@ def eval_step(
     err = -(log_fs[:, 0] + log_pfs.sum(-1) - log_rewards - log_pbs.sum(-1))
     weights = err.softmax(0)
 
-    model_trajs_r = None
+    sample_xs_r = None
     if resampling:
         # We can't use `estimate_partition_function` with resampled trajectories
         # since we don't know the distribution of the resampled trajectories
@@ -402,10 +406,10 @@ def eval_step(
         metrics_r = {}
         sampled_idx = get_sampling_func(resampling_strategy)(weights, batch_size, True)
         model_trajs_r = model_trajs[sampled_idx]
-        sample_xs_rs = model_trajs_r[:, -1]
+        sample_xs_r = model_trajs_r[:, -1]
 
         metrics_r.update(
-            compute_distribution_distances(sample_xs_rs.unsqueeze(1), gt_xs.unsqueeze(1))
+            compute_distribution_distances(sample_xs_r.unsqueeze(1), gt_xs.unsqueeze(1))
         )
         metrics_r = {
             f"{'final_' if final_eval else ''}eval_resampled/{k}": v for k, v in metrics_r.items()
@@ -437,4 +441,4 @@ def eval_step(
         }
         metrics.update(metrics_b)
 
-    return metrics, model_trajs, weights, model_trajs_r, buffer_xs
+    return metrics, model_trajs, weights, sample_xs_r, buffer_xs

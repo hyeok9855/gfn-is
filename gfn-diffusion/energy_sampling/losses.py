@@ -12,21 +12,6 @@ def tb_loss(
     return tb_discrepancy**2
 
 
-def logvar_loss(
-    log_pfs: torch.Tensor,
-    log_pbs: torch.Tensor,
-    log_r: torch.Tensor | None = None,
-) -> torch.Tensor:
-    rnd = log_pbs.sum(-1) - log_pfs.sum(-1)
-    if log_r is not None:
-        rnd = log_r + rnd
-    log_Z = rnd.mean(dim=0, keepdim=True)
-    log_var_sqrt = log_pbs.sum(-1) - log_pfs.sum(-1) - log_Z
-    if log_r is not None:
-        log_var_sqrt = log_r + log_var_sqrt
-    return log_var_sqrt**2
-
-
 def db_loss(
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
@@ -72,35 +57,41 @@ def subtb_chunk_loss(
     return (subtb_chunk_losses**2).mean(-1)
 
 
+def logvar_loss(
+    log_pfs: torch.Tensor,  # (bs, T)
+    log_pbs: torch.Tensor,  # (bs, T)
+    log_r: torch.Tensor,  # (bs,)
+) -> torch.Tensor:
+    rnd = log_r + log_pbs.sum(-1) - log_pfs.sum(-1)  # (bs,)
+    return (rnd - rnd.mean(dim=0, keepdim=True)) ** 2  # (bs,)
+
+
 def get_loss(
     loss_type: str,
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
-    log_fs: torch.Tensor | None = None,
+    log_fs: torch.Tensor,
     subtb_coef_matrix: torch.Tensor | None = None,
     subtb_chunk_size: int = 0,
     ndim: int | None = None,
 ) -> torch.Tensor:
-    if loss_type == "logvar":
-        log_r = log_fs if log_fs is None else log_fs[:, -1]
-        losses = logvar_loss(log_pfs, log_pbs, log_r)
-    else:
-        assert log_fs is not None
-        if loss_type == "tb":
-            losses = tb_loss(log_pfs, log_pbs, log_fs[:, 0], log_fs[:, -1])
-        elif loss_type == "db":
-            losses = db_loss(log_pfs, log_pbs, log_fs)
-        elif loss_type == "subtb":
-            if subtb_chunk_size > 0:  # Chunk-based subtb
-                losses = subtb_chunk_loss(log_pfs, log_pbs, log_fs, subtb_chunk_size)
-            else:
-                assert subtb_coef_matrix is not None
-                losses = subtb_loss(log_pfs, log_pbs, log_fs, subtb_coef_matrix)
-        elif loss_type == "pis":
-            assert ndim is not None
-            losses = (1 / ndim) * (log_pfs.sum(-1) - log_pbs.sum(-1) - log_fs[:, -1])
+    if loss_type == "tb":
+        losses = tb_loss(log_pfs, log_pbs, log_fs[:, 0], log_fs[:, -1])
+    elif loss_type == "logvar":
+        losses = logvar_loss(log_pfs, log_pbs, log_fs[:, -1])
+    elif loss_type == "db":
+        losses = db_loss(log_pfs, log_pbs, log_fs)
+    elif loss_type == "subtb":
+        if subtb_chunk_size > 0:  # Chunk-based subtb
+            losses = subtb_chunk_loss(log_pfs, log_pbs, log_fs, subtb_chunk_size)
         else:
-            raise ValueError(f"Invalid training loss: {loss_type}")
+            assert subtb_coef_matrix is not None
+            losses = subtb_loss(log_pfs, log_pbs, log_fs, subtb_coef_matrix)
+    elif loss_type == "pis":
+        assert ndim is not None
+        losses = (1 / ndim) * (log_pfs.sum(-1) - log_pbs.sum(-1) - log_fs[:, -1])
+    else:
+        raise ValueError(f"Invalid training loss: {loss_type}")
 
     return losses
 

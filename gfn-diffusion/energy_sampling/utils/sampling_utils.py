@@ -21,7 +21,7 @@ def stratified(weights, N, replacement=True) -> torch.Tensor:
         weights: (bs,)
         N: int
     """
-    assert replacement, "Stratified sampling does not support replacement"
+    assert replacement, "Stratified sampling does not support sampling without replacement"
     # Normalize weights if they're not already normalized
     weights_sum = weights.sum()
     if not torch.isclose(weights_sum, torch.tensor(1.0, device=weights.device)):
@@ -41,7 +41,7 @@ def systematic(weights, N, replacement=True) -> torch.Tensor:
         weights: (bs,)
         N: int
     """
-    assert replacement, "Systematic sampling does not support replacement"
+    assert replacement, "Systematic sampling does not support sampling without replacement"
     # Normalize weights if they're not already normalized
     weights_sum = weights.sum()
     if not torch.isclose(weights_sum, torch.tensor(1.0, device=weights.device)):
