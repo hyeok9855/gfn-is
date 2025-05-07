@@ -405,7 +405,7 @@ class GFN(nn.Module):
             out, flow = self.predict_next_state(s_, ts[:, T - i - 1], logr_fn)
             pf_mean, pf_logvar = self.split_params(out)
 
-            if self.conditional_flow_model or i == 0:
+            if self.conditional_flow_model or i == T - 1:
                 log_fs[:, T - i - 1] = flow
 
             _, log_pfs[:, T - i - 1], _ = self.forward_step(
