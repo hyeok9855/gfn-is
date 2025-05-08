@@ -43,17 +43,17 @@ def subtb_chunk_loss(
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
     log_fs: torch.Tensor,
-    subtb_chunk_size: int,
+    n_chunks: int,
 ) -> torch.Tensor:
     db_discrepancy = log_fs[:, :-1] + log_pfs - log_fs[:, 1:] - log_pbs
     # (bs, T)
     bs, T = db_discrepancy.shape
-    assert T % subtb_chunk_size == 0
+    assert T % n_chunks == 0
 
-    db_discrepancy_chunked = db_discrepancy.reshape(bs, -1, subtb_chunk_size)
-    # (bs, T/L, L)
+    db_discrepancy_chunked = db_discrepancy.reshape(bs, n_chunks, -1)
+    # (bs, n_chunks, T/n_chunks)
     subtb_chunk_losses = db_discrepancy_chunked.sum(dim=-1)
-    # (bs, T/L)
+    # (bs, n_chunks)
     return (subtb_chunk_losses**2).mean(-1)
 
 
@@ -72,7 +72,7 @@ def get_loss(
     log_pbs: torch.Tensor,
     log_fs: torch.Tensor,
     subtb_coef_matrix: torch.Tensor | None = None,
-    subtb_chunk_size: int = 0,
+    subtb_n_chunks: int = 0,
     ndim: int | None = None,
 ) -> torch.Tensor:
     if loss_type == "tb":
@@ -82,8 +82,8 @@ def get_loss(
     elif loss_type == "db":
         losses = db_loss(log_pfs, log_pbs, log_fs)
     elif loss_type == "subtb":
-        if subtb_chunk_size > 0:  # Chunk-based subtb
-            losses = subtb_chunk_loss(log_pfs, log_pbs, log_fs, subtb_chunk_size)
+        if subtb_n_chunks > 0:  # Chunk-based subtb
+            losses = subtb_chunk_loss(log_pfs, log_pbs, log_fs, subtb_n_chunks)
         else:
             assert subtb_coef_matrix is not None
             losses = subtb_loss(log_pfs, log_pbs, log_fs, subtb_coef_matrix)

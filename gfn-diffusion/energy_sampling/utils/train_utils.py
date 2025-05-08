@@ -72,7 +72,7 @@ def train_step(
     discretizer: Callable[[int, int], torch.Tensor],
     T: int,
     subtb_coef_matrix: torch.Tensor | None = None,
-    subtb_chunk_size: int = 0,
+    subtb_n_chunks: int = 0,
     exploratory: bool = False,
     exploration_factor: float = 0.0,
     exploration_wd: bool = False,
@@ -100,7 +100,7 @@ def train_step(
         discretizer=discretizer,
         T=T,
         subtb_coef_matrix=subtb_coef_matrix,
-        subtb_chunk_size=subtb_chunk_size,
+        subtb_n_chunks=subtb_n_chunks,
         exploration_std=exploration_std,
         buffer=buffer,
         buffer_save_interval=buffer_save_interval,
@@ -120,7 +120,7 @@ def train_step(
         discretizer=discretizer,
         T=T,
         subtb_coef_matrix=subtb_coef_matrix,
-        subtb_chunk_size=subtb_chunk_size,
+        subtb_n_chunks=subtb_n_chunks,
         buffer=buffer,
         device=device,
     )
@@ -171,7 +171,7 @@ def fwd_train_step(
     discretizer: Callable[[int, int], torch.Tensor],
     T: int,
     subtb_coef_matrix: torch.Tensor | None,
-    subtb_chunk_size: int = 0,
+    subtb_n_chunks: int = 0,
     exploration_std=0.0,
     buffer: BaseBuffer | None = None,
     buffer_save_interval: int = 0,
@@ -198,7 +198,7 @@ def fwd_train_step(
         log_pbs,
         log_fs,
         subtb_coef_matrix=subtb_coef_matrix,
-        subtb_chunk_size=subtb_chunk_size,
+        subtb_n_chunks=subtb_n_chunks,
         ndim=energy.ndim,
     )
 
@@ -283,7 +283,7 @@ def bwd_train_step(
     discretizer: Callable[[int, int], torch.Tensor],
     T: int,
     subtb_coef_matrix: torch.Tensor | None,
-    subtb_chunk_size: int = 0,
+    subtb_n_chunks: int = 0,
     buffer: BaseBuffer | None = None,
     device=torch.device("cpu"),
 ) -> torch.Tensor:
@@ -305,13 +305,13 @@ def bwd_train_step(
 
         elif isinstance(buffer, IntermediateStateBuffer):
             # # Option 1: Construct transitions / subtrajectories (chunks)
-            # n_chunks = T // subtb_chunk_size  # assumption: T is divisible by subtb_chunk_size
-            # buf_states, buf_ts, buf_log_fs, indices = buffer.sample(batch_size * n_chunks)
+            # chunk_size = T // subtb_n_chunks  # assumption: T is divisible by subtb_n_chunks
+            # buf_states, buf_ts, buf_log_fs, indices = buffer.sample(batch_size * subtb_n_chunks)
             # # each with shape (bs,)
 
             # # TODO: support for other discretizers
             # assert discretizer.__name__ == "uniform_discretizer"
-            # sub_ts = discretizer(batch_size * n_chunks, subtb_chunk_size).to(device) / n_chunks
+            # sub_ts = discretizer(batch_size * subtb_n_chunks, chunk_size).to(device) / subtb_n_chunks
 
             # # clamp to avoid negative time steps from floating point error
             # ts = (buf_ts.unsqueeze(-1) + sub_ts - sub_ts[:, [-1]]).clamp(min=0.0)
@@ -341,7 +341,7 @@ def bwd_train_step(
             log_pbs,
             log_fs,
             subtb_coef_matrix=subtb_coef_matrix,
-            subtb_chunk_size=subtb_chunk_size,
+            subtb_n_chunks=subtb_n_chunks,
             ndim=energy.ndim,
         )
 

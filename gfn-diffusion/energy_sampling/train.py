@@ -39,7 +39,7 @@ def train(args):
     )
 
     subtb_coef_matrix = None
-    if args.loss_type == "subtb" and args.subtb_chunk_size == 0:
+    if args.loss_type == "subtb" and args.subtb_n_chunks == 0:
         subtb_coef_matrix = cal_subtb_coef_matrix(args.subtb_lambda, args.T).to(device)
 
     try:
@@ -190,7 +190,7 @@ def train(args):
             discretizer=train_discretizer,
             T=args.T,
             subtb_coef_matrix=subtb_coef_matrix,
-            subtb_chunk_size=args.subtb_chunk_size,
+            subtb_n_chunks=args.subtb_n_chunks,
             exploratory=args.exploratory,
             exploration_factor=args.exploration_factor,
             exploration_wd=args.exploration_wd,
@@ -239,7 +239,7 @@ if __name__ == "__main__":
         choices=("tb", "db", "subtb", "logvar", "pis", "mle"),
     )
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
-    parser.add_argument("--subtb_chunk_size", type=int, default=0)
+    parser.add_argument("--subtb_n_chunks", type=int, default=0)
     parser.add_argument("--training_mode", type=str, default="both", choices=("fwd", "bwd", "both"))
     parser.add_argument("--bwd_from", type=str, default="buffer", choices=("energy", "buffer"))
     parser.add_argument("--clip_grad_norm", type=float, default=3.0)
@@ -382,8 +382,8 @@ if __name__ == "__main__":
     if args.loss_type in ["db", "subtb"] and args.partial_energy:
         args.loss_type_str = "fl-" + args.loss_type_str
     if args.loss_type == "subtb":
-        if args.subtb_chunk_size > 0:
-            args.loss_type_str += f"-chunk{args.subtb_chunk_size}"
+        if args.subtb_n_chunks > 0:
+            args.loss_type_str += f"-nchunk{args.subtb_n_chunks}"
         else:
             args.loss_type_str += f"-lambda{args.subtb_lambda}"
 
