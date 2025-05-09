@@ -91,7 +91,7 @@ class MLPModule(BaseModule):
                 self.s_emb_dim,
                 self.t_emb_dim,
                 self.hidden_dim,
-                self.out_dim,
+                2 * self.ndim,
                 self.joint_layers,
                 self.zero_init,
             )
@@ -212,7 +212,7 @@ class MLPModule(BaseModule):
             )
             t_emb = self.bwd_t_model(t_next)
             s_emb = self.bwd_s_model(s_next)
-            out = self.bwd_joint_model(torch.cat([s_emb, t_emb], dim=-1))
+            out = self.bwd_joint_model(s_emb, t_emb)
             if self.clipping:
                 out = torch.clip(out, -self.gfn_clip, self.gfn_clip)
 

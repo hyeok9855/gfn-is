@@ -21,7 +21,7 @@ class PISMLPModule(MLPModule):
             self.bwd_t_model = TimeEncodingPIS(self.harmonics_dim, self.t_emb_dim, self.hidden_dim)
             self.bwd_s_model = StateEncodingPIS(self.ndim, self.s_emb_dim)
             self.bwd_joint_model = JointPolicyPIS(
-                self.s_emb_dim, self.hidden_dim, self.out_dim, self.joint_layers, self.zero_init
+                self.s_emb_dim, self.hidden_dim, 2 * self.ndim, self.joint_layers, self.zero_init
             )
 
         if self.conditional_flow_model:
