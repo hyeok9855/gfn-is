@@ -27,7 +27,7 @@ class IntermediateEnergy(BaseEnergy):
                 states, ts, self.target_energy.log_reward
             )
             if self.gfn.partial_energy:
-                log_fs += self.gfn.get_partial_energy(
-                    states.unsqueeze(1), ts.unsqueeze(1), self.target_energy.log_reward
-                ).squeeze(1)
+                log_fs += self.gfn.get_partial_energy(states.unsqueeze(1), ts.unsqueeze(1)).squeeze(
+                    1
+                )
         return log_fs
