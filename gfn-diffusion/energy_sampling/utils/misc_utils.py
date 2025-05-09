@@ -70,6 +70,8 @@ def get_name(args):
         name += f"-lrZ{args.lr_Z}"
     elif args.loss_type in ["subtb", "db"]:
         name += f"-lrflow{args.lr_flow}"
+        if args.learn_beta_T > 0:
+            name += f"-lrbeta{args.lr_beta}"
     if args.use_weight_decay:
         name += f"-wd{args.weight_decay}"
     if args.use_scheduler:

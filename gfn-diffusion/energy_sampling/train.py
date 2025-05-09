@@ -21,7 +21,7 @@ def train(args):
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
     energy = get_energy(args.energy_name, args.ndim, device=device)
 
-    energy_name = f"{args.energy_name}-{args.ndim}d"
+    energy_name = f"{args.energy_name}-{energy.ndim}d"
     exp_name = get_name(args)
 
     # parent_dir = os.path.dirname(os.path.abspath(__file__))
@@ -379,13 +379,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     args.loss_type_str = args.loss_type
-    if args.loss_type in ["db", "subtb"] and args.partial_energy:
-        args.loss_type_str = "fl-" + args.loss_type_str
-    if args.loss_type == "subtb":
-        if args.subtb_n_chunks > 0:
-            args.loss_type_str += f"-nchunk{args.subtb_n_chunks}"
-        else:
-            args.loss_type_str += f"-lambda{args.subtb_lambda}"
+    if args.loss_type in ["db", "subtb"]:
+        if args.partial_energy:
+            args.loss_type_str = "fl-" + args.loss_type_str
+        if args.loss_type == "subtb":
+            if args.subtb_n_chunks > 0:
+                args.loss_type_str += f"-nchunk{args.subtb_n_chunks}"
+            else:
+                args.loss_type_str += f"-lambda{args.subtb_lambda}"
+        if args.learn_beta_T > 0:
+            args.loss_type_str += f"-learnbetaT{args.learn_beta_T}"
+    if args.learn_pb:
+        args.loss_type_str += "-learnpb"
 
     set_seed(args.seed)
     if "SLURM_PROCID" in os.environ:

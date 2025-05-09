@@ -25,27 +25,33 @@ def get_gfn_optimizer(
     gamma: float = 1.0,
 ):
     param_groups = [
-        {"params": gfn_model.t_model.parameters()},
-        {"params": gfn_model.s_model.parameters()},
-        {"params": gfn_model.joint_model.parameters()},
+        {"params": gfn_model.module.t_model.parameters()},
+        {"params": gfn_model.module.s_model.parameters()},
+        {"params": gfn_model.module.joint_model.parameters()},
     ]
-    if gfn_model.lp_scaling_model is not None:
-        param_groups += [{"params": gfn_model.lp_scaling_model.parameters()}]
+    if gfn_model.module.lp_scaling_model is not None:
+        param_groups += [{"params": gfn_model.module.lp_scaling_model.parameters()}]
 
-    if isinstance(gfn_model.flow_model, torch.nn.Module):
-        param_groups += [{"params": gfn_model.flow_model.parameters(), "lr": lr_flow}]
-        if gfn_model.t_model_flow is not None:
-            param_groups += [{"params": gfn_model.t_model_flow.parameters(), "lr": lr_flow}]
-        if gfn_model.s_model_flow is not None:
-            param_groups += [{"params": gfn_model.s_model_flow.parameters(), "lr": lr_flow}]
+    if isinstance(gfn_model.module.flow_model, torch.nn.Module):
+        param_groups += [{"params": gfn_model.module.flow_model.parameters(), "lr": lr_flow}]
+        if gfn_model.module.t_model_flow is not None:
+            param_groups += [{"params": gfn_model.module.t_model_flow.parameters(), "lr": lr_flow}]
+        if gfn_model.module.s_model_flow is not None:
+            param_groups += [{"params": gfn_model.module.s_model_flow.parameters(), "lr": lr_flow}]
     else:
-        param_groups += [{"params": [gfn_model.flow_model], "lr": lr_Z}]
+        param_groups += [{"params": [gfn_model.module.flow_model], "lr": lr_Z}]
 
     if gfn_model.beta_model is not None:
         param_groups += [{"params": gfn_model.beta_model, "lr": lr_beta}]
 
-    if gfn_model.back_model is not None:
-        param_groups += [{"params": gfn_model.back_model.parameters(), "lr": lr_back}]
+    if gfn_model.module.bwd_joint_model is not None:
+        assert gfn_model.module.bwd_t_model is not None
+        assert gfn_model.module.bwd_s_model is not None
+        param_groups += [
+            {"params": gfn_model.module.bwd_t_model.parameters(), "lr": lr_back},
+            {"params": gfn_model.module.bwd_s_model.parameters(), "lr": lr_back},
+            {"params": gfn_model.module.bwd_joint_model.parameters(), "lr": lr_back},
+        ]
 
     gfn_optimizer = torch.optim.Adam(
         param_groups, lr_policy, weight_decay=weight_decay if use_weight_decay else 0.0
@@ -480,9 +486,11 @@ def get_func(smoothing: str) -> Callable[[torch.Tensor, torch.Tensor], torch.Ten
 
 
 def get_min_max(func: Callable, log_weights: torch.Tensor) -> tuple[float, float]:
+    _min = torch.nan_to_num(log_weights, nan=float("inf"), neginf=float("inf")).min().item()
+    _max = torch.nan_to_num(log_weights, nan=float("-inf"), posinf=float("-inf")).max().item()
     if func == clip_above or func == clip_below:
-        return log_weights.min().item(), log_weights.max().item()
+        return _min, _max
     elif func == temper:
-        return 1.0, 1000.0
+        return 1.0, (_max - _min) / 2
     else:
         raise ValueError(f"Invalid function: {func}")
