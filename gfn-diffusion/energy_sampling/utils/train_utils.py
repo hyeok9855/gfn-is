@@ -13,48 +13,29 @@ from utils.sampling_utils import get_sampling_func
 
 def get_gfn_optimizer(
     gfn_model: GFN,
-    lr_policy: float,
-    lr_Z: float,
+    lr_fwd: float,
+    lr_bwd: float,
     lr_flow: float,
     lr_beta: float,
-    lr_back: float,
     use_weight_decay=False,
     weight_decay=1e-7,
     use_scheduler=False,
     milestones: list[int] = [100000],
     gamma: float = 1.0,
 ):
-    param_groups = [
-        {"params": gfn_model.module.t_model.parameters()},
-        {"params": gfn_model.module.s_model.parameters()},
-        {"params": gfn_model.module.joint_model.parameters()},
-    ]
-    if gfn_model.module.lp_scaling_model is not None:
-        param_groups += [{"params": gfn_model.module.lp_scaling_model.parameters()}]
 
-    if isinstance(gfn_model.module.flow_model, torch.nn.Module):
-        param_groups += [{"params": gfn_model.module.flow_model.parameters(), "lr": lr_flow}]
-        if gfn_model.module.t_model_flow is not None:
-            param_groups += [{"params": gfn_model.module.t_model_flow.parameters(), "lr": lr_flow}]
-        if gfn_model.module.s_model_flow is not None:
-            param_groups += [{"params": gfn_model.module.s_model_flow.parameters(), "lr": lr_flow}]
-    else:
-        param_groups += [{"params": [gfn_model.module.flow_model], "lr": lr_Z}]
+    module_param_groups = gfn_model.module.get_param_groups()
+
+    param_groups = []
+    param_groups.append({"params": module_param_groups.forward_params, "lr": lr_fwd})
+    param_groups.append({"params": module_param_groups.backward_params, "lr": lr_bwd})
+    param_groups.append({"params": module_param_groups.flow_params, "lr": lr_flow})
 
     if gfn_model.beta_model is not None:
-        param_groups += [{"params": gfn_model.beta_model, "lr": lr_beta}]
-
-    if gfn_model.module.bwd_joint_model is not None:
-        assert gfn_model.module.bwd_t_model is not None
-        assert gfn_model.module.bwd_s_model is not None
-        param_groups += [
-            {"params": gfn_model.module.bwd_t_model.parameters(), "lr": lr_back},
-            {"params": gfn_model.module.bwd_s_model.parameters(), "lr": lr_back},
-            {"params": gfn_model.module.bwd_joint_model.parameters(), "lr": lr_back},
-        ]
+        param_groups.append({"params": gfn_model.beta_model, "lr": lr_beta})
 
     gfn_optimizer = torch.optim.Adam(
-        param_groups, lr_policy, weight_decay=weight_decay if use_weight_decay else 0.0
+        param_groups, lr=0.0, weight_decay=weight_decay if use_weight_decay else 0.0
     )
 
     gfn_scheduler = (

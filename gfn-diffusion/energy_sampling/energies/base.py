@@ -54,7 +54,9 @@ class IntermediateEnergy(BaseEnergy):
 
         ts = torch.ones_like(states[:, 0]) * self.t
         with torch.no_grad():
-            _, log_fs = self.gfn.module.predict_forward(states, ts, self.target_energy.log_reward)
+            _, _, log_fs = self.gfn.module.predict_forward(
+                states, ts, self.target_energy.log_reward
+            )
             if self.gfn.partial_energy:
                 log_fs += self.gfn.get_partial_energy(
                     states.unsqueeze(1), ts.unsqueeze(1), self.target_energy.log_reward

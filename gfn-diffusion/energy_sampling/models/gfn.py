@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from models.modules import MLPModule, PISMLPModule
+from models.modules import BaseModule
 
 
 logtwopi = math.log(2 * math.pi)
@@ -14,57 +14,19 @@ logtwopi = math.log(2 * math.pi)
 class GFN(nn.Module):
     def __init__(
         self,
+        module: BaseModule,
         ndim: int,
-        harmonics_dim: int,
-        t_emb_dim: int,
-        s_emb_dim: int,
-        hidden_dim: int,
-        flow_harmonics_dim: int = 64,
-        flow_t_emb_dim: int = 64,
-        flow_s_emb_dim: int = 64,
-        flow_hidden_dim: int = 64,
-        log_var_range: float = 4.0,
         t_scale: float = 1.0,
-        lp: bool = False,
-        learned_variance: bool = True,
         partial_energy: bool = False,
         learn_beta_T: int = 0,
-        clipping: bool = False,
-        lgv_clip: float = 1e2,
-        gfn_clip: float = 1e4,
-        pb_scale_range: float = 1.0,
-        lp_scaling_per_dimension: bool = True,
-        conditional_flow_model: bool = False,
-        share_embeddings: bool = False,
-        learn_pb: bool = False,
-        pis_architectures: bool = False,
-        lgv_layers: int = 3,
-        joint_layers: int = 2,
-        flow_layers: int = 2,
-        zero_init: bool = False,
         device=torch.device("cuda"),
     ) -> None:
         super().__init__()
+        self.module = module
         self.ndim = ndim
-
-        self.lp = lp
-        self.learned_variance = learned_variance
-        self.partial_energy = partial_energy
         self.t_scale = t_scale
-
-        self.learn_pb = learn_pb
-        self.pb_scale_range = pb_scale_range
-
-        self.pis_architectures = pis_architectures
-        self.lgv_layers = lgv_layers
-        self.joint_layers = joint_layers
-
-        self.pf_std_per_traj: float = np.sqrt(self.t_scale)
-        self.log_var_range: float = log_var_range
+        self.partial_energy = partial_energy
         self.device = device
-
-        out_dim = 2 * ndim if learned_variance else ndim
-        lv_out_dim = ndim if lp_scaling_per_dimension else 1
 
         self.beta_model = None
         if learn_beta_T > 0:
@@ -77,47 +39,6 @@ class GFN(nn.Module):
                 )
             )
             self.softplus = nn.Softplus()
-
-        mlp_kwargs = {
-            "ndim": ndim,
-            "harmonics_dim": harmonics_dim,
-            "t_emb_dim": t_emb_dim,
-            "s_emb_dim": s_emb_dim,
-            "hidden_dim": hidden_dim,
-            "out_dim": out_dim,
-            "flow_harmonics_dim": flow_harmonics_dim,
-            "flow_t_emb_dim": flow_t_emb_dim,
-            "flow_s_emb_dim": flow_s_emb_dim,
-            "flow_hidden_dim": flow_hidden_dim,
-            "lp": lp,
-            "clipping": clipping,
-            "lgv_clip": lgv_clip,
-            "gfn_clip": gfn_clip,
-            "pb_scale_range": pb_scale_range,
-            "lv_out_dim": lv_out_dim,
-            "lp_scaling_per_dimension": lp_scaling_per_dimension,
-            "conditional_flow_model": conditional_flow_model,
-            "share_embeddings": share_embeddings,
-            "learn_pb": learn_pb,
-            "lgv_layers": lgv_layers,
-            "joint_layers": joint_layers,
-            "flow_layers": flow_layers,
-            "zero_init": zero_init,
-            "device": device,
-        }
-        if self.pis_architectures:
-            self.module = PISMLPModule(**mlp_kwargs)
-        else:
-            self.module = MLPModule(**mlp_kwargs)
-
-    def get_mean_and_logvar(self, tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        if not self.learned_variance:
-            mean = tensor
-            logvar = torch.zeros_like(mean)
-        else:
-            mean, logvar = torch.chunk(tensor, 2, dim=-1)
-            logvar = torch.tanh(logvar) * self.log_var_range
-        return mean, logvar + np.log(self.pf_std_per_traj) * 2.0
 
     def forward_step(
         self,
@@ -138,6 +59,8 @@ class GFN(nn.Module):
         # pf_logvar.shape = (bsz, ndim)
 
         dts = (t_next - t).unsqueeze(1)
+
+        pf_logvar = pf_logvar + np.log(self.t_scale)
 
         # PIS requires gradients w.r.t. the parameters
         if pis:
@@ -190,16 +113,9 @@ class GFN(nn.Module):
 
         dts = (t_next - t).unsqueeze(1)
 
-        if self.learn_pb:
-            bwd_out = self.module.predict_backward(s_next, t_next)
-            bwd_mean, bwd_logvar = self.get_mean_and_logvar(bwd_out)
-            mean_correction = 1 + bwd_mean.tanh() * self.pb_scale_range
-            var_correction = 1 + bwd_logvar.tanh() * self.pb_scale_range
-        else:
-            mean_correction, var_correction = torch.ones_like(s_next), torch.ones_like(s_next)
-
+        mean_correction, var_correction = self.module.predict_backward(s_next, t_next)
         back_mean = s_next - s_next * dts / (t_next).unsqueeze(1) * mean_correction
-        back_var = (self.pf_std_per_traj**2) * dts * (t / t_next).unsqueeze(1) * var_correction
+        back_var = self.t_scale * dts * (t / t_next).unsqueeze(1) * var_correction
 
         if s is None:
             s = torch.zeros_like(s_next)
@@ -257,8 +173,7 @@ class GFN(nn.Module):
         states[:, 0] = s
 
         for i in range(T):
-            out, flow = self.module.predict_forward(s, ts[:, i], logr_fn)
-            pf_mean, pf_logvar = self.get_mean_and_logvar(out)
+            pf_mean, pf_logvar, flow = self.module.predict_forward(s, ts[:, i], logr_fn)
 
             if self.module.conditional_flow_model or i == 0:
                 log_fs[:, i] = flow
@@ -307,8 +222,7 @@ class GFN(nn.Module):
             else:
                 s_ = torch.zeros_like(s)
 
-            out, flow = self.module.predict_forward(s_, ts[:, T - i - 1], logr_fn)
-            pf_mean, pf_logvar = self.get_mean_and_logvar(out)
+            pf_mean, pf_logvar, flow = self.module.predict_forward(s_, ts[:, T - i - 1], logr_fn)
 
             if self.module.conditional_flow_model or i == T - 1:
                 log_fs[:, T - i - 1] = flow
@@ -357,7 +271,7 @@ class GFN(nn.Module):
 
         if (is_intermediate := t_idx_intermediate != T).any():
             # For non-terminal states, we should predict the flow at the current timestep
-            _, flow = self.module.predict_forward(
+            _, _, flow = self.module.predict_forward(
                 s[is_intermediate], curr_t[is_intermediate], logr_fn
             )
             log_fs[is_intermediate, t_idx_intermediate[is_intermediate]] = flow
@@ -392,10 +306,11 @@ class GFN(nn.Module):
                 log_pbs[is_backward, t1_idx_bwd] = log_pb_bwd
 
             # Forward pass with the one-step forward state of t1
-            out, flow = self.module.predict_forward(states[arange, t1_idx], t1, logr_fn)
+            pf_mean, pf_logvars, flow = self.module.predict_forward(
+                states[arange, t1_idx], t1, logr_fn
+            )
             log_fs[arange, t1_idx] = flow
 
-            pf_mean, pf_logvars = self.get_mean_and_logvar(out)
             if (~is_backward).any():
                 # Fill the states[~is_backward, t2_idx[~is_backward]]
                 states_fwd_t2, log_pf_fwd, log_pf_fwd_exp = self.forward_step(

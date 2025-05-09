@@ -56,6 +56,7 @@ def get_name(args):
     name = ""
 
     name += args.loss_type_str
+    name += f"-{args.module}"
     if args.lp:
         name += "-lp"
     if args.partial_energy:
@@ -65,7 +66,7 @@ def get_name(args):
     if args.loss_type in ["subtb", "db"]:
         name += f"-Fdim{args.flow_hidden_dim}"
 
-    name += f"-lr{args.lr_policy}"
+    name += f"-lr{args.lr_fwd}"
     if args.loss_type == "tb":
         name += f"-lrZ{args.lr_Z}"
     elif args.loss_type in ["subtb", "db"]:

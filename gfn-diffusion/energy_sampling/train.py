@@ -11,6 +11,7 @@ from discretizers import get_discretizer
 from energies import get_energy, IntermediateEnergy
 from losses import cal_subtb_coef_matrix
 from models import GFN
+from models.modules import get_module
 from utils.eval_utils import eval_step
 from utils.misc_utils import get_name, set_seed
 from utils.plot_utils import plot_step
@@ -19,7 +20,12 @@ from utils.train_utils import get_gfn_optimizer, train_step
 
 def train(args):
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
-    energy = get_energy(args.energy_name, args.ndim, device=device)
+    energy = get_energy(args, device)
+
+    try:
+        gt_xs = energy.sample(args.eval_data_size).to(device)
+    except NotImplementedError:
+        gt_xs = None
 
     energy_name = f"{args.energy_name}-{energy.ndim}d"
     exp_name = get_name(args)
@@ -38,59 +44,28 @@ def train(args):
         mode="disabled" if args.disable_wandb else "online",
     )
 
-    subtb_coef_matrix = None
-    if args.loss_type == "subtb" and args.subtb_n_chunks == 0:
-        subtb_coef_matrix = cal_subtb_coef_matrix(args.subtb_lambda, args.T).to(device)
-
-    try:
-        gt_xs = energy.sample(args.eval_data_size).to(device)
-    except NotImplementedError:
-        gt_xs = None
+    module = get_module(args, device)
 
     gfn_model = GFN(
-        energy.ndim,
-        harmonics_dim=args.hidden_dim,
-        t_emb_dim=args.hidden_dim,
-        s_emb_dim=args.hidden_dim,
-        hidden_dim=args.hidden_dim,
-        flow_harmonics_dim=args.flow_hidden_dim,
-        flow_t_emb_dim=args.flow_hidden_dim,
-        flow_s_emb_dim=args.flow_hidden_dim,
-        flow_hidden_dim=args.flow_hidden_dim,
-        log_var_range=args.log_var_range,
+        module=module,
+        ndim=energy.ndim,
         t_scale=args.t_scale,
-        lp=args.lp,
-        learned_variance=args.learned_variance,
         partial_energy=args.partial_energy,
         learn_beta_T=args.learn_beta_T,
-        clipping=args.clipping,
-        lgv_clip=args.lgv_clip,
-        gfn_clip=args.gfn_clip,
-        pb_scale_range=args.pb_scale_range,
-        lp_scaling_per_dimension=args.lp_scaling_per_dimension,
-        conditional_flow_model=args.conditional_flow_model,
-        share_embeddings=args.share_embeddings,
-        learn_pb=args.learn_pb,
-        pis_architectures=args.pis_architectures,
-        lgv_layers=args.lgv_layers,
-        joint_layers=args.joint_layers,
-        flow_layers=args.flow_layers,
-        zero_init=args.zero_init,
         device=device,
     ).to(device)
 
     gfn_optimizer, gfn_scheduler = get_gfn_optimizer(
         gfn_model,
-        args.lr_policy,
-        args.lr_Z,
-        args.lr_flow,
-        args.lr_beta,
-        args.lr_back,
-        args.use_weight_decay,
-        args.weight_decay,
-        args.use_scheduler,
-        [int(args.epochs * m) for m in args.milestones],
-        args.gamma,
+        lr_fwd=args.lr_fwd,
+        lr_bwd=args.lr_back,
+        lr_flow=args.lr_Z if args.loss_type == "tb" else args.lr_flow,
+        lr_beta=args.lr_beta,
+        use_weight_decay=args.use_weight_decay,
+        weight_decay=args.weight_decay,
+        use_scheduler=args.use_scheduler,
+        milestones=[int(args.epochs * m) for m in args.milestones],
+        gamma=args.gamma,
     )
 
     buffer = None
@@ -106,6 +81,10 @@ def train(args):
             rank_k=args.rank_k,
             logr_lb=args.logr_lb,
         )
+
+    subtb_coef_matrix = None
+    if args.loss_type == "subtb" and args.subtb_n_chunks == 0:
+        subtb_coef_matrix = cal_subtb_coef_matrix(args.subtb_lambda, args.T).to(device)
 
     train_discretizer = get_discretizer(
         discretizer=args.discretizer, max_ratio=args.discretizer_max_ratio
@@ -246,7 +225,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=2000)
     parser.add_argument("--epochs", type=int, default=25000)
 
-    parser.add_argument("--lr_policy", type=float, default=1e-3)
+    parser.add_argument("--lr_fwd", type=float, default=1e-3)
     parser.add_argument("--lr_Z", type=float, default=1e-1)
     parser.add_argument("--lr_flow", type=float, default=1e-2)
     parser.add_argument("--lr_beta", type=float, default=1e-3)
@@ -276,15 +255,14 @@ if __name__ == "__main__":
     parser.add_argument("--no_share_embeddings", action="store_false", dest="share_embeddings")
     parser.add_argument("--learn_pb", action="store_true", default=False)
     parser.add_argument("--pb_scale_range", type=float, default=0.1)
-    parser.add_argument("--learned_variance", action="store_true", default=False)
+    parser.add_argument("--learn_variance", action="store_true", default=False)
     parser.add_argument("--partial_energy", action="store_true", default=False)
     parser.add_argument("--learn_beta_T", type=int, default=0)
     parser.add_argument("--no_clipping", action="store_false", dest="clipping")
     parser.add_argument("--lgv_clip", type=float, default=1e2)
     parser.add_argument("--gfn_clip", type=float, default=1e4)
     parser.add_argument("--no_zero_init", action="store_false", dest="zero_init")
-    parser.add_argument("--no_pis_architectures", action="store_false", dest="pis_architectures")
-
+    parser.add_argument("--module", type=str, default="pis_mlp", choices=("pis_mlp", "mlp"))
     ################################################################
     ### For discretizer
     parser.add_argument("--T", type=int, default=100)
@@ -397,12 +375,12 @@ if __name__ == "__main__":
         args.seed += int(os.environ["SLURM_PROCID"])
 
     if args.lr_back is None:
-        args.lr_back = args.lr_policy
+        args.lr_back = args.lr_fwd
 
     if args.buffer_size == -1:
         args.buffer_size = 100 * args.batch_size
 
-    if args.pis_architectures:
+    if args.module == "pis_mlp":
         assert args.zero_init
 
     if args.loss_type in ["db", "subtb"]:

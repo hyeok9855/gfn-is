@@ -1,3 +1,4 @@
+import argparse
 import torch
 from .base import BaseEnergy, IntermediateEnergy
 from .funnel import Funnel
@@ -7,7 +8,10 @@ from .manywell import ManyWell
 from .twenty_five_gmm import TwentyFiveGaussianMixture
 
 
-def get_energy(energy_name: str, ndim: int, device: torch.device) -> BaseEnergy:
+def get_energy(args: argparse.Namespace, device: torch.device) -> BaseEnergy:
+    energy_name: str = args.energy_name
+    ndim: int = args.ndim
+
     if energy_name == "25gmm":
         if ndim != 2:
             raise ValueError("25GMM is only supported for 2D")

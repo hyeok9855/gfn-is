@@ -4,89 +4,131 @@ from typing import Callable
 import torch
 from torch import nn
 
-from models.modules.base import BaseModule
+from models.modules.base import BaseModule, ParamGroups
 
 
 class MLPModule(BaseModule):
     def __init__(
         self,
         ndim: int,
+        conditional_flow_model: bool,
         harmonics_dim: int,
         t_emb_dim: int,
         s_emb_dim: int,
         hidden_dim: int,
-        out_dim: int,
+        joint_layers: int = 2,
+        zero_init: bool = False,
+        share_embeddings: bool = False,
         flow_harmonics_dim: int = 64,
         flow_t_emb_dim: int = 64,
         flow_s_emb_dim: int = 64,
         flow_hidden_dim: int = 64,
+        flow_layers: int = 2,
         lp: bool = False,
+        lp_scaling_per_dimension: bool = True,
+        lgv_layers: int = 3,
         clipping: bool = False,
         lgv_clip: float = 1e2,
         gfn_clip: float = 1e4,
-        pb_scale_range: float = 1.0,
-        lv_out_dim: int = 1,
-        lp_scaling_per_dimension: bool = True,
-        conditional_flow_model: bool = False,
-        share_embeddings: bool = False,
         learn_pb: bool = False,
-        lgv_layers: int = 3,
-        joint_layers: int = 2,
-        flow_layers: int = 2,
-        zero_init: bool = False,
+        pb_scale_range: float = 1.0,
+        learn_variance: bool = True,
+        log_var_range: float = 4.0,
         device=torch.device("cuda"),
     ) -> None:
-        super().__init__()
-        self.ndim = ndim
+        super().__init__(ndim, conditional_flow_model)
+
+        self.harmonics_dim = harmonics_dim
+        self.t_emb_dim = t_emb_dim
+        self.s_emb_dim = s_emb_dim
+        self.hidden_dim = hidden_dim
+        self.joint_layers = joint_layers
+        self.zero_init = zero_init
+
+        self.conditional_flow_model = conditional_flow_model
+        self.share_embeddings = share_embeddings
+        self.flow_harmonics_dim = flow_harmonics_dim
+        self.flow_t_emb_dim = flow_t_emb_dim
+        self.flow_s_emb_dim = flow_s_emb_dim
+        self.flow_hidden_dim = flow_hidden_dim
+        self.flow_layers = flow_layers
+
         self.lp = lp
+        self.lp_scaling_per_dimension = lp_scaling_per_dimension
+        self.lgv_layers = lgv_layers
 
         self.clipping = clipping
         self.lgv_clip = lgv_clip
         self.gfn_clip = gfn_clip
 
-        self.lp_scaling_per_dimension = lp_scaling_per_dimension
-
-        self.conditional_flow_model = conditional_flow_model
-        self.share_embeddings = share_embeddings
-
         self.learn_pb = learn_pb
         self.pb_scale_range = pb_scale_range
 
-        self.bwd_t_model = self.bwd_s_model = self.bwd_joint_model = self.lp_scaling_model = None
+        self.learn_variance = learn_variance
+        self.log_var_range = log_var_range
 
-        self.t_model = TimeEncoding(harmonics_dim, t_emb_dim, hidden_dim)
-        self.s_model = StateEncoding(ndim, hidden_dim, s_emb_dim)
+        self.device = device
+
+        self.out_dim = 2 * ndim if learn_variance else ndim
+        self.lgv_out_dim = ndim if lp_scaling_per_dimension else 1
+
+        self.initialize()
+
+    def initialize(self):
+        self.t_model = TimeEncoding(self.harmonics_dim, self.t_emb_dim, self.hidden_dim)
+        self.s_model = StateEncoding(self.ndim, self.hidden_dim, self.s_emb_dim)
         self.joint_model = JointPolicy(
-            s_emb_dim, t_emb_dim, hidden_dim, out_dim, joint_layers, zero_init
+            self.s_emb_dim,
+            self.t_emb_dim,
+            self.hidden_dim,
+            self.out_dim,
+            self.joint_layers,
+            self.zero_init,
         )
-        if learn_pb:
-            self.bwd_t_model = TimeEncoding(harmonics_dim, t_emb_dim, hidden_dim)
-            self.bwd_s_model = StateEncoding(ndim, hidden_dim, s_emb_dim)
+        self.bwd_t_model = self.bwd_s_model = self.bwd_joint_model = None
+        if self.learn_pb:
+            self.bwd_t_model = TimeEncoding(self.harmonics_dim, self.t_emb_dim, self.hidden_dim)
+            self.bwd_s_model = StateEncoding(self.ndim, self.hidden_dim, self.s_emb_dim)
             self.bwd_joint_model = JointPolicy(
-                s_emb_dim, t_emb_dim, hidden_dim, out_dim, joint_layers, zero_init
+                self.s_emb_dim,
+                self.t_emb_dim,
+                self.hidden_dim,
+                self.out_dim,
+                self.joint_layers,
+                self.zero_init,
             )
 
         if self.conditional_flow_model:
             self.t_model_flow = self.s_model_flow = None
             if not self.share_embeddings:
                 self.t_model_flow = TimeEncoding(
-                    flow_harmonics_dim, flow_t_emb_dim, flow_hidden_dim
+                    self.flow_harmonics_dim, self.flow_t_emb_dim, self.flow_hidden_dim
                 )
-                self.s_model_flow = StateEncoding(ndim, flow_hidden_dim, flow_s_emb_dim)
+                self.s_model_flow = StateEncoding(
+                    self.ndim, self.flow_hidden_dim, self.flow_s_emb_dim
+                )
             else:
-                flow_t_emb_dim, flow_s_emb_dim = t_emb_dim, s_emb_dim
-            self.flow_model = FlowModel(flow_s_emb_dim, flow_t_emb_dim, hidden_dim, 1, flow_layers)
+                self.flow_t_emb_dim, self.flow_s_emb_dim = self.t_emb_dim, self.s_emb_dim
+            self.flow_model = FlowModel(
+                self.flow_s_emb_dim, self.flow_t_emb_dim, self.hidden_dim, 1, self.flow_layers
+            )
         else:
-            self.flow_model = torch.nn.Parameter(torch.tensor(0.0).to(device))
+            self.flow_model = torch.nn.Parameter(torch.tensor(0.0).to(self.device))
 
+        self.lp_scaling_model = None
         if self.lp:
             self.lp_scaling_model = LangevinScalingModel(
-                s_emb_dim, t_emb_dim, hidden_dim, lv_out_dim, lgv_layers, zero_init
+                self.s_emb_dim,
+                self.t_emb_dim,
+                self.hidden_dim,
+                self.lgv_out_dim,
+                self.lgv_layers,
+                self.zero_init,
             )
 
     def predict_forward(
         self, s: torch.Tensor, t: torch.Tensor, logr_fn: Callable | None = None
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if self.lp:
             assert logr_fn is not None
             s.requires_grad_(True)
@@ -98,7 +140,7 @@ class MLPModule(BaseModule):
 
         s_emb = self.s_model(s)
         t_emb = self.t_model(t)
-        s_new = self.joint_model(s_emb, t_emb)
+        out = self.joint_model(s_emb, t_emb)
 
         if self.conditional_flow_model:
             if not self.share_embeddings:
@@ -113,16 +155,24 @@ class MLPModule(BaseModule):
             flow = self.flow_model  # A learnable scalar
 
         if self.lp:
-            assert self.lp_scaling_model is not None
-            scale = self.lp_scaling_model(s_emb, t_emb)
-            s_new[..., : self.ndim] += scale * grad_log_r
+            scale = self.get_lp_scaling(s_emb, t_emb, t)
+            out[..., : self.ndim] += scale * grad_log_r
 
         if self.clipping:
-            s_new = torch.clip(s_new, -self.gfn_clip, self.gfn_clip)
-        return s_new, flow.squeeze(-1)
+            out = torch.clip(out, -self.gfn_clip, self.gfn_clip)
 
-    def predict_backward(self, s_next: torch.Tensor, t_next: torch.Tensor) -> torch.Tensor | None:
-        out = None
+        if not self.learn_variance:
+            mean = out
+            logvar = torch.zeros_like(mean)
+        else:
+            mean, logvar = torch.chunk(out, 2, dim=-1)
+            logvar = torch.tanh(logvar) * self.log_var_range
+
+        return mean, logvar, flow.squeeze(-1)
+
+    def predict_backward(
+        self, s_next: torch.Tensor, t_next: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.learn_pb:
             assert (
                 self.bwd_t_model is not None
@@ -134,7 +184,51 @@ class MLPModule(BaseModule):
             out = self.bwd_joint_model(torch.cat([s_emb, t_emb], dim=-1))
             if self.clipping:
                 out = torch.clip(out, -self.gfn_clip, self.gfn_clip)
-        return out
+
+            bwd_mean, bwd_var = torch.chunk(out, 2, dim=-1)
+            mean_correction = 1 + bwd_mean.tanh() * self.pb_scale_range
+            var_correction = 1 + bwd_var.tanh() * self.pb_scale_range
+        else:
+            mean_correction, var_correction = torch.ones_like(s_next), torch.ones_like(s_next)
+        return mean_correction, var_correction
+
+    def get_lp_scaling(
+        self, s_emb: torch.Tensor, t_emb: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor:
+        assert self.lp_scaling_model is not None
+        return self.lp_scaling_model(s_emb, t_emb)
+
+    def get_param_groups(self) -> ParamGroups:
+        # Group parameters by their function
+        forward_params = []
+        forward_params += list(self.t_model.parameters())
+        forward_params += list(self.s_model.parameters())
+        forward_params += list(self.joint_model.parameters())
+        if self.lp_scaling_model is not None:
+            forward_params += list(self.lp_scaling_model.parameters())
+
+        backward_params = []
+        if self.bwd_joint_model is not None:
+            assert self.bwd_t_model is not None and self.bwd_s_model is not None
+            backward_params += list(self.bwd_t_model.parameters())
+            backward_params += list(self.bwd_s_model.parameters())
+            backward_params += list(self.bwd_joint_model.parameters())
+
+        flow_params = []
+        if isinstance(self.flow_model, torch.nn.Module):
+            flow_params += list(self.flow_model.parameters())
+            if self.t_model_flow is not None:
+                flow_params += list(self.t_model_flow.parameters())
+            if self.s_model_flow is not None:
+                flow_params += list(self.s_model_flow.parameters())
+        else:
+            flow_params += [self.flow_model]
+
+        return ParamGroups(
+            forward_params=forward_params,
+            backward_params=backward_params,
+            flow_params=flow_params,
+        )
 
 
 class TimeEncoding(nn.Module):
