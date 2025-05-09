@@ -1,11 +1,15 @@
 import argparse
 import torch
-from .base import BaseEnergy, IntermediateEnergy
+
+from .base import BaseEnergy
 from .funnel import Funnel
 from .gmm40 import GMM40
+from .lennard_jones import LennardJones, LJ13, LJ55
 from .lgcp import LGCP
 from .manywell import ManyWell
 from .twenty_five_gmm import TwentyFiveGaussianMixture
+
+from .intermediate_energy import IntermediateEnergy
 
 
 def get_energy(args: argparse.Namespace, device: torch.device) -> BaseEnergy:
@@ -23,9 +27,11 @@ def get_energy(args: argparse.Namespace, device: torch.device) -> BaseEnergy:
     elif energy_name == "many_well":
         energy = ManyWell(device=device, ndim=ndim)
     elif energy_name == "lgcp":
-        raise NotImplementedError
-        # TODO: ndim?
         energy = LGCP(device=device)
+    elif energy_name == "lj13":
+        energy = LJ13(device=device)
+    elif energy_name == "lj55":
+        energy = LJ55(device=device)
     else:
         raise ValueError(f"Unknown energy: {energy_name}")
     return energy

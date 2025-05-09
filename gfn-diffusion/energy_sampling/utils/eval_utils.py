@@ -336,8 +336,8 @@ def estimate_partition_function(
 
 
 def eval_step(
+    data_size: int,
     batch_size: int,
-    gt_xs: torch.Tensor | None,
     gfn_model: GFN,
     energy: BaseEnergy,
     discretizer: Callable[[int, int], torch.Tensor],
@@ -351,23 +351,52 @@ def eval_step(
 ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
     metrics = {}
 
-    init_state = torch.zeros(batch_size, energy.ndim).to(gfn_model.device)
-    ts = discretizer(batch_size, T).to(gfn_model.device)
-
     with torch.no_grad():
-        model_trajs, log_pfs, log_pbs, log_fs, _ = gfn_model.get_trajectory_fwd(
-            init_state, ts, energy.log_reward, exploration_std=0.0, pis=pis
-        )
-        sample_xs = model_trajs[:, -1]
-        log_rewards = energy.log_reward(sample_xs)
+        divisible = data_size % batch_size == 0
+        n_epochs = data_size // batch_size + (1 if not divisible else 0)
 
-        if gt_xs is not None:
-            gt_log_rewards = energy.log_reward(gt_xs)
-            _, gt_log_pfs, gt_log_pbs, _ = gfn_model.get_trajectory_bwd(
-                gt_xs, ts, gt_log_rewards, energy.log_reward
+        model_trajs, log_pfs, log_pbs, log_fs, log_rewards = [], [], [], [], []
+
+        for i in range(n_epochs):
+            if i == n_epochs - 1 and not divisible:
+                bsz = data_size - batch_size * (n_epochs - 1)
+            else:
+                bsz = batch_size
+
+            init_state = torch.zeros(bsz, energy.ndim).to(gfn_model.device)
+            ts = discretizer(bsz, T).to(gfn_model.device)
+            _model_trajs, _log_pfs, _log_pbs, _log_fs, _ = gfn_model.get_trajectory_fwd(
+                init_state, ts, exploration_std=0.0, pis=pis
             )
-        else:
-            gt_log_pfs = gt_log_pbs = gt_log_rewards = None
+            _log_rewards = energy.log_reward(_model_trajs[:, -1])
+            model_trajs.append(_model_trajs)
+            log_pfs.append(_log_pfs)
+            log_pbs.append(_log_pbs)
+            log_fs.append(_log_fs)
+            log_rewards.append(_log_rewards)
+        model_trajs = torch.cat(model_trajs, dim=0)
+        sample_xs = model_trajs[:, -1]
+        log_pfs = torch.cat(log_pfs, dim=0)
+        log_pbs = torch.cat(log_pbs, dim=0)
+        log_fs = torch.cat(log_fs, dim=0)
+        log_rewards = torch.cat(log_rewards, dim=0)
+
+        try:
+            gt_xs, gt_log_rewards = energy.cached_sample(data_size)
+            gt_log_pfs, gt_log_pbs = [], []
+            for i in range(n_epochs):
+                gt_xs_batch = gt_xs[i * batch_size : (i + 1) * batch_size]
+                ts = discretizer(gt_xs_batch.shape[0], T).to(gfn_model.device)
+                gt_log_rewards_batch = gt_log_rewards[i * batch_size : (i + 1) * batch_size]
+                _, _log_pfs, _log_pbs, _ = gfn_model.get_trajectory_bwd(
+                    gt_xs_batch, ts, gt_log_rewards_batch
+                )
+                gt_log_pfs.append(_log_pfs)
+                gt_log_pbs.append(_log_pbs)
+            gt_log_pfs = torch.cat(gt_log_pfs, dim=0)
+            gt_log_pbs = torch.cat(gt_log_pbs, dim=0)
+        except NotImplementedError:
+            gt_xs = gt_log_rewards = gt_log_pfs = gt_log_pbs = None
 
     try:
         gt_log_Z = energy.gt_logz()
@@ -433,7 +462,7 @@ def eval_step(
     buffer_xs = None
     if buffer is not None and len(buffer) > 0:
         assert gt_xs is not None
-        buffer_xs, _ = buffer.sample_terminal(batch_size)
+        buffer_xs, _ = buffer.sample_terminal(data_size)
         metrics_b = {}
         metrics_b.update(compute_distribution_distances(buffer_xs.unsqueeze(1), gt_xs.unsqueeze(1)))
         metrics_b = {

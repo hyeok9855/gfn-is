@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Callable, Iterator
+from typing import Callable
 
 import torch
 from torch import nn
@@ -14,10 +14,13 @@ class ParamGroups:
 
 
 class BaseModule(nn.Module, ABC):
-    def __init__(self, ndim: int, conditional_flow_model: bool) -> None:
+    def __init__(self, conditional_flow_model: bool) -> None:
         super().__init__()
-        self.ndim = ndim
         self.conditional_flow_model = conditional_flow_model
+
+    @abstractmethod
+    def get_param_groups(self) -> ParamGroups:
+        raise NotImplementedError
 
     @abstractmethod
     def predict_forward(
@@ -25,12 +28,7 @@ class BaseModule(nn.Module, ABC):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:  # mean, logvar, flow
         raise NotImplementedError
 
-    @abstractmethod
     def predict_backward(
         self, s_next: torch.Tensor, t_next: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:  # bwd_mean_correction, bwd_var_correction
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_param_groups(self) -> ParamGroups:
-        raise NotImplementedError
+        return torch.ones_like(s_next), torch.ones_like(s_next)

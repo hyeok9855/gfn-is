@@ -1,12 +1,12 @@
 import math
-from typing import Callable
 
 import numpy as np
 import torch
 import torch.nn as nn
 
+from energies import BaseEnergy, LennardJones
 from models.modules import BaseModule
-
+from utils.particle_system import remove_mean
 
 logtwopi = math.log(2 * math.pi)
 
@@ -14,18 +14,20 @@ logtwopi = math.log(2 * math.pi)
 class GFN(nn.Module):
     def __init__(
         self,
+        energy: BaseEnergy,
         module: BaseModule,
-        ndim: int,
         t_scale: float = 1.0,
         partial_energy: bool = False,
         learn_beta_T: int = 0,
+        state_reduce_mean: bool = False,
         device=torch.device("cuda"),
     ) -> None:
         super().__init__()
-        self.module = module
-        self.ndim = ndim
+        self.energy = energy
+        self.pred_module = module
         self.t_scale = t_scale
         self.partial_energy = partial_energy
+        self.state_reduce_mean = state_reduce_mean
         self.device = device
 
         self.beta_model = None
@@ -86,6 +88,10 @@ class GFN(nn.Module):
                 * torch.randn_like(s, device=self.device)
             )
 
+            if self.state_reduce_mean:
+                assert isinstance(self.energy, LennardJones)
+                s_next = remove_mean(s_next, self.energy.n_particles, self.energy.spatial_dim)
+
         noise = ((s_next - s) - dts * pf_mean) / (dts.sqrt() * (pf_logvar / 2).exp())
         log_pfs = -0.5 * (noise**2 + logtwopi + dts.log() + pf_logvar).sum(1)
 
@@ -113,7 +119,7 @@ class GFN(nn.Module):
 
         dts = (t_next - t).unsqueeze(1)
 
-        mean_correction, var_correction = self.module.predict_backward(s_next, t_next)
+        mean_correction, var_correction = self.pred_module.predict_backward(s_next, t_next)
         back_mean = s_next - s_next * dts / (t_next).unsqueeze(1) * mean_correction
         back_var = self.t_scale * dts * (t / t_next).unsqueeze(1) * var_correction
 
@@ -122,6 +128,10 @@ class GFN(nn.Module):
             s[t != 0] = back_mean.detach()[t != 0] + back_var.sqrt().detach()[
                 t != 0
             ] * torch.randn_like(s_next[t != 0])
+
+            if self.state_reduce_mean:
+                assert isinstance(self.energy, LennardJones)
+                s = remove_mean(s, self.energy.n_particles, self.energy.spatial_dim)
 
         noise_backward = (s - back_mean) / back_var.sqrt()
         log_pbs = torch.zeros_like(back_mean[:, 0])
@@ -134,7 +144,6 @@ class GFN(nn.Module):
         self,
         states: torch.Tensor,  # (bsz, T', ndim)
         ts: torch.Tensor,  # (bsz, T')
-        logr_fn: Callable[[torch.Tensor], torch.Tensor],
     ) -> torch.Tensor:
         assert self.partial_energy
         bsz = states.shape[0]
@@ -149,8 +158,8 @@ class GFN(nn.Module):
         ref_log_var = (self.t_scale * ts).log().unsqueeze(2)  # (bsz, T', 1)
         log_p_ref = -0.5 * (logtwopi + ref_log_var + (-ref_log_var).exp() * (states**2)).sum(-1)
         # (bsz, T')
-        partial_energy = (1 - betas) * log_p_ref + betas * logr_fn(
-            states.reshape(-1, self.ndim)
+        partial_energy = (1 - betas) * log_p_ref + betas * self.energy.log_reward(
+            states.reshape(-1, self.energy.ndim)
         ).view(bsz, -1)
         return partial_energy  # (bsz, T')
 
@@ -158,7 +167,6 @@ class GFN(nn.Module):
         self,
         s: torch.Tensor,
         ts: torch.Tensor,
-        logr_fn: Callable[[torch.Tensor], torch.Tensor],
         exploration_std=0.0,
         pis=False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -169,13 +177,15 @@ class GFN(nn.Module):
         log_pbs = torch.zeros((bsz, T), device=self.device)
         log_fs = torch.zeros((bsz, T + 1), device=self.device)
         log_pfs_exp = torch.zeros((bsz, T), device=self.device)
-        states = torch.zeros((bsz, T + 1, self.ndim), device=self.device)
+        states = torch.zeros((bsz, T + 1, self.energy.ndim), device=self.device)
         states[:, 0] = s
 
         for i in range(T):
-            pf_mean, pf_logvar, flow = self.module.predict_forward(s, ts[:, i], logr_fn)
+            pf_mean, pf_logvar, flow = self.pred_module.predict_forward(
+                s, ts[:, i], self.energy.log_reward
+            )
 
-            if self.module.conditional_flow_model or i == 0:
+            if self.pred_module.conditional_flow_model or i == 0:
                 log_fs[:, i] = flow
 
             s_, log_pfs[:, i], log_pfs_exp[:, i] = self.forward_step(
@@ -189,10 +199,10 @@ class GFN(nn.Module):
 
         # Assign the terminal reward
         with torch.no_grad():
-            log_fs[:, -1] = logr_fn(states[:, -1])
+            log_fs[:, -1] = self.energy.log_reward(states[:, -1])
 
         if self.partial_energy:
-            log_fs[:, 1:-1] += self.get_partial_energy(states[:, 1:-1], ts[:, 1:-1], logr_fn)
+            log_fs[:, 1:-1] += self.get_partial_energy(states[:, 1:-1], ts[:, 1:-1])
 
         log_pfs_exp = log_pfs_exp if exploration_std > 0.0 else log_pfs
 
@@ -203,7 +213,6 @@ class GFN(nn.Module):
         s: torch.Tensor,
         ts: torch.Tensor,  # (bsz, T)
         log_r: torch.Tensor,  # (bsz,)
-        logr_fn: Callable[[torch.Tensor], torch.Tensor],
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         bsz = s.shape[0]
         T = ts.shape[1] - 1
@@ -211,7 +220,7 @@ class GFN(nn.Module):
         log_pfs = torch.zeros((bsz, T), device=self.device)
         log_pbs = torch.zeros((bsz, T), device=self.device)
         log_fs = torch.zeros((bsz, T + 1), device=self.device)
-        states = torch.zeros((bsz, T + 1, self.ndim), device=self.device)
+        states = torch.zeros((bsz, T + 1, self.energy.ndim), device=self.device)
         states[:, -1] = s
 
         for i in range(T):
@@ -222,9 +231,11 @@ class GFN(nn.Module):
             else:
                 s_ = torch.zeros_like(s)
 
-            pf_mean, pf_logvar, flow = self.module.predict_forward(s_, ts[:, T - i - 1], logr_fn)
+            pf_mean, pf_logvar, flow = self.pred_module.predict_forward(
+                s_, ts[:, T - i - 1], self.energy.log_reward
+            )
 
-            if self.module.conditional_flow_model or i == T - 1:
+            if self.pred_module.conditional_flow_model or i == T - 1:
                 log_fs[:, T - i - 1] = flow
 
             _, log_pfs[:, T - i - 1], _ = self.forward_step(
@@ -237,7 +248,7 @@ class GFN(nn.Module):
         log_fs[:, -1] = log_r
 
         if self.partial_energy:
-            log_fs[:, 1:-1] += self.get_partial_energy(states[:, 1:-1], ts[:, 1:-1], logr_fn)
+            log_fs[:, 1:-1] += self.get_partial_energy(states[:, 1:-1], ts[:, 1:-1])
 
         return states, log_pfs, log_pbs, log_fs
 
@@ -246,7 +257,6 @@ class GFN(nn.Module):
         s: torch.Tensor,  # (bsz, ndim)
         ts: torch.Tensor,  # (bsz, T+1)
         curr_t: torch.Tensor,  # (bsz)
-        logr_fn: Callable[[torch.Tensor], torch.Tensor],
         exploration_std: float = 0.0,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         # Construct complete trajectories both ways
@@ -266,13 +276,13 @@ class GFN(nn.Module):
         log_pbs = torch.zeros((bsz, T), device=self.device)
         log_fs = torch.zeros((bsz, T + 1), device=self.device)
         log_pfs_exp = torch.zeros((bsz, T), device=self.device)
-        states = torch.zeros((bsz, T + 1, self.ndim), device=self.device)
+        states = torch.zeros((bsz, T + 1, self.energy.ndim), device=self.device)
         states[arange, t_idx_intermediate] = s
 
         if (is_intermediate := t_idx_intermediate != T).any():
             # For non-terminal states, we should predict the flow at the current timestep
-            _, _, flow = self.module.predict_forward(
-                s[is_intermediate], curr_t[is_intermediate], logr_fn
+            _, _, flow = self.pred_module.predict_forward(
+                s[is_intermediate], curr_t[is_intermediate], self.energy.log_reward
             )
             log_fs[is_intermediate, t_idx_intermediate[is_intermediate]] = flow
             # The terminal states rewards will be assigned later
@@ -306,8 +316,8 @@ class GFN(nn.Module):
                 log_pbs[is_backward, t1_idx_bwd] = log_pb_bwd
 
             # Forward pass with the one-step forward state of t1
-            pf_mean, pf_logvars, flow = self.module.predict_forward(
-                states[arange, t1_idx], t1, logr_fn
+            pf_mean, pf_logvars, flow = self.pred_module.predict_forward(
+                states[arange, t1_idx], t1, self.energy.log_reward
             )
             log_fs[arange, t1_idx] = flow
 
@@ -357,15 +367,15 @@ class GFN(nn.Module):
 
         # Assign the terminal reward
         with torch.no_grad():
-            log_fs[:, -1] = logr_fn(states[:, -1])
+            log_fs[:, -1] = self.energy.log_reward(states[:, -1])
 
         if self.partial_energy:
-            log_fs[:, 1:-1] += self.get_partial_energy(states[:, 1:-1], ts[:, 1:-1], logr_fn)
+            log_fs[:, 1:-1] += self.get_partial_energy(states[:, 1:-1], ts[:, 1:-1])
 
         return states, log_pfs, log_pbs, log_fs, log_pfs_exp
 
     # Not used for now
-    def forward(self, s, exploration_std=0.0, logr_fn: Callable | None = None):
+    def forward(self, s, exploration_std=0.0):
         raise NotImplementedError
 
     # def get_subtrajectory_bwd(

@@ -1,5 +1,5 @@
 import math
-from typing import Callable
+from typing import Callable, cast
 
 import torch
 from torch import nn
@@ -11,13 +11,13 @@ class MLPModule(BaseModule):
     def __init__(
         self,
         ndim: int,
-        conditional_flow_model: bool,
         harmonics_dim: int,
         t_emb_dim: int,
         s_emb_dim: int,
         hidden_dim: int,
         joint_layers: int = 2,
         zero_init: bool = False,
+        conditional_flow_model: bool = False,
         share_embeddings: bool = False,
         flow_harmonics_dim: int = 64,
         flow_t_emb_dim: int = 64,
@@ -34,10 +34,10 @@ class MLPModule(BaseModule):
         pb_scale_range: float = 1.0,
         learn_variance: bool = True,
         log_var_range: float = 4.0,
-        device=torch.device("cuda"),
     ) -> None:
-        super().__init__(ndim, conditional_flow_model)
+        super().__init__(conditional_flow_model)
 
+        self.ndim = ndim
         self.harmonics_dim = harmonics_dim
         self.t_emb_dim = t_emb_dim
         self.s_emb_dim = s_emb_dim
@@ -66,8 +66,6 @@ class MLPModule(BaseModule):
 
         self.learn_variance = learn_variance
         self.log_var_range = log_var_range
-
-        self.device = device
 
         self.out_dim = 2 * ndim if learn_variance else ndim
         self.lgv_out_dim = ndim if lp_scaling_per_dimension else 1
@@ -113,7 +111,7 @@ class MLPModule(BaseModule):
                 self.flow_s_emb_dim, self.flow_t_emb_dim, self.hidden_dim, 1, self.flow_layers
             )
         else:
-            self.flow_model = torch.nn.Parameter(torch.tensor(0.0).to(self.device))
+            self.flow_model = torch.nn.Parameter(torch.tensor(0.0))
 
         self.lp_scaling_model = None
         if self.lp:
@@ -125,78 +123,6 @@ class MLPModule(BaseModule):
                 self.lgv_layers,
                 self.zero_init,
             )
-
-    def predict_forward(
-        self, s: torch.Tensor, t: torch.Tensor, logr_fn: Callable | None = None
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        if self.lp:
-            assert logr_fn is not None
-            s.requires_grad_(True)
-            with torch.enable_grad():
-                grad_log_r = torch.autograd.grad(logr_fn(s).sum(), s)[0].detach()
-                grad_log_r = torch.nan_to_num(grad_log_r)
-                if self.clipping:
-                    grad_log_r = torch.clip(grad_log_r, -self.lgv_clip, self.lgv_clip)
-
-        s_emb = self.s_model(s)
-        t_emb = self.t_model(t)
-        out = self.joint_model(s_emb, t_emb)
-
-        if self.conditional_flow_model:
-            if not self.share_embeddings:
-                assert self.s_model_flow is not None and self.t_model_flow is not None
-                s_emb_flow = self.s_model_flow(s)
-                t_emb_flow = self.t_model_flow(t)
-            else:
-                s_emb_flow = s_emb
-                t_emb_flow = t_emb
-            flow = self.flow_model(s_emb_flow, t_emb_flow).squeeze(-1)
-        else:
-            flow = self.flow_model  # A learnable scalar
-
-        if self.lp:
-            scale = self.get_lp_scaling(s_emb, t_emb, t)
-            out[..., : self.ndim] += scale * grad_log_r
-
-        if self.clipping:
-            out = torch.clip(out, -self.gfn_clip, self.gfn_clip)
-
-        if not self.learn_variance:
-            mean = out
-            logvar = torch.zeros_like(mean)
-        else:
-            mean, logvar = torch.chunk(out, 2, dim=-1)
-            logvar = torch.tanh(logvar) * self.log_var_range
-
-        return mean, logvar, flow.squeeze(-1)
-
-    def predict_backward(
-        self, s_next: torch.Tensor, t_next: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if self.learn_pb:
-            assert (
-                self.bwd_t_model is not None
-                and self.bwd_s_model is not None
-                and self.bwd_joint_model is not None
-            )
-            t_emb = self.bwd_t_model(t_next)
-            s_emb = self.bwd_s_model(s_next)
-            out = self.bwd_joint_model(torch.cat([s_emb, t_emb], dim=-1))
-            if self.clipping:
-                out = torch.clip(out, -self.gfn_clip, self.gfn_clip)
-
-            bwd_mean, bwd_var = torch.chunk(out, 2, dim=-1)
-            mean_correction = 1 + bwd_mean.tanh() * self.pb_scale_range
-            var_correction = 1 + bwd_var.tanh() * self.pb_scale_range
-        else:
-            mean_correction, var_correction = torch.ones_like(s_next), torch.ones_like(s_next)
-        return mean_correction, var_correction
-
-    def get_lp_scaling(
-        self, s_emb: torch.Tensor, t_emb: torch.Tensor, t: torch.Tensor
-    ) -> torch.Tensor:
-        assert self.lp_scaling_model is not None
-        return self.lp_scaling_model(s_emb, t_emb)
 
     def get_param_groups(self) -> ParamGroups:
         # Group parameters by their function
@@ -229,6 +155,79 @@ class MLPModule(BaseModule):
             backward_params=backward_params,
             flow_params=flow_params,
         )
+
+    def predict_forward(
+        self, s: torch.Tensor, t: torch.Tensor, logr_fn: Callable | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.lp:
+            assert logr_fn is not None
+            s.requires_grad_(True)
+            with torch.enable_grad():
+                grad_log_r = torch.autograd.grad(logr_fn(s).sum(), s)[0].detach()
+                grad_log_r = torch.nan_to_num(grad_log_r)
+                if self.clipping:
+                    grad_log_r = torch.clip(grad_log_r, -self.lgv_clip, self.lgv_clip)
+
+        s_emb = self.s_model(s)
+        t_emb = self.t_model(t)
+        out = self.joint_model(s_emb, t_emb)
+
+        if self.conditional_flow_model:
+            if not self.share_embeddings:
+                assert self.s_model_flow is not None and self.t_model_flow is not None
+                s_emb_flow = self.s_model_flow(s)
+                t_emb_flow = self.t_model_flow(t)
+            else:
+                s_emb_flow = s_emb
+                t_emb_flow = t_emb
+            assert isinstance(self.flow_model, nn.Module)
+            flow = self.flow_model(s_emb_flow, t_emb_flow).squeeze(-1)
+        else:
+            flow = self.flow_model  # A learnable scalar
+
+        if self.lp:
+            scale = self.get_lp_scaling(s_emb, t_emb, t)
+            out[..., : self.ndim] += scale * grad_log_r
+
+        if self.clipping:
+            out = torch.clip(out, -self.gfn_clip, self.gfn_clip)
+
+        if not self.learn_variance:
+            mean = out
+            logvar = torch.zeros_like(mean)
+        else:
+            mean, logvar = torch.chunk(out, 2, dim=-1)
+            logvar = torch.tanh(logvar) * self.log_var_range
+
+        return mean, logvar, cast(torch.Tensor, flow)
+
+    def predict_backward(
+        self, s_next: torch.Tensor, t_next: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.learn_pb:
+            assert (
+                self.bwd_t_model is not None
+                and self.bwd_s_model is not None
+                and self.bwd_joint_model is not None
+            )
+            t_emb = self.bwd_t_model(t_next)
+            s_emb = self.bwd_s_model(s_next)
+            out = self.bwd_joint_model(torch.cat([s_emb, t_emb], dim=-1))
+            if self.clipping:
+                out = torch.clip(out, -self.gfn_clip, self.gfn_clip)
+
+            bwd_mean, bwd_var = torch.chunk(out, 2, dim=-1)
+            mean_correction = 1 + bwd_mean.tanh() * self.pb_scale_range
+            var_correction = 1 + bwd_var.tanh() * self.pb_scale_range
+        else:
+            mean_correction, var_correction = torch.ones_like(s_next), torch.ones_like(s_next)
+        return mean_correction, var_correction
+
+    def get_lp_scaling(
+        self, s_emb: torch.Tensor, t_emb: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor:
+        assert self.lp_scaling_model is not None
+        return self.lp_scaling_model(s_emb, t_emb)
 
 
 class TimeEncoding(nn.Module):

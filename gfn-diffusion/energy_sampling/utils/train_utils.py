@@ -24,7 +24,7 @@ def get_gfn_optimizer(
     gamma: float = 1.0,
 ):
 
-    module_param_groups = gfn_model.module.get_param_groups()
+    module_param_groups = gfn_model.pred_module.get_param_groups()
 
     param_groups = []
     param_groups.append({"params": module_param_groups.forward_params, "lr": lr_fwd})
@@ -56,6 +56,7 @@ def train_step(
     loss_type: str,
     training_mode: str,
     bwd_from: str,
+    bwd_to_fwd_ratio: int,
     discretizer: Callable[[int, int], torch.Tensor],
     T: int,
     subtb_coef_matrix: torch.Tensor | None = None,
@@ -127,10 +128,12 @@ def train_step(
         assert (
             bwd_from == "buffer" and buffer is not None
         )  # FIXME: do we need to support bwd from energy?
-        if it % 2 == 0 or it < prefill:
+        if it % (bwd_to_fwd_ratio + 1) == 0 or it < prefill:
             loss = run_forward(
-                resampling=resampling & ((it % 4 == 2) if alternating else True),
-                weighting=weighting & ((it % 4 == 2) if alternating else True),
+                resampling=resampling
+                & ((it % (2 * (bwd_to_fwd_ratio + 1)) == 0) if alternating else True),
+                weighting=weighting
+                & ((it % (2 * (bwd_to_fwd_ratio + 1)) == 0) if alternating else True),
             )
         else:
             loss = run_backward()
@@ -175,7 +178,7 @@ def fwd_train_step(
 
     # Forward sampling
     states, log_pfs, log_pbs, log_fs, log_pfs_exp = gfn_model.get_trajectory_fwd(
-        init_states, ts, energy.log_reward, exploration_std=exploration_std
+        init_states, ts, exploration_std=exploration_std
     )
 
     # Compute losses
@@ -286,9 +289,7 @@ def bwd_train_step(
 
             # Construct complete trajectories
             ts = discretizer(batch_size, T).to(device)
-            _, log_pfs, log_pbs, log_fs = gfn_model.get_trajectory_bwd(
-                buf_xs, ts, buf_log_rs, energy.log_reward
-            )
+            _, log_pfs, log_pbs, log_fs = gfn_model.get_trajectory_bwd(buf_xs, ts, buf_log_rs)
 
         elif isinstance(buffer, IntermediateStateBuffer):
             # # Option 1: Construct transitions / subtrajectories (chunks)
@@ -316,7 +317,7 @@ def bwd_train_step(
                 assert discretizer.func.__name__ == "uniform_discretizer"
             ts = discretizer(batch_size, T).to(device)
             _, log_pfs, log_pbs, log_fs, _ = gfn_model.get_trajectory_fwd_and_bwd(
-                buf_states, ts, buf_ts, energy.log_reward, exploration_std=0.0
+                buf_states, ts, buf_ts, exploration_std=0.0
             )
 
         else:

@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import math
 import random
@@ -52,7 +53,7 @@ def get_exploration_std(
     return exploration_std
 
 
-def get_name(args):
+def get_name(args: argparse.Namespace) -> str:
     name = ""
 
     name += args.loss_type_str

@@ -8,12 +8,12 @@ from tqdm import trange
 
 from buffers import TerminalStateBuffer, IntermediateStateBuffer
 from discretizers import get_discretizer
-from energies import get_energy, IntermediateEnergy
+from energies import IntermediateEnergy, get_energy
 from losses import cal_subtb_coef_matrix
 from models import GFN
 from models.modules import get_module
 from utils.eval_utils import eval_step
-from utils.misc_utils import get_name, set_seed
+from utils.misc_utils import set_seed, get_name
 from utils.plot_utils import plot_step
 from utils.train_utils import get_gfn_optimizer, train_step
 
@@ -30,6 +30,11 @@ def train(args):
     energy_name = f"{args.energy_name}-{energy.ndim}d"
     exp_name = get_name(args)
 
+    try:
+        energy.cached_sample(args.eval_data_size)
+    except NotImplementedError:
+        pass
+
     # parent_dir = os.path.dirname(os.path.abspath(__file__))
     # save_dir = f"{parent_dir}/results/{energy_name}/{exp_name}"
     # os.makedirs(save_dir, exist_ok=True)
@@ -44,22 +49,23 @@ def train(args):
         mode="disabled" if args.disable_wandb else "online",
     )
 
-    module = get_module(args, device)
+    module = get_module(args, energy)
 
     gfn_model = GFN(
+        energy=energy,
         module=module,
-        ndim=energy.ndim,
         t_scale=args.t_scale,
         partial_energy=args.partial_energy,
         learn_beta_T=args.learn_beta_T,
+        state_reduce_mean=args.state_reduce_mean,
         device=device,
     ).to(device)
 
     gfn_optimizer, gfn_scheduler = get_gfn_optimizer(
         gfn_model,
         lr_fwd=args.lr_fwd,
-        lr_bwd=args.lr_back,
-        lr_flow=args.lr_Z if args.loss_type == "tb" else args.lr_flow,
+        lr_bwd=args.lr_bwd,
+        lr_flow=args.lr_flow,
         lr_beta=args.lr_beta,
         use_weight_decay=args.use_weight_decay,
         weight_decay=args.weight_decay,
@@ -93,7 +99,7 @@ def train(args):
 
     eval_step_partial = partial(
         eval_step,
-        gt_xs=gt_xs,
+        batch_size=args.batch_size,
         gfn_model=gfn_model,
         energy=energy,
         discretizer=eval_discretizer,
@@ -117,7 +123,7 @@ def train(args):
         ### Eval ###
         if i % args.eval_freq == 0:
             results, model_trajs, weights, sample_xs_r, buffer_xs = eval_step_partial(
-                args.eval_data_size
+                data_size=args.eval_data_size,
             )
             metrics.update(results)
             if i % args.plot_freq == 0:
@@ -166,6 +172,7 @@ def train(args):
             loss_type=args.loss_type,
             training_mode=args.training_mode,
             bwd_from=args.bwd_from,
+            bwd_to_fwd_ratio=args.bwd_to_fwd_ratio,
             discretizer=train_discretizer,
             T=args.T,
             subtb_coef_matrix=subtb_coef_matrix,
@@ -189,8 +196,14 @@ def train(args):
         wandb.log(metrics, step=i)
 
     ### Final eval ###
+    try:
+        energy.cached_sample(args.final_eval_data_size)
+    except NotImplementedError:
+        pass
+
     final_results, model_trajs, weights, sample_xs_r, buffer_xs = eval_step_partial(
-        args.final_eval_data_size, final_eval=True
+        data_size=args.final_eval_data_size,
+        final_eval=True,
     )
     metrics.update(final_results)
     metrics.update(plot_step_partial(samples=model_trajs[:, -1]))
@@ -204,7 +217,7 @@ if __name__ == "__main__":
         "--energy_name",
         type=str,
         default="gmm40",
-        choices=("25gmm", "gmm40", "funnel", "many_well", "lgcp"),
+        choices=("25gmm", "gmm40", "funnel", "many_well", "lgcp", "lj13", "lj55"),
     )
     parser.add_argument("--ndim", type=int, default=2)
     parser.add_argument("--exp_name", type=str, default="")
@@ -219,50 +232,69 @@ if __name__ == "__main__":
     )
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
     parser.add_argument("--subtb_n_chunks", type=int, default=0)
-    parser.add_argument("--training_mode", type=str, default="both", choices=("fwd", "bwd", "both"))
-    parser.add_argument("--bwd_from", type=str, default="buffer", choices=("energy", "buffer"))
-    parser.add_argument("--clip_grad_norm", type=float, default=3.0)
-    parser.add_argument("--batch_size", type=int, default=2000)
-    parser.add_argument("--epochs", type=int, default=25000)
 
     parser.add_argument("--lr_fwd", type=float, default=1e-3)
+    parser.add_argument("--lr_bwd", type=float, default=None)
     parser.add_argument("--lr_Z", type=float, default=1e-1)
     parser.add_argument("--lr_flow", type=float, default=1e-2)
     parser.add_argument("--lr_beta", type=float, default=1e-3)
-    parser.add_argument("--lr_back", type=float, default=None)
     parser.add_argument("--use_weight_decay", action="store_true", default=False)
     parser.add_argument("--weight_decay", type=float, default=1e-7)
     parser.add_argument("--use_scheduler", action="store_true", default=False)
     parser.add_argument("--milestones", type=float, nargs="+", default=[0.5, 0.9])
     parser.add_argument("--gamma", type=float, default=(10) ** (-1 / 2))
 
+    parser.add_argument("--training_mode", type=str, default="both", choices=("fwd", "bwd", "both"))
+    parser.add_argument("--bwd_from", type=str, default="buffer", choices=("energy", "buffer"))
+    parser.add_argument("--bwd_to_fwd_ratio", type=int, default=1)
+    parser.add_argument("--clip_grad_norm", type=float, default=3.0)
+    parser.add_argument("--batch_size", type=int, default=2000)
+    parser.add_argument("--epochs", type=int, default=25000)
+
+    parser.add_argument("--module", type=str, default="pis_mlp", choices=("pis_mlp", "mlp", "egnn"))
+    ################################################################
+    ### MLP parameters
     parser.add_argument("--hidden_dim", type=int, default=256)
     # parser.add_argument("--s_emb_dim", type=int, default=256)
     # parser.add_argument("--t_emb_dim", type=int, default=256)
     # parser.add_argument("--harmonics_dim", type=int, default=256)
+    parser.add_argument("--joint_layers", type=int, default=2)
+    parser.add_argument("--no_zero_init", action="store_false", dest="zero_init")
+    parser.add_argument("--no_share_embeddings", action="store_false", dest="share_embeddings")
     parser.add_argument("--flow_hidden_dim", type=int, default=256)
     # parser.add_argument("--flow_s_emb_dim", type=int, default=256)
     # parser.add_argument("--flow_t_emb_dim", type=int, default=256)
     # parser.add_argument("--flow_harmonics_dim", type=int, default=256)
-    parser.add_argument("--lgv_layers", type=int, default=3)
-    parser.add_argument("--joint_layers", type=int, default=2)
     parser.add_argument("--flow_layers", type=int, default=2)
-    parser.add_argument("--t_scale", type=float, default=1.0)
-    parser.add_argument("--log_var_range", type=float, default=4.0)
     parser.add_argument("--lp", action="store_true", default=False)
     parser.add_argument("--lp_scaling_per_dimension", action="store_true", default=False)
-    parser.add_argument("--conditional_flow_model", action="store_true", default=False)
-    parser.add_argument("--no_share_embeddings", action="store_false", dest="share_embeddings")
+    parser.add_argument("--lgv_layers", type=int, default=3)
+    parser.add_argument("--no_clipping", action="store_false", dest="clipping")
+    parser.add_argument("--gfn_clip", type=float, default=1e4)
+    parser.add_argument("--lgv_clip", type=float, default=1e2)
     parser.add_argument("--learn_pb", action="store_true", default=False)
     parser.add_argument("--pb_scale_range", type=float, default=0.1)
     parser.add_argument("--learn_variance", action="store_true", default=False)
+    parser.add_argument("--log_var_range", type=float, default=4.0)
+
+    parser.add_argument("--t_scale", type=float, default=1.0)
     parser.add_argument("--partial_energy", action="store_true", default=False)
     parser.add_argument("--learn_beta_T", type=int, default=0)
-    parser.add_argument("--no_clipping", action="store_false", dest="clipping")
-    parser.add_argument("--lgv_clip", type=float, default=1e2)
-    parser.add_argument("--gfn_clip", type=float, default=1e4)
-    parser.add_argument("--no_zero_init", action="store_false", dest="zero_init")
-    parser.add_argument("--module", type=str, default="pis_mlp", choices=("pis_mlp", "mlp"))
+    ################################################################
+
+    ################################################################
+    ### For EGNN
+    parser.add_argument("--egnn_hidden_nf", type=int, default=128)
+    parser.add_argument("--egnn_n_layers", type=int, default=5)
+    parser.add_argument("--egnn_no_recurrent", action="store_false", dest="egnn_recurrent")
+    parser.add_argument("--egnn_no_attention", action="store_false", dest="egnn_attention")
+    parser.add_argument(
+        "--egnn_no_condition_time", action="store_false", dest="egnn_condition_time"
+    )
+    parser.add_argument("--egnn_no_tanh", action="store_false", dest="egnn_tanh")
+    parser.add_argument("--egnn_agg", type=str, default="sum")
+    ################################################################
+
     ################################################################
     ### For discretizer
     parser.add_argument("--T", type=int, default=100)
@@ -356,6 +388,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    args.state_reduce_mean = True if args.energy_name in ["lj13", "lj55"] else False
+
     args.loss_type_str = args.loss_type
     if args.loss_type in ["db", "subtb"]:
         if args.partial_energy:
@@ -374,17 +408,17 @@ if __name__ == "__main__":
     if "SLURM_PROCID" in os.environ:
         args.seed += int(os.environ["SLURM_PROCID"])
 
-    if args.lr_back is None:
-        args.lr_back = args.lr_fwd
+    if args.lr_bwd is None:
+        args.lr_bwd = args.lr_fwd
 
     if args.buffer_size == -1:
         args.buffer_size = 100 * args.batch_size
 
-    if args.module == "pis_mlp":
-        assert args.zero_init
-
     if args.loss_type in ["db", "subtb"]:
         args.conditional_flow_model = True
+    else:
+        args.conditional_flow_model = False
+        args.lr_flow = args.lr_Z  # For TB
 
     assert args.plot_freq % args.eval_freq == 0
 

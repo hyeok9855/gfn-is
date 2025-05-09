@@ -1,4 +1,5 @@
 import itertools
+import warnings
 from typing import Callable
 
 import matplotlib.pyplot as plt
@@ -14,8 +15,10 @@ from energies import (
     GMM40,
     IntermediateEnergy,
     ManyWell,
+    LennardJones,
     TwentyFiveGaussianMixture,
 )
+from utils.particle_system import interatomic_distance
 
 
 def get_figure(bounds=(-10.0, 10.0)):
@@ -248,25 +251,92 @@ def viz_gmm(
     return out_dict
 
 
+def viz_lennard_jones(energy: LennardJones, xs: torch.Tensor) -> dict:
+    xs_logr = energy.log_reward(xs)
+    gt_xs, gt_xs_logr = energy.cached_sample(xs.shape[0])
+
+    xs, gt_xs = xs.cpu(), gt_xs.cpu()
+    xs_logr, gt_xs_logr = xs_logr.cpu(), gt_xs_logr.cpu()
+
+    dist_xs = interatomic_distance(xs, energy.n_particles, energy.spatial_dim).view(-1)
+    dist_gt_xs = interatomic_distance(gt_xs, energy.n_particles, energy.spatial_dim).view(-1)
+
+    if energy.n_particles == 13:
+        bins = 100
+        min_dist = 0
+        max_dist = 6
+        min_energy = -60
+        max_energy = 0
+    elif energy.n_particles == 55:
+        bins = 200
+        min_dist = 0
+        max_dist = 6
+        min_energy = -380
+        max_energy = -180
+    else:
+        raise ValueError(f"Unknown number of particles: {energy.n_particles}")
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    for _xs, color in zip([dist_xs, dist_gt_xs], ["r", "g"]):
+        axes[0].hist(
+            torch.clamp(_xs, min=min_dist, max=max_dist),
+            bins=bins,
+            alpha=0.5,
+            density=True,
+            histtype="step",
+            color=color,
+            linewidth=4,
+        )
+    axes[0].set_xlabel("Interatomic Distances")
+    axes[0].legend(["generated data", "test data"])
+    axes[0].grid(True)
+
+    for _logr, color in zip([xs_logr, gt_xs_logr], ["r", "g"]):
+        axes[1].hist(
+            torch.clamp(-_logr, min=min_energy, max=max_energy),
+            bins=100,
+            alpha=0.5,
+            density=True,
+            histtype="step",
+            color=color,
+            linewidth=4,
+        )
+    axes[1].set_xlabel("Energy")
+    axes[1].legend(["generated data", "test data"])
+    axes[1].grid(True)
+
+    return {"visualization/hists": wandb.Image(fig_to_image(fig))}
+
+
 def plot_step(
     energy: BaseEnergy,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
     suffix: str = "",
 ) -> dict:
-    _energy = energy.target_energy if isinstance(energy, IntermediateEnergy) else energy
+    with torch.no_grad():
+        if isinstance(energy, LennardJones):
+            if weights is not None:
+                warnings.warn(
+                    "Can't visualize weighted samples for Lennard-Jones energy. Ignoring weights..."
+                )
+                return {}
+            out_dict = viz_lennard_jones(energy, samples)
+        else:
+            _energy = energy.target_energy if isinstance(energy, IntermediateEnergy) else energy
+            if isinstance(_energy, ManyWell):
+                out_dict = viz_manywell(energy, samples, weights)
+            elif isinstance(_energy, Funnel):
+                out_dict = viz_funnel(energy, samples, weights)
+            elif isinstance(_energy, (TwentyFiveGaussianMixture, GMM40)):
+                out_dict = viz_gmm(energy, samples, weights)
+            else:
+                warnings.warn(
+                    f"Warning: {_energy.__class__.__name__} is not supported for visualization."
+                    + " Skipping..."
+                )
+                return {}
 
-    if isinstance(_energy, ManyWell):
-        out_dict = viz_manywell(energy, samples, weights)
-    elif isinstance(_energy, Funnel):
-        out_dict = viz_funnel(energy, samples, weights)
-    elif isinstance(_energy, (TwentyFiveGaussianMixture, GMM40)):
-        out_dict = viz_gmm(energy, samples, weights)
-    else:
-        print(
-            f"Warning: {energy.__class__.__name__} is not supported for visualization."
-            + " Skipping..."
-        )
-        return {}
     plt.close("all")
     return {k.replace("visualization", f"visualization{suffix}"): v for k, v in out_dict.items()}
