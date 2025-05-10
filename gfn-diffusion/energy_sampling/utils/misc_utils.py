@@ -38,19 +38,22 @@ def logmeanexp(x, dim=0):
     return x.logsumexp(dim) - math.log(x.shape[dim])
 
 
-def get_exploration_std(
-    iter,
-    exploratory,
-    exploration_factor=0.1,
-    exploration_wd=False,
+def linear_annealing(
+    current: int,
+    n_rounds: int,
+    min_val: float,
+    max_val: float,
+    descending=False,
+    avoid_zero=False,
 ) -> float:
-    if exploratory is False:
-        return 0.0
-    if exploration_wd:
-        exploration_std = exploration_factor * max(0, 1.0 - iter / 5000.0)
-    else:
-        exploration_std = exploration_factor
-    return exploration_std
+    if descending:
+        min_val, max_val = max_val, min_val
+
+    if current >= n_rounds:
+        return max_val
+
+    avoid_zero = int(avoid_zero) if min_val == 0.0 else 0
+    return min_val + (max_val - min_val) * ((current + avoid_zero) / (n_rounds + avoid_zero))
 
 
 def get_name(args: argparse.Namespace) -> str:
@@ -110,10 +113,10 @@ def get_name(args: argparse.Namespace) -> str:
     if args.discretizer == "random":
         name += f"-maxr{args.discretizer_max_ratio}"
 
-    if args.exploratory:
-        name += f"_expl{args.exploration_factor}"
-        if args.exploration_wd:
-            name += "wd"
+    if args.epsilon > 0.0:
+        name += f"_eps{args.epsilon}"
+        if args.anneal_epsilon:
+            name += f"-annealed"
 
     if args.train_resampling or args.train_weighting:
         if args.train_resampling:

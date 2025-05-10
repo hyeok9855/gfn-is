@@ -7,7 +7,6 @@ from buffers import BaseBuffer, TerminalStateBuffer, IntermediateStateBuffer
 from energies import BaseEnergy
 from losses import get_loss
 from models import GFN
-from utils.misc_utils import get_exploration_std
 from utils.sampling_utils import get_sampling_func
 
 
@@ -61,9 +60,7 @@ def train_step(
     T: int,
     subtb_coef_matrix: torch.Tensor | None = None,
     subtb_n_chunks: int = 0,
-    exploratory: bool = False,
-    exploration_factor: float = 0.0,
-    exploration_wd: bool = False,
+    epsilon: float = 0.0,
     buffer: BaseBuffer | None = None,
     prefill: int = 0,
     buffer_save_interval: int = 0,
@@ -77,8 +74,6 @@ def train_step(
     smoothing: str = "clip_above",
     alternating: bool = False,
 ):
-    exploration_std = get_exploration_std(it, exploratory, exploration_factor, exploration_wd)
-
     run_forward = partial(
         fwd_train_step,
         energy=energy,
@@ -89,7 +84,7 @@ def train_step(
         T=T,
         subtb_coef_matrix=subtb_coef_matrix,
         subtb_n_chunks=subtb_n_chunks,
-        exploration_std=exploration_std,
+        epsilon=epsilon,
         buffer=buffer,
         buffer_save_interval=buffer_save_interval,
         device=device,
@@ -162,7 +157,7 @@ def fwd_train_step(
     T: int,
     subtb_coef_matrix: torch.Tensor | None,
     subtb_n_chunks: int = 0,
-    exploration_std=0.0,
+    epsilon=0.0,
     buffer: BaseBuffer | None = None,
     buffer_save_interval: int = 0,
     device=torch.device("cpu"),
@@ -178,7 +173,7 @@ def fwd_train_step(
 
     # Forward sampling
     states, log_pfs, log_pbs, log_fs, log_pfs_exp = gfn_model.get_trajectory_fwd(
-        init_states, ts, exploration_std=exploration_std, pis=loss_type == "pis"
+        init_states, ts, epsilon=epsilon, pis=loss_type == "pis"
     )
 
     # Compute losses

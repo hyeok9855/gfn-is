@@ -1,6 +1,5 @@
 import math
 
-import numpy as np
 import torch
 import torch.nn as nn
 
@@ -51,7 +50,7 @@ class GFN(nn.Module):
         pf_mean: torch.Tensor,
         pf_logvar: torch.Tensor,
         pis: bool = False,
-        exploration_std: float = 0.0,
+        epsilon: float = 0.0,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # s.shape = (bsz, ndim)
         # s_next.shape = (bsz, ndim)
@@ -62,22 +61,19 @@ class GFN(nn.Module):
 
         dts = (t_next - t).unsqueeze(1)
 
-        pf_logvar = pf_logvar + np.log(self.t_scale)
+        pf_logvar = pf_logvar + math.log(self.t_scale)
 
         # PIS requires gradients w.r.t. the parameters
         if pis:
-            assert exploration_std == 0.0
+            assert epsilon == 0.0
             pf_mean_sample = pf_mean
             pf_logvar_sample = pf_logvar
         else:
             pf_mean_sample = pf_mean.detach()
             pf_logvar_sample = pf_logvar.detach()
             # Add exploration noise
-            if exploration_std > 0.0:
-                add_log_var = (
-                    torch.ones_like(pf_logvar_sample) * (exploration_std / dts.sqrt()).log() * 2
-                )
-                pf_logvar_sample = torch.logaddexp(pf_logvar_sample, add_log_var)
+            if epsilon > 0.0:
+                pf_logvar_sample = pf_logvar_sample + math.log(1.0 + epsilon)
 
         if s_next is None:
             s_next = (
@@ -95,7 +91,7 @@ class GFN(nn.Module):
         noise = ((s_next - s) - dts * pf_mean) / (dts.sqrt() * (pf_logvar / 2).exp())
         log_pfs = -0.5 * (noise**2 + logtwopi + dts.log() + pf_logvar).sum(1)
 
-        if exploration_std > 0.0:
+        if epsilon > 0.0:
             noise_exp = ((s_next - s) - dts * pf_mean_sample) / (
                 dts.sqrt() * (pf_logvar_sample / 2).exp()
             )
@@ -167,7 +163,7 @@ class GFN(nn.Module):
         self,
         s: torch.Tensor,
         ts: torch.Tensor,
-        exploration_std=0.0,
+        epsilon: float = 0.0,
         pis=False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         bsz = s.shape[0]
@@ -189,7 +185,7 @@ class GFN(nn.Module):
                 log_fs[:, i] = flow
 
             s_, log_pfs[:, i], log_pfs_exp[:, i] = self.forward_step(
-                s, None, ts[:, i], ts[:, i + 1], pf_mean, pf_logvar, pis, exploration_std
+                s, None, ts[:, i], ts[:, i + 1], pf_mean, pf_logvar, pis, epsilon
             )
             if i > 0:
                 _, log_pbs[:, i] = self.backward_step(s, s_, ts[:, i], ts[:, i + 1])
@@ -204,7 +200,7 @@ class GFN(nn.Module):
         if self.partial_energy:
             log_fs[:, 1:-1] += self.get_partial_energy(states[:, 1:-1], ts[:, 1:-1])
 
-        log_pfs_exp = log_pfs_exp if exploration_std > 0.0 else log_pfs
+        log_pfs_exp = log_pfs_exp if epsilon > 0.0 else log_pfs
 
         return states, log_pfs, log_pbs, log_fs, log_pfs_exp
 

@@ -366,7 +366,7 @@ def eval_step(
             init_state = torch.zeros(bsz, energy.ndim).to(gfn_model.device)
             ts = discretizer(bsz, T).to(gfn_model.device)
             _model_trajs, _log_pfs, _log_pbs, _log_fs, _ = gfn_model.get_trajectory_fwd(
-                init_state, ts, exploration_std=0.0, pis=pis
+                init_state, ts, epsilon=0.0, pis=pis
             )
             _log_rewards = energy.log_reward(_model_trajs[:, -1])
             model_trajs.append(_model_trajs)

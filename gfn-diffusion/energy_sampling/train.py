@@ -13,12 +13,16 @@ from losses import cal_subtb_coef_matrix
 from models import GFN
 from models.modules import get_module
 from utils.eval_utils import eval_step
-from utils.misc_utils import set_seed, get_name
+from utils.misc_utils import set_seed, get_name, linear_annealing
 from utils.plot_utils import plot_step
 from utils.train_utils import get_gfn_optimizer, train_step
 
 
 def train(args):
+    if "SLURM_PROCID" in os.environ:
+        args.seed += int(os.environ["SLURM_PROCID"])
+    set_seed(args.seed)
+
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
     energy = get_energy(args, device)
 
@@ -162,6 +166,11 @@ def train(args):
             #     torch.save(gfn_model.state_dict(), f'{save_dir}/model.pt')
 
         ### Train ###
+
+        epsilon = args.epsilon
+        if args.anneal_epsilon:  # annealing half the epochs
+            epsilon = linear_annealing(i, args.epochs // 2, 0.0, args.epsilon, descending=True)
+
         metrics["train/loss"] = train_step(
             energy,
             gfn_model,
@@ -177,9 +186,7 @@ def train(args):
             T=args.T,
             subtb_coef_matrix=subtb_coef_matrix,
             subtb_n_chunks=args.subtb_n_chunks,
-            exploratory=args.exploratory,
-            exploration_factor=args.exploration_factor,
-            exploration_wd=args.exploration_wd,
+            epsilon=epsilon,
             buffer=buffer,
             prefill=args.prefill,
             buffer_save_interval=args.buffer_save_interval,
@@ -339,16 +346,13 @@ if __name__ == "__main__":
     # (0 means only save terminal states, n>0 saves states at every nth timestep)
     parser.add_argument("--buffer_save_interval", type=int, default=0)
     # prefill to wait before starting to sample from buffer
-    parser.add_argument(
-        "--prefill", type=int, default=10
-    )  # wait this amount of iterations to fill the buffer
+    parser.add_argument("--prefill", type=int, default=0)
     ################################################################
 
     ################################################################
     ### Exploration with extra noise
-    parser.add_argument("--exploratory", action="store_true", default=False)
-    parser.add_argument("--exploration_factor", type=float, default=0.1)
-    parser.add_argument("--exploration_wd", action="store_true", default=False)
+    parser.add_argument("--epsilon", type=float, default=0.0)
+    parser.add_argument("--anneal_epsilon", action="store_true", default=False)
     ################################################################
 
     ################################################################
@@ -404,21 +408,20 @@ if __name__ == "__main__":
     if args.learn_pb:
         args.loss_type_str += "-learnpb"
 
-    set_seed(args.seed)
-    if "SLURM_PROCID" in os.environ:
-        args.seed += int(os.environ["SLURM_PROCID"])
-
     if args.lr_bwd is None:
         args.lr_bwd = args.lr_fwd
 
-    if args.buffer_size == -1:
-        args.buffer_size = 100 * args.batch_size
+    if args.loss_type == "pis":
+        args.training_mode = "fwd"
 
     if args.loss_type in ["db", "subtb"]:
         args.conditional_flow_model = True
     else:
         args.conditional_flow_model = False
         args.lr_flow = args.lr_Z  # For TB
+
+    if args.buffer_size == -1:
+        args.buffer_size = 100 * args.batch_size
 
     assert args.plot_freq % args.eval_freq == 0
 
