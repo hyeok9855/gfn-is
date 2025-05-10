@@ -194,7 +194,8 @@ class GFN(nn.Module):
             states[:, i + 1] = s
 
         # Assign the terminal reward
-        with torch.no_grad():
+        # Set terminal reward based on whether we need gradients for PIS loss
+        with torch.enable_grad() if pis else torch.no_grad():
             log_fs[:, -1] = self.energy.log_reward(states[:, -1])
 
         if self.partial_energy:
