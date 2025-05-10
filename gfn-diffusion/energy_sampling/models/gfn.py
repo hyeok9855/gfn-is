@@ -254,7 +254,7 @@ class GFN(nn.Module):
         s: torch.Tensor,  # (bsz, ndim)
         ts: torch.Tensor,  # (bsz, T+1)
         curr_t: torch.Tensor,  # (bsz)
-        exploration_std: float = 0.0,
+        epsilon: float = 0.0,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         # Construct complete trajectories both ways
         # 1. Backward sampling from intermediate_ts to 0
@@ -328,7 +328,7 @@ class GFN(nn.Module):
                     pf_mean[~is_backward],
                     pf_logvars[~is_backward],
                     pis=False,
-                    exploration_std=exploration_std,
+                    epsilon=epsilon,
                 )
                 states[~is_backward, t2_idx_fwd] = states_fwd_t2
                 log_pfs[~is_backward, t1_idx_fwd] = log_pf_fwd
@@ -351,7 +351,7 @@ class GFN(nn.Module):
                     pf_mean[is_backward],
                     pf_logvars[is_backward],
                     pis=False,
-                    exploration_std=exploration_std,
+                    epsilon=epsilon,
                 )
                 log_pfs[is_backward, t1_idx_bwd] = log_pf_bwd
                 log_pfs_exp[is_backward, t1_idx_bwd] = log_pf_bwd_exp
@@ -370,120 +370,3 @@ class GFN(nn.Module):
             log_fs[:, 1:-1] += self.get_partial_energy(states[:, 1:-1], ts[:, 1:-1])
 
         return states, log_pfs, log_pbs, log_fs, log_pfs_exp
-
-    # Not used for now
-    def forward(self, s, exploration_std=0.0):
-        raise NotImplementedError
-
-    # def get_subtrajectory_bwd(
-    #     self,
-    #     s: torch.Tensor,
-    #     ts: torch.Tensor,  # (bsz, T) or (bsz, chunk_size)
-    #     logf_last: torch.Tensor,  # buf_log_rs or buf_log_fs[:, -1]
-    #     logr_fn: Callable[[torch.Tensor], torch.Tensor],
-    # ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    #     is_from_initial = ts[:, 0] == 0
-    #     is_to_terminal = ts[:, -1] == 1
-
-    #     bsz = s.shape[0]
-    #     T = ts.shape[1] - 1
-
-    #     log_pfs = torch.zeros((bsz, T), device=self.device)
-    #     log_pbs = torch.zeros((bsz, T), device=self.device)
-    #     log_fs = torch.zeros((bsz, T + 1), device=self.device)
-    #     states = torch.zeros((bsz, T + 1, self.dim), device=self.device)
-    #     states[:, -1] = s
-
-    #     for i in range(T):
-    #         dts = (ts[:, T - i] - ts[:, T - i - 1]).unsqueeze(1)
-
-    #         if i < T - 1 or (~is_from_initial).any():
-    #             if self.learn_pb:
-    #                 assert self.back_model is not None
-    #                 t = self.t_model(ts[:, T - i])
-    #                 pbs = self.back_model(self.s_model(s), t)
-    #                 dmean, dvar = torch.chunk(pbs, 2, dim=-1)
-    #                 back_mean_correction = 1 + dmean.tanh() * self.pb_scale_range
-    #                 back_var_correction = 1 + dvar.tanh() * self.pb_scale_range
-    #             else:
-    #                 back_mean_correction, back_var_correction = torch.ones_like(s), torch.ones_like(
-    #                     s
-    #                 )
-
-    #             mean = s - s * dts / ts[:, T - i].unsqueeze(1) * back_mean_correction
-    #             var = (
-    #                 (self.pf_std_per_traj**2)
-    #                 * dts
-    #                 * (ts[:, T - i - 1] / ts[:, T - i]).unsqueeze(1)
-    #                 * back_var_correction
-    #             )
-
-    #             s_ = mean.detach() + var.sqrt().detach() * torch.randn_like(s, device=self.device)
-    #             noise_backward = (s_ - mean) / var.sqrt()
-    #             _logpb = -0.5 * (noise_backward**2 + logtwopi + var.log()).sum(1)
-
-    #             if i < T - 1:
-    #                 log_pbs[:, T - i - 1] = _logpb
-    #             else:  # i == T - 1, i.e., the first step (idx 0)
-    #                 log_pbs[~is_from_initial, 0] = _logpb[~is_from_initial]
-    #                 log_pbs[is_from_initial, 0] = 0
-
-    #         else:
-    #             s_ = torch.zeros_like(s)
-
-    #         pfs, flow = self.predict_next_state(s_, ts[:, T - i - 1], logr_fn)
-    #         pfmean, pflogvars = self.split_params(pfs)
-
-    #         log_fs[:, T - i - 1] = flow
-    #         noise = ((s - s_) - dts * pfmean) / (dts.sqrt() * (pflogvars / 2).exp())
-    #         log_pfs[:, T - i - 1] = -0.5 * (noise**2 + logtwopi + dts.log() + pflogvars).sum(1)
-
-    #         s = s_
-    #         states[:, T - i - 1] = s
-
-    #     # Assign the reward or flow at the last step
-    #     # For terminal states, we use the provided buf_log_rs
-    #     log_fs[is_to_terminal, T] = logf_last[is_to_terminal]
-    #     if (~is_to_terminal).any():
-    #         # For non-terminal states, we predict the flow at the last step
-    #         _, flow = self.predict_next_state(
-    #             s[~is_to_terminal], ts[~is_to_terminal, T - 1], logr_fn
-    #         )
-    #         log_fs[~is_to_terminal, T] = flow
-
-    #         if self.partial_energy:
-    #             ref_log_var = (self.t_scale * ts[~is_to_terminal, 1:]).log().unsqueeze(2)
-    #             log_p_ref = -0.5 * (
-    #                 logtwopi
-    #                 + ref_log_var
-    #                 + (-ref_log_var).exp() * (states[~is_to_terminal, 1:] ** 2)
-    #             ).sum(-1)
-
-    #             if self.beta_model is not None:
-    #                 betas = self.softplus(self.beta_model).cumsum(0)
-    #                 betas = betas / betas[-1]
-    #                 betas = betas.quantile(ts.flatten()).reshape(bsz, -1)
-    #             else:
-    #                 betas = ts
-
-    #             log_fs[~is_to_terminal, 1:] += (1 - betas[~is_to_terminal, 1:]) * log_p_ref + betas[
-    #                 ~is_to_terminal, 1:
-    #             ] * logr_fn(states[~is_to_terminal, 1:].reshape(-1, self.dim)).view(bsz, T)
-
-    #             # We may need to apply the partial energy trick to the first step
-    #             if (~is_from_initial).any():
-    #                 ref_log_var = (
-    #                     (self.t_scale * ts[~is_from_initial, 0]).log().unsqueeze(1)
-    #                 )  # (bsz, 1)
-    #                 log_p_ref = -0.5 * (
-    #                     logtwopi
-    #                     + ref_log_var
-    #                     + (-ref_log_var).exp() * (states[~is_from_initial, 0] ** 2)  # (bsz, ndim)
-    #                 ).sum(-1)
-    #                 log_fs[~is_from_initial, 0] += (
-    #                     1 - betas[~is_from_initial, 0]
-    #                 ) * log_p_ref + betas[~is_from_initial, 0] * logr_fn(
-    #                     states[~is_from_initial, 0]
-    #                 )
-
-    #     return states, log_pfs, log_pbs, log_fs

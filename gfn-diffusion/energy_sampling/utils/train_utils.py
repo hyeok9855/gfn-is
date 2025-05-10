@@ -312,7 +312,7 @@ def bwd_train_step(
                 assert discretizer.func.__name__ == "uniform_discretizer"
             ts = discretizer(batch_size, T).to(device)
             _, log_pfs, log_pbs, log_fs, _ = gfn_model.get_trajectory_fwd_and_bwd(
-                buf_states, ts, buf_ts, exploration_std=0.0
+                buf_states, ts, buf_ts, epsilon=0.0  # TODO: support for epsilon
             )
 
         else:
