@@ -178,7 +178,7 @@ def fwd_train_step(
 
     # Forward sampling
     states, log_pfs, log_pbs, log_fs, log_pfs_exp = gfn_model.get_trajectory_fwd(
-        init_states, ts, exploration_std=exploration_std
+        init_states, ts, exploration_std=exploration_std, pis=loss_type == "pis"
     )
 
     # Compute losses
