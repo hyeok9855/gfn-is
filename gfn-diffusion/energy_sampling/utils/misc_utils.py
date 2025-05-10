@@ -57,23 +57,35 @@ def get_name(args: argparse.Namespace) -> str:
     name = ""
 
     name += args.loss_type_str
+
     name += f"-{args.module}"
+    if args.module in ["pis_mlp", "mlp"]:
+        name += f"-h{args.hidden_dim}l{args.joint_layers}"
+        if args.loss_type in ["subtb", "db"]:
+            name += f"-Fh{args.flow_hidden_dim}l{args.flow_layers}"
+    elif args.module == "egnn":
+        name += f"-h{args.egnn_hidden_nf}l{args.egnn_n_layers}"
+
     if args.lp:
         name += "-lp"
+
     if args.partial_energy:
-        name += "-partialE"
+        name += "_partialE"
+        if args.learn_beta_T > 0:
+            name += f"-learnbetaT{args.learn_beta_T}"
 
-    name += f"_t_scale{args.t_scale}-NNdim{args.hidden_dim}"
-    if args.loss_type in ["subtb", "db"]:
-        name += f"-Fdim{args.flow_hidden_dim}"
+    name += f"_tscale{args.t_scale}"
+    name += f"_bsz{args.batch_size}"
 
-    name += f"-lr{args.lr_fwd}"
+    name += f"_lrfwd{args.lr_fwd}"
     if args.loss_type == "tb":
         name += f"-lrZ{args.lr_Z}"
     elif args.loss_type in ["subtb", "db"]:
         name += f"-lrflow{args.lr_flow}"
         if args.learn_beta_T > 0:
             name += f"-lrbeta{args.lr_beta}"
+    if args.learn_pb:
+        name += f"-lrbwd{args.lr_bwd}"
     if args.use_weight_decay:
         name += f"-wd{args.weight_decay}"
     if args.use_scheduler:
@@ -81,6 +93,7 @@ def get_name(args: argparse.Namespace) -> str:
 
     name += f"_{args.training_mode}"
     if args.training_mode != "fwd":
+        name += f"-btf{args.bwd_to_fwd_ratio}"
         name += f"-{args.bwd_from}"
         if args.bwd_from == "buffer":
             name += f"-{args.buffer_type}"
