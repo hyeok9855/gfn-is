@@ -7,26 +7,55 @@ import torch
 import torch.nn as nn
 
 from models.modules.base import BaseModule, ParamGroups
-from utils.particle_system import remove_mean
+from models.modules.pis_mlp_modules import LangevinScalingModelPIS
 
 
 class EGNNModule(BaseModule):
     def __init__(
         self,
-        n_particles,
-        spatial_dim,
+        n_particles: int,
+        spatial_dim: int,
+        ### Common arguments
+        conditional_flow_model: bool = False,
+        lp: bool = False,
+        lp_scaling_per_dimension: bool = True,
+        clipping: bool = False,
+        out_clip: float = 1e4,
+        lgv_clip: float = 1e2,
+        learn_pb: bool = False,
+        pb_scale_range: float = 1.0,
+        learn_variance: bool = True,
+        log_var_range: float = 4.0,
+        ### EGNN arguments
         hidden_nf=128,
         n_layers=5,
-        conditional_flow_model=False,
         recurrent=True,
         attention=True,
         condition_time=True,
         tanh=True,
         agg="sum",
     ):
-        super().__init__(conditional_flow_model=conditional_flow_model)
+        super().__init__(
+            ndim=n_particles * spatial_dim,
+            conditional_flow_model=conditional_flow_model,
+            lp=lp,
+            lp_scaling_per_dimension=lp_scaling_per_dimension,
+            clipping=clipping,
+            out_clip=out_clip,
+            lgv_clip=lgv_clip,
+            learn_pb=learn_pb,
+            pb_scale_range=pb_scale_range,
+            learn_variance=learn_variance,
+            log_var_range=log_var_range,
+        )
         if conditional_flow_model:
             raise NotImplementedError("Conditional flow model is not implemented for EGNN")
+
+        if learn_pb:
+            raise NotImplementedError("Learnable PB is not implemented for EGNN")
+
+        if learn_variance:
+            raise NotImplementedError("Learnable variance is not implemented for EGNN")
 
         self.egnn = EGNN(
             in_node_nf=1,
@@ -48,12 +77,17 @@ class EGNNModule(BaseModule):
         self._edges_dict = {}
         self.condition_time = condition_time
 
+        self.lp_scaling_model = None
+        if self.lp:
+            self.lp_scaling_model = LangevinScalingModelPIS(
+                hidden_nf, hidden_nf, self.lgv_out_dim, 3, True
+            )
+
     def get_param_groups(self) -> ParamGroups:
-        # TODO: support conditional flow model
         return ParamGroups(
             forward_params=list(self.egnn.parameters()),
             backward_params=[],
-            flow_params=[self.flow_model],
+            flow_params=[self.flow_model],  # type: ignore # TODO: support conditional flow model
         )
 
     def predict_forward(
@@ -79,11 +113,22 @@ class EGNNModule(BaseModule):
         vel = vel - torch.mean(vel, dim=1, keepdim=True)
         vel = vel.view(n_batch, self._n_particles * self._spatial_dim)
 
-        mean = vel
-        logvar = torch.zeros_like(mean)
-        flow = self.flow_model
-
+        mean, logvar = self.get_gaussian_params(vel, s, t, logr_fn)
+        flow = self.predict_flow()  # TODO: support conditional flow model
         return mean, logvar, flow
+
+    def get_lp_scaling(self, t: torch.Tensor, **kwargs) -> torch.Tensor:
+        assert self.lp_scaling_model is not None
+        return self.lp_scaling_model(t.squeeze(-1))
+
+    def predict_conditional_flow(self, **kwargs) -> torch.Tensor:
+        # TODO: support conditional flow model
+        raise NotImplementedError("Conditional flow model is not implemented for EGNN")
+
+    def predict_backward_correction(
+        self, s_next: torch.Tensor, t_next: torch.Tensor, **kwargs
+    ) -> torch.Tensor:
+        raise NotImplementedError("Backward correction is not implemented for EGNN")
 
     def _create_edges(self):
         rows, cols = [], []

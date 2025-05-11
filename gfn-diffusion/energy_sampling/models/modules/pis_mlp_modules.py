@@ -25,15 +25,17 @@ class PISMLPModule(MLPModule):
             )
 
         if self.conditional_flow_model:
-            self.t_model_flow = self.s_model_flow = None
-            if not self.share_embeddings:
-                assert self.flow_t_emb_dim == self.flow_s_emb_dim
-                self.t_model_flow = TimeEncodingPIS(
-                    self.flow_harmonics_dim, self.flow_t_emb_dim, self.flow_hidden_dim
-                )
-                self.s_model_flow = StateEncodingPIS(self.ndim, self.flow_s_emb_dim)
-            else:
-                self.flow_t_emb_dim, self.flow_s_emb_dim = self.t_emb_dim, self.s_emb_dim
+            assert self.flow_t_emb_dim == self.flow_s_emb_dim
+            self.t_model_flow = (
+                TimeEncodingPIS(self.flow_harmonics_dim, self.flow_t_emb_dim, self.flow_hidden_dim)
+                if not self.share_embeddings
+                else nn.Identity()
+            )
+            self.s_model_flow = (
+                StateEncodingPIS(self.ndim, self.flow_s_emb_dim)
+                if not self.share_embeddings
+                else nn.Identity()
+            )
             self.flow_model = FlowModelPIS(
                 self.flow_s_emb_dim, self.flow_hidden_dim, 1, self.flow_layers
             )
@@ -43,12 +45,14 @@ class PISMLPModule(MLPModule):
         self.lp_scaling_model = None
         if self.lp:
             self.lp_scaling_model = LangevinScalingModelPIS(
-                self.t_emb_dim, self.hidden_dim, self.lgv_out_dim, self.lgv_layers, self.zero_init
+                self.harmonics_dim,
+                self.hidden_dim,
+                self.lgv_out_dim,
+                self.lgv_layers,
+                self.zero_init,
             )
 
-    def get_lp_scaling(
-        self, s_emb: torch.Tensor, t_emb: torch.Tensor, t: torch.Tensor
-    ) -> torch.Tensor:
+    def get_lp_scaling(self, t: torch.Tensor, **kwargs) -> torch.Tensor:
         assert self.lp_scaling_model is not None
         return self.lp_scaling_model(t)
 
@@ -143,7 +147,7 @@ class FlowModelPIS(nn.Module):
 class LangevinScalingModelPIS(nn.Module):
     def __init__(
         self,
-        t_emb_dim: int,
+        harmonics_dim: int,
         hidden_dim: int,
         out_dim: int,
         num_layers: int,
@@ -151,12 +155,9 @@ class LangevinScalingModelPIS(nn.Module):
     ) -> None:
         super().__init__()
 
-        pe = torch.linspace(start=0.1, end=100, steps=t_emb_dim)[None]
-
-        self.timestep_phase = nn.Parameter(torch.randn(t_emb_dim)[None])
-
+        self.timestep_phase = nn.Parameter(torch.randn(harmonics_dim)[None])
         self.lgv_model = nn.Sequential(
-            nn.Linear(2 * t_emb_dim, hidden_dim),
+            nn.Linear(2 * harmonics_dim, hidden_dim),
             *[
                 nn.Sequential(
                     nn.GELU(),
@@ -167,8 +168,7 @@ class LangevinScalingModelPIS(nn.Module):
             nn.GELU(),
             nn.Linear(hidden_dim, out_dim),
         )
-
-        self.register_buffer("pe", pe)
+        self.register_buffer("pe", torch.linspace(start=0.1, end=100, steps=harmonics_dim)[None])
 
         if zero_init:
             self.lgv_model[-1].weight.data.fill_(0.0)
