@@ -8,7 +8,7 @@ from tqdm import trange
 
 from buffers import TerminalStateBuffer, IntermediateStateBuffer
 from discretizers import get_discretizer
-from energies import IntermediateEnergy, get_energy
+from energies import get_energy
 from losses import cal_subtb_coef_matrix
 from models import GFN
 from models.modules import get_module

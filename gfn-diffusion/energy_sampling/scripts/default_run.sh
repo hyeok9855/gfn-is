@@ -17,16 +17,9 @@ conda activate gfn-is
 wandb login --relogin ...
 
 
-ENERGY_NAME=$1  # many_well, gmm40
-NDIM=$2
-BUFFER_PRIORITIZATION=${3:-normalized_iw}  # normalized_iw, none
-T_SCALE=${4:-1.0}
-T=${5:-100}
+ARGS=$1
 
 for SEED in 0 1 2 3 4; do
-    python train.py \
-        --seed $SEED --energy_name $ENERGY_NAME --ndim $NDIM --t_scale $T_SCALE --loss_type db \
-        --T $T --eval_T 100 --eval_weighting --eval_buffer --plot_t_idx 25 50 75 \
-        --prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper &
+    python train.py $ARGS --seed $SEED &
 done
 wait
