@@ -447,21 +447,17 @@ def eval_step(
         )
     )
 
-    weights = (log_rewards + log_pbs.sum(-1) - log_pfs.sum(-1)).softmax(0)
-    sample_xs_r = buffer_xs = None
-    if not full_eval:
-        return metrics, model_trajs, weights, sample_xs_r, buffer_xs
-
-    if gt_xs is not None:
+    if gt_xs is not None and full_eval:
         # "1-Wasserstein", "2-Wasserstein", "Linear_MMD", "Poly_MMD", "RBF_MMD",
         # "Mean_MSE", "Mean_L2", "Mean_L1", "Median_MSE", "Median_L2", "Median_L1"
         metrics.update(distribution_distance_metrics(sample_xs, gt_xs))
 
-    metrics = {f"{'final_' if final_eval else ''}eval/{k}": v for k, v in metrics.items()}
+    metrics = {f"eval/{k}": v for k, v in metrics.items()}
 
     ### Resample or weighted
-
-    if resampling:
+    weights = (log_rewards + log_pbs.sum(-1) - log_pfs.sum(-1)).softmax(0)
+    sample_xs_r = None
+    if resampling and full_eval:
         # We can't use `estimate_partition_function` with resampled trajectories
         # since we don't know the distribution of the resampled trajectories
         assert gt_xs is not None
@@ -470,28 +466,26 @@ def eval_step(
         model_trajs_r = model_trajs[sampled_idx]
         sample_xs_r = model_trajs_r[:, -1]
         metrics_r.update(distribution_distance_metrics(sample_xs_r, gt_xs))
-        metrics_r = {
-            f"{'final_' if final_eval else ''}eval_resampled/{k}": v for k, v in metrics_r.items()
-        }
+        metrics_r = {f"eval_resampled/{k}": v for k, v in metrics_r.items()}
         metrics.update(metrics_r)
 
-    if weighting:
+    if weighting and full_eval:
         assert gt_xs is not None
         metrics_w = {}
         metrics_w.update(distribution_distance_metrics(sample_xs, gt_xs, weights=weights))
-        metrics_w = {
-            f"{'final_' if final_eval else ''}eval_weighted/{k}": v for k, v in metrics_w.items()
-        }
+        metrics_w = {f"eval_weighted/{k}": v for k, v in metrics_w.items()}
         metrics.update(metrics_w)
 
-    if buffer is not None and len(buffer) > 0:
+    buffer_xs = None
+    if buffer is not None and len(buffer) > 0 and full_eval:
         assert gt_xs is not None
         buffer_xs, _ = buffer.sample_terminal(data_size)
         metrics_b = {}
         metrics_b.update(distribution_distance_metrics(buffer_xs, gt_xs))
-        metrics_b = {
-            f"{'final_' if final_eval else ''}eval_buffer/{k}": v for k, v in metrics_b.items()
-        }
+        metrics_b = {f"eval_buffer/{k}": v for k, v in metrics_b.items()}
         metrics.update(metrics_b)
+
+    if final_eval:
+        metrics = {k.replace("eval", "final_eval"): v for k, v in metrics.items()}
 
     return metrics, model_trajs, weights, sample_xs_r, buffer_xs
