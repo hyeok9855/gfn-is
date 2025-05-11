@@ -18,20 +18,18 @@ wandb login --relogin ...
 
 
 ENERGY_NAME=$1  # many_well, gmm40
-BUFFER_PRIORITIZATION=${2:-normalized_iw}  # normalized_iw, none
-T_SCALE=${3:-1.0}
-CHUNK_SIZE=${4:-10}  # 10 20
-
-if [ "$ENERGY_NAME" = "gmm40" ]; then
-    N_DIM=2
-elif [ "$ENERGY_NAME" = "many_well" ]; then
-    N_DIM=32
-fi
+NDIM=$2
+BUFFER_PRIORITIZATION=${3:-normalized_iw}  # normalized_iw, none
+T_SCALE=${4:-1.0}
+T=${5:-100}
+LR_FLOW=${6:-0.01}
+N_CHUNKS=${7:-10}  # 10 5
 
 for SEED in 0 1 2 3 4; do
     python train.py \
-        --seed $SEED --energy_name $ENERGY_NAME --ndim $N_DIM --t_scale $T_SCALE --loss_type subtb --subtb_chunk_size $CHUNK_SIZE --eval_weighting --eval_buffer \
-        --partial_energy \
+        --seed $SEED --energy_name $ENERGY_NAME --ndim $NDIM --t_scale $T_SCALE --loss_type subtb --subtb_n_chunks $N_CHUNKS \
+        --T $T --eval_T 100 --eval_weighting --eval_buffer --plot_t_idx 25 50 75 \
+        --partial_energy --lr_flow $LR_FLOW \
         --prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper &
 done
 wait

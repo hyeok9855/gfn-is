@@ -2,39 +2,65 @@
 
 GMM40_T_SCALE=100.0
 
-for LOSS in tb logvar db fldb subtb_chunk flsubtb_chunk; do  # tb logvar db subtb fldb flsubtb subtb_chunk flsubtb_chunk
-    for ENERGY_NAME in gmm40 many_well; do  # gmm40 many_well
+for LOSS in tb pis logvar db fldb subtb_chunk flsubtb_chunk; do  # tb pis logvar db fldb subtb_chunk flsubtb_chunk subtb flsubtb
+    for ENERGY_NAME in gmm40 manywell; do  # gmm40 manywell
         if [ "$ENERGY_NAME" = "gmm40" ]; then
             T_SCALE=$GMM40_T_SCALE
         else
             T_SCALE=1.0
         fi
 
-        for BUFFER_PRIORITIZATION in normalized_iw none; do  # normalized_iw none
+        if [ "$ENERGY_NAME" = "gmm40" ]; then
+            NDIM=2
+        elif [ "$ENERGY_NAME" = "manywell" ]; then
+            NDIM=32
+        fi
 
-            # TB
-            if [ "$LOSS" = "tb" ] || [ "$LOSS" = "logvar" ]; then
-                sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $BUFFER_PRIORITIZATION $T_SCALE
+        for T in 20 50 100; do  # 20 50 100
+            for BUFFER_PRIORITIZATION in normalized_iw none; do  # normalized_iw none
 
-            # DB FL-DB
-            elif [ "$LOSS" = "db" ] || [ "$LOSS" = "fldb" ]; then
-                sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $BUFFER_PRIORITIZATION $T_SCALE
+                # TB, logvar
+                if [ "$LOSS" = "tb" ] || [ "$LOSS" = "logvar" ]; then
+                    sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $NDIM $BUFFER_PRIORITIZATION $T_SCALE $T
 
-            # SubTB FL-SubTB
-            elif [ "$LOSS" = "subtb" ] || [ "$LOSS" = "flsubtb" ]; then
-                for LAMBDA in 1.5 2.0; do
-                    sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $BUFFER_PRIORITIZATION $T_SCALE $LAMBDA
-                done
+                # PIS
+                elif [ "$LOSS" = "pis" ]; then
+                    sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $NDIM $T_SCALE $T
 
-            # SubTB chunking FL-SubTB chunking
-            elif [ "$LOSS" = "subtb_chunk" ] || [ "$LOSS" = "flsubtb_chunk" ]; then
-                for CHUNK_SIZE in 10 20; do  # 10 20
-                    sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $BUFFER_PRIORITIZATION $T_SCALE $CHUNK_SIZE
-                done
+                # DB
+                elif [ "$LOSS" = "db" ]; then
+                    sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $NDIM $BUFFER_PRIORITIZATION $T_SCALE $T
 
-            else
-                echo "Invalid loss: $LOSS"
-            fi
+                # FL-DB
+                elif [ "$LOSS" = "fldb" ]; then
+                    LR_FLOW=0.001
+                    sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $NDIM $BUFFER_PRIORITIZATION $T_SCALE $T $LR_FLOW
+
+                # SubTB
+                elif [ "$LOSS" = "subtb" ]; then
+                    sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $NDIM $BUFFER_PRIORITIZATION $T_SCALE $T
+
+                # FL-SubTB
+                elif [ "$LOSS" = "flsubtb" ]; then
+                    LR_FLOW=0.001
+                    sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $NDIM $BUFFER_PRIORITIZATION $T_SCALE $T $LR_FLOW
+
+                # SubTB chunking
+                elif [ "$LOSS" = "subtb_chunk" ]; then
+                    N_CHUNKS=10
+                    sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $NDIM $BUFFER_PRIORITIZATION $T_SCALE $T $N_CHUNKS
+
+                # FL-SubTB chunking
+                elif [ "$LOSS" = "flsubtb_chunk" ]; then
+                    LR_FLOW=0.001
+                    N_CHUNKS=10
+                    sbatch scripts/default_${LOSS}.sh $ENERGY_NAME $NDIM $BUFFER_PRIORITIZATION $T_SCALE $T $LR_FLOW $N_CHUNKS
+
+                else
+                    echo "Invalid loss: $LOSS"
+
+                fi
+            done
         done
     done
 done
