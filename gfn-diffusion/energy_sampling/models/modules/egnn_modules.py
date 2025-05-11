@@ -84,10 +84,21 @@ class EGNNModule(BaseModule):
             )
 
     def get_param_groups(self) -> ParamGroups:
+        forward_params = list(self.egnn.parameters())
+
+        backward_params = []
+
+        flow_params = [self.flow_model]  # TODO: support conditional flow model
+
+        lgv_params = []
+        if self.lp_scaling_model is not None:
+            lgv_params = list(self.lp_scaling_model.parameters())
+
         return ParamGroups(
-            forward_params=list(self.egnn.parameters()),
-            backward_params=[],
-            flow_params=[self.flow_model],  # type: ignore # TODO: support conditional flow model
+            forward_params=forward_params,
+            backward_params=backward_params,
+            flow_params=flow_params,
+            lgv_params=lgv_params,
         )
 
     def predict_forward(

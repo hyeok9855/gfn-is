@@ -64,6 +64,7 @@ def train(args):
         lr_bwd=args.lr_bwd,
         lr_flow=args.lr_flow,
         lr_beta=args.lr_beta,
+        lr_lgv=args.lr_lgv,
         use_weight_decay=args.use_weight_decay,
         weight_decay=args.weight_decay,
         use_scheduler=args.use_scheduler,
@@ -230,6 +231,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr_Z", type=float, default=1e-1)
     parser.add_argument("--lr_flow", type=float, default=1e-2)
     parser.add_argument("--lr_beta", type=float, default=1e-3)
+    parser.add_argument("--lr_lgv", type=float, default=1e-4)
     parser.add_argument("--use_weight_decay", action="store_true", default=False)
     parser.add_argument("--weight_decay", type=float, default=1e-7)
     parser.add_argument("--use_scheduler", action="store_true", default=False)

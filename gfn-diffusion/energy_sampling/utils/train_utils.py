@@ -16,6 +16,7 @@ def get_gfn_optimizer(
     lr_bwd: float,
     lr_flow: float,
     lr_beta: float,
+    lr_lgv: float,
     use_weight_decay=False,
     weight_decay=1e-7,
     use_scheduler=False,
@@ -29,6 +30,7 @@ def get_gfn_optimizer(
     param_groups.append({"params": module_param_groups.forward_params, "lr": lr_fwd})
     param_groups.append({"params": module_param_groups.backward_params, "lr": lr_bwd})
     param_groups.append({"params": module_param_groups.flow_params, "lr": lr_flow})
+    param_groups.append({"params": module_param_groups.lgv_params, "lr": lr_lgv})
 
     if gfn_model.beta_model is not None:
         param_groups.append({"params": gfn_model.beta_model, "lr": lr_beta})

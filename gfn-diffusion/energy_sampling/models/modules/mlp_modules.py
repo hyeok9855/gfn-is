@@ -128,8 +128,6 @@ class MLPModule(BaseModule):
         forward_params += list(self.t_model.parameters())
         forward_params += list(self.s_model.parameters())
         forward_params += list(self.joint_model.parameters())
-        if self.lp_scaling_model is not None:
-            forward_params += list(self.lp_scaling_model.parameters())
 
         backward_params = []
         if self.bwd_joint_model is not None:
@@ -146,10 +144,15 @@ class MLPModule(BaseModule):
         else:
             flow_params += [self.flow_model]
 
+        lgv_params = []
+        if self.lp_scaling_model is not None:
+            lgv_params = list(self.lp_scaling_model.parameters())
+
         return ParamGroups(
             forward_params=forward_params,
             backward_params=backward_params,
             flow_params=flow_params,
+            lgv_params=lgv_params,
         )
 
     def predict_forward(

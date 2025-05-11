@@ -11,6 +11,7 @@ class ParamGroups:
     forward_params: list[nn.Parameter]
     backward_params: list[nn.Parameter]
     flow_params: list[nn.Parameter]
+    lgv_params: list[nn.Parameter]
 
 
 class BaseModule(nn.Module, ABC):
