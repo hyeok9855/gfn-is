@@ -24,7 +24,7 @@ def get_energy(args: argparse.Namespace, device: torch.device) -> BaseEnergy:
         energy = GMM40(device=device, ndim=ndim)
     elif energy_name == "funnel":
         energy = Funnel(device=device, ndim=ndim)
-    elif energy_name == "many_well":
+    elif energy_name == "manywell":
         energy = ManyWell(device=device, ndim=ndim)
     elif energy_name == "lgcp":
         energy = LGCP(device=device)

@@ -5,7 +5,7 @@ from energies import BaseEnergy
 from .base import BaseModule
 from .egnn_modules import EGNNModule
 from .mlp_modules import MLPModule
-from .pis_mlp_modules import PISMLPModule
+from .pismlp_modules import PISMLPModule
 
 
 def get_module(args: argparse.Namespace, energy: BaseEnergy) -> BaseModule:

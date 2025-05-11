@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 
 from models.modules.base import BaseModule, ParamGroups
-from models.modules.pis_mlp_modules import LangevinScalingModelPIS
+from models.modules.pismlp_modules import LangevinScalingModelPIS
 
 
 class EGNNModule(BaseModule):

@@ -209,7 +209,7 @@ if __name__ == "__main__":
         "--energy_name",
         type=str,
         default="gmm40",
-        choices=("25gmm", "gmm40", "funnel", "many_well", "lgcp", "lj13", "lj55"),
+        choices=("25gmm", "gmm40", "funnel", "manywell", "lgcp", "lj13", "lj55"),
     )
     parser.add_argument("--ndim", type=int, default=2)
     parser.add_argument("--exp_name", type=str, default="")
@@ -243,7 +243,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=2000)
     parser.add_argument("--epochs", type=int, default=25000)
 
-    parser.add_argument("--module", type=str, default="pis_mlp", choices=("pis_mlp", "mlp", "egnn"))
+    parser.add_argument("--module", type=str, default="pismlp", choices=("pismlp", "mlp", "egnn"))
     ################################################################
     ### MLP parameters
     parser.add_argument("--hidden_dim", type=int, default=256)
