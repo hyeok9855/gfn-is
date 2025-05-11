@@ -1,10 +1,15 @@
 import math
-from functools import partial
 from typing import Callable, Literal, cast
 
 import numpy as np
 import ot as pot
 import torch
+
+import jax
+import jax.numpy as jnp
+from ott.geometry import pointcloud
+from ott.problems.linear import linear_problem
+from ott.solvers.linear import sinkhorn
 
 from buffers import BaseBuffer
 from energies import BaseEnergy
@@ -15,37 +20,79 @@ from utils.sampling_utils import get_sampling_func
 MIN_VAR_EST = 1e-8
 
 
+# Credit: https://github.com/anonymous3141/SCLD/blob/master/eval/optimal_transport.py
+@jax.jit
+def compute_OT(
+    gt_samples: jax.Array,
+    model_samples: jax.Array,
+    a: jax.Array,
+    b: jax.Array,
+    epsilon: float = 1e-3,
+    entropy_reg: bool = True,
+) -> jax.Array:
+    """
+    Entropy regularized optimal transport cost (see https://ott-jax.readthedocs.io/en/latest/tutorials/point_clouds.html)
+
+    Args:
+        gt_samples: Ground truth samples
+        model_samples: Model samples
+        a: Source distribution weights
+        b: Target distribution weights
+        epsilon: Entropy regularization parameter (static)
+        entropy_reg: Whether to use entropy regularization (static)
+    """
+    geom = pointcloud.PointCloud(gt_samples, model_samples, epsilon=epsilon)
+    ot_prob = linear_problem.LinearProblem(geom, a=a, b=b)
+    solver = sinkhorn.Sinkhorn()
+    ot = solver(ot_prob)
+
+    # More JAX-friendly way to handle the cost computation
+    reg_cost = ot.reg_ot_cost
+    unreg_cost = jnp.sum(ot.matrix * ot.geom.cost_matrix)
+    return jnp.where(entropy_reg, reg_cost, unreg_cost)  # type: ignore
+
+
+# Create a specialized version with static arguments
+compute_OT_static = jax.jit(compute_OT, static_argnames=("epsilon", "entropy_reg"))
+
+
 def wasserstein(
-    x0: torch.Tensor,
-    x1: torch.Tensor,
-    method: str | None = None,
-    reg: float = 0.05,
+    x0: np.ndarray,
+    x1: np.ndarray,
+    weights: np.ndarray | None = None,
+    method: str = "emd",
     power: int = 2,
-    weights: torch.Tensor | None = None,
-    **kwargs,
+    max_iter: int = 2000,
 ) -> float:
     assert power == 1 or power == 2
     # ot_fn should take (a, b, M) as arguments where a, b are marginals and
     # M is a cost matrix
-    if method == "exact" or method is None:
-        ot_fn = pot.emd2
+
+    a = pot.unif(x0.shape[0]) if weights is None else weights
+    b = pot.unif(x1.shape[0])
+    if x0.ndim > 2:
+        x0 = x0.reshape(x0.shape[0], -1)
+    if x1.ndim > 2:
+        x1 = x1.reshape(x1.shape[0], -1)
+
+    if method == "emd":
+        M = pot.dist(x0, x1, metric="euclidean" if power == 1 else "sqeuclidean")
+        ret = cast(float, pot.emd2(a, b, M, numItermax=max_iter))
+        ret = math.sqrt(ret)  # To make it consistent with previous works
     elif method == "sinkhorn":
-        ot_fn = partial(pot.sinkhorn2, reg=reg)
+        assert power == 2
+        ret = compute_OT_static(
+            gt_samples=jnp.array(x0),
+            model_samples=jnp.array(x1),
+            a=jnp.array(a),
+            b=jnp.array(b),
+            epsilon=1e-3,
+            entropy_reg=True,
+        )
+        ret = float(ret)
     else:
         raise ValueError(f"Unknown method: {method}")
 
-    a = pot.unif(x0.shape[0]) if weights is None else weights.cpu().numpy()
-    b = pot.unif(x1.shape[0])
-    if x0.dim() > 2:
-        x0 = x0.reshape(x0.shape[0], -1)
-    if x1.dim() > 2:
-        x1 = x1.reshape(x1.shape[0], -1)
-    M = torch.cdist(x0, x1)
-    if power == 2:
-        M = M**2
-    ret = cast(float, ot_fn(a, b, M.detach().cpu().numpy(), numItermax=10_000_000))
-    if power == 2:
-        ret = math.sqrt(ret)
     return ret
 
 
@@ -226,7 +273,7 @@ def _mmd2_and_variance(K_XX, K_XY, K_YY, const_diagonal=False, biased=False):
     return mmd2, var_est
 
 
-def compute_distances(pred, true):
+def vector_distances(pred, true):
     """computes distances between vectors."""
     mse = torch.nn.functional.mse_loss(pred, true).item()
     me = math.sqrt(mse)
@@ -234,77 +281,56 @@ def compute_distances(pred, true):
     return mse, me, mae
 
 
-def compute_distribution_distances(
+def distribution_distance_metrics(
     pred: torch.Tensor,
-    true: torch.Tensor | list,
+    true: torch.Tensor,
     weights: torch.Tensor | None = None,
 ):
-    """computes distances between distributions.
-    pred: [batch, times, dims] tensor or list[batch[i], dims] of length times
-    true: [batch, times, dims] tensor or list[batch[i], dims] of length times
-
-    This handles jagged times as a list of tensors.
     """
-    NAMES = [
-        "1-Wasserstein",
-        "2-Wasserstein",
-        "Linear_MMD",
-        "Poly_MMD",
-        "RBF_MMD",
-        "Mean_MSE",
-        "Mean_L2",
-        "Mean_L1",
-        "Median_MSE",
-        "Median_L2",
-        "Median_L1",
-    ]
-    is_jagged = isinstance(true, list)
-    pred_is_jagged = isinstance(pred, list)
-    dists = []
-    to_return = []
-    names = []
+    computes distances between distributions.
+    pred: [batch, dims] tensor
+    true: [batch, dims] tensor
+    """
+    metrics = {}
+
+    pred_np = pred.cpu().numpy()
+    true_np = true.cpu().numpy()
+    weights_np = weights.cpu().numpy() if weights is not None else None
+
+    w1 = wasserstein(pred_np, true_np, weights=weights_np, power=1)
+    w2 = wasserstein(pred_np, true_np, weights=weights_np, power=2)
+    sinkhorn = wasserstein(pred_np, true_np, weights=weights_np, method="sinkhorn", power=2)
+    metrics.update({"1-Wasserstein": w1, "2-Wasserstein": w2, "Sinkhorn": sinkhorn})
+
     if weights is not None:
-        filtered_names = ["1-Wasserstein", "2-Wasserstein"]
-    else:
-        filtered_names = [name for name in NAMES if not is_jagged or not name.endswith("MMD")]
+        return metrics
 
-    ts = len(pred) if pred_is_jagged else pred.shape[1]
-    for t in np.arange(ts):
-        if pred_is_jagged:
-            a = pred[t]
-        else:
-            a = pred[:, t, :]
-        if is_jagged:
-            b = true[t]
-        else:
-            b = true[:, t, :]
+    mmd_linear = linear_mmd2(pred, true).item()
+    mmd_poly = poly_mmd2(pred, true, d=2, alpha=1.0, c=2.0).item()
+    mmd_rbf = mix_rbf_mmd2(pred, true, sigma_list=[0.01, 0.1, 1, 10, 100]).item()
 
-        w1 = wasserstein(a, b, power=1, weights=weights)
-        w2 = wasserstein(a, b, power=2, weights=weights)
-        if not pred_is_jagged and not is_jagged:
-            mmd_linear = linear_mmd2(a, b).item()
-            mmd_poly = poly_mmd2(a, b, d=2, alpha=1.0, c=2.0).item()
-            mmd_rbf = mix_rbf_mmd2(a, b, sigma_list=[0.01, 0.1, 1, 10, 100]).item()
-        mean_dists = compute_distances(torch.mean(a, dim=0), torch.mean(b, dim=0))
-        median_dists = compute_distances(torch.median(a, dim=0)[0], torch.median(b, dim=0)[0])
-        if pred_is_jagged or is_jagged:
-            dists.append((w1, w2, *mean_dists, *median_dists))
-        else:
-            dists.append((w1, w2, mmd_linear, mmd_poly, mmd_rbf, *mean_dists, *median_dists))
-        # For multipoint datasets add timepoint specific distances
-        if ts > 1:
-            names.extend([f"t{t + 1}/{name}" for name in filtered_names])
-            to_return.extend(dists[-1])
+    mean_mse, mean_l2, mean_l1 = vector_distances(torch.mean(pred, dim=0), torch.mean(true, dim=0))
+    median_mse, median_l2, median_l1 = vector_distances(
+        torch.median(pred, dim=0)[0], torch.median(true, dim=0)[0]
+    )
 
-    to_return.extend(np.array(dists).mean(axis=0))
-    names.extend(filtered_names)
-    metrics = dict()
-    for name, to_return in zip(names, to_return):
-        metrics[name] = to_return
+    metrics.update(
+        {
+            "Linear_MMD": mmd_linear,
+            "Poly_MMD": mmd_poly,
+            "RBF_MMD": mmd_rbf,
+            "Mean_MSE": mean_mse,
+            "Mean_L2": mean_l2,
+            "Mean_L1": mean_l1,
+            "Median_MSE": median_mse,
+            "Median_L2": median_l2,
+            "Median_L1": median_l1,
+        }
+    )
     return metrics
 
 
-def estimate_partition_function(
+def density_metrics(
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
     log_fs: torch.Tensor,
@@ -343,12 +369,16 @@ def eval_step(
     discretizer: Callable[[int, int], torch.Tensor],
     T: int,
     pis: bool = False,
-    final_eval: bool = False,
     resampling: bool = False,
     resampling_strategy: Literal["multinomial", "stratified", "systematic"] = "multinomial",
     weighting: bool = False,
     buffer: BaseBuffer | None = None,
+    final_eval: bool = False,
+    full_eval: bool = True,  # If false, eval only density metrics
 ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+    if final_eval:
+        full_eval = True
+
     metrics = {}
 
     with torch.no_grad():
@@ -404,7 +434,7 @@ def eval_step(
         gt_log_Z = None
 
     metrics.update(
-        estimate_partition_function(
+        density_metrics(
             log_pfs,
             log_pbs,
             log_fs,
@@ -415,31 +445,30 @@ def eval_step(
             gt_log_Z=gt_log_Z,
         )
     )
+
+    weights = (log_rewards + log_pbs.sum(-1) - log_pfs.sum(-1)).softmax(0)
+    sample_xs_r = buffer_xs = None
+    if not full_eval:
+        return metrics, model_trajs, weights, sample_xs_r, buffer_xs
+
     if gt_xs is not None:
         # "1-Wasserstein", "2-Wasserstein", "Linear_MMD", "Poly_MMD", "RBF_MMD",
         # "Mean_MSE", "Mean_L2", "Mean_L1", "Median_MSE", "Median_L2", "Median_L1"
-        metrics.update(compute_distribution_distances(sample_xs.unsqueeze(1), gt_xs.unsqueeze(1)))
+        metrics.update(distribution_distance_metrics(sample_xs, gt_xs))
 
     metrics = {f"{'final_' if final_eval else ''}eval/{k}": v for k, v in metrics.items()}
 
     ### Resample or weighted
-    err = -(log_fs[:, 0] + log_pfs.sum(-1) - log_rewards - log_pbs.sum(-1))
-    weights = err.softmax(0)
 
-    sample_xs_r = None
     if resampling:
         # We can't use `estimate_partition_function` with resampled trajectories
         # since we don't know the distribution of the resampled trajectories
         assert gt_xs is not None
-
         metrics_r = {}
         sampled_idx = get_sampling_func(resampling_strategy)(weights, batch_size, True)
         model_trajs_r = model_trajs[sampled_idx]
         sample_xs_r = model_trajs_r[:, -1]
-
-        metrics_r.update(
-            compute_distribution_distances(sample_xs_r.unsqueeze(1), gt_xs.unsqueeze(1))
-        )
+        metrics_r.update(distribution_distance_metrics(sample_xs_r, gt_xs))
         metrics_r = {
             f"{'final_' if final_eval else ''}eval_resampled/{k}": v for k, v in metrics_r.items()
         }
@@ -448,23 +477,17 @@ def eval_step(
     if weighting:
         assert gt_xs is not None
         metrics_w = {}
-        metrics_w.update(
-            compute_distribution_distances(
-                sample_xs.unsqueeze(1), gt_xs.unsqueeze(1), weights=weights
-            )
-        )
+        metrics_w.update(distribution_distance_metrics(sample_xs, gt_xs, weights=weights))
         metrics_w = {
             f"{'final_' if final_eval else ''}eval_weighted/{k}": v for k, v in metrics_w.items()
         }
-
         metrics.update(metrics_w)
 
-    buffer_xs = None
     if buffer is not None and len(buffer) > 0:
         assert gt_xs is not None
         buffer_xs, _ = buffer.sample_terminal(data_size)
         metrics_b = {}
-        metrics_b.update(compute_distribution_distances(buffer_xs.unsqueeze(1), gt_xs.unsqueeze(1)))
+        metrics_b.update(distribution_distance_metrics(buffer_xs, gt_xs))
         metrics_b = {
             f"{'final_' if final_eval else ''}eval_buffer/{k}": v for k, v in metrics_b.items()
         }

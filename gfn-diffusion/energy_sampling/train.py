@@ -129,19 +129,23 @@ def train(args):
 
         ### Eval and plot###
         if i % args.eval_freq == 0:
-            results, model_trajs, weights, sample_xs_r, buffer_xs = eval_step_partial(
-                data_size=args.eval_data_size,
-            )
-            metrics.update(results)
-            if i % args.plot_freq == 0:
-                metrics.update(
-                    plot_step_partial(
-                        model_trajs=model_trajs,
-                        weights=weights,
-                        sample_xs_r=sample_xs_r,
-                        buffer_xs=buffer_xs,
-                    )
+            gfn_model.eval()
+            with torch.no_grad():
+                results, model_trajs, weights, sample_xs_r, buffer_xs = eval_step_partial(
+                    data_size=args.eval_data_size,
+                    full_eval=True if i % args.full_eval_freq == 0 else False,
                 )
+                metrics.update(results)
+                if i % args.plot_freq == 0:
+                    metrics.update(
+                        plot_step_partial(
+                            model_trajs=model_trajs,
+                            weights=weights,
+                            sample_xs_r=sample_xs_r,
+                            buffer_xs=buffer_xs,
+                        )
+                    )
+            gfn_model.train()
             # if i % 1000 == 0:
             #     torch.save(gfn_model.state_dict(), f'{save_dir}/model.pt')
 
@@ -187,19 +191,21 @@ def train(args):
     except NotImplementedError:
         pass
 
-    final_results, model_trajs, weights, sample_xs_r, buffer_xs = eval_step_partial(
-        data_size=args.final_eval_data_size,
-        final_eval=True,
-    )
-    metrics.update(final_results)
-    metrics.update(
-        plot_step_partial(
-            model_trajs=model_trajs,
-            weights=weights,
-            sample_xs_r=sample_xs_r,
-            buffer_xs=buffer_xs,
+    gfn_model.eval()
+    with torch.no_grad():
+        final_results, model_trajs, weights, sample_xs_r, buffer_xs = eval_step_partial(
+            data_size=args.final_eval_data_size,
+            final_eval=True,
         )
-    )
+        metrics.update(final_results)
+        metrics.update(
+            plot_step_partial(
+                model_trajs=model_trajs,
+                weights=weights,
+                sample_xs_r=sample_xs_r,
+                buffer_xs=buffer_xs,
+            )
+        )
     wandb.log(metrics, step=args.epochs)
     # torch.save(gfn_model.state_dict(), f'{save_dir}/model_final.pt')
 
@@ -346,6 +352,7 @@ if __name__ == "__main__":
     ### Eval & Plot
     parser.add_argument("--disable_wandb", action="store_true", default=False)
     parser.add_argument("--eval_freq", type=int, default=100)
+    parser.add_argument("--full_eval_freq", type=int, default=2500)
     parser.add_argument("--eval_data_size", type=int, default=2000)
     parser.add_argument("--final_eval_data_size", type=int, default=2000)
     parser.add_argument("--plot_freq", type=int, default=2500)
