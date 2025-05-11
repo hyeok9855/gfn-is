@@ -2,7 +2,7 @@
 
 GMM40_T_SCALE=100.0
 
-for LOSS in pis tb logvar db fldb subtb flsubtb; do  # pis tb logvar db subtb fldb flsubtb
+for LOSS in pis tb logvar db subtb fldb flsubtb; do  # pis tb logvar db subtb fldb flsubtb
 
     ##### Handle loss-specific arguments #####
     if [ "$LOSS" = "fldb" ]; then
@@ -50,7 +50,7 @@ for LOSS in pis tb logvar db fldb subtb flsubtb; do  # pis tb logvar db subtb fl
                 fi
 
                 for BUFFER_PRIORITIZATION in normalized_iw target loss none; do  # normalized_iw none
-                    ARGS5="--prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temperature"
+                    ARGS5="--prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper"
 
                     ##### Run with algorithm-specific arguments #####
                     ARGS="$ARGS1 $ARGS2 $ARGS3 $ARGS4 $ARGS5"
@@ -58,34 +58,34 @@ for LOSS in pis tb logvar db fldb subtb flsubtb; do  # pis tb logvar db subtb fl
                     # PIS
                     if [ "$LOSS" = "pis" ]; then
                         if [ "$BUFFER_PRIORITIZATION" = "none" ]; then
-                            sbatch scripts/default_run.sh "$ARGS"
+                            sbatch scripts/run_5seed.sh "$ARGS"
                         fi
 
                     # TB
                     elif [ "$LOSS" = "tb" ]; then
-                        sbatch scripts/default_run.sh "$ARGS"
+                        sbatch scripts/run_5seed.sh "$ARGS"
 
                     # LogVar
                     elif [ "$LOSS" = "logvar" ]; then
-                        sbatch scripts/default_run.sh "$ARGS"
+                        sbatch scripts/run_5seed.sh "$ARGS"
 
                     # DB
                     elif [ "$LOSS" = "db" ]; then
-                        sbatch scripts/default_run.sh "$ARGS"
+                        sbatch scripts/run_5seed.sh "$ARGS"
 
                     # FL-DB
                     elif [ "$LOSS" = "fldb" ]; then
-                        sbatch scripts/default_run.sh "$ARGS"
+                        sbatch scripts/run_5seed.sh "$ARGS"
 
                     # SubTB (Chunk-based)
                     elif [ "$LOSS" = "subtb" ]; then
                         N_CHUNKS=10
-                        sbatch scripts/default_run.sh "$ARGS --subtb_n_chunks $N_CHUNKS"
+                        sbatch scripts/run_5seed.sh "$ARGS --subtb_n_chunks $N_CHUNKS"
 
                     # FL-SubTB (Chunk-based)
                     elif [ "$LOSS" = "flsubtb" ]; then
                         N_CHUNKS=10
-                        sbatch scripts/default_run.sh "$ARGS --subtb_n_chunks $N_CHUNKS"
+                        sbatch scripts/run_5seed.sh "$ARGS --subtb_n_chunks $N_CHUNKS"
 
                     else
                         echo "Invalid loss: $LOSS"
