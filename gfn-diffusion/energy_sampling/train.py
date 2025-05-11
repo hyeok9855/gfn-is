@@ -25,31 +25,24 @@ def train(args):
 
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
     energy = get_energy(args, device)
-
-    try:
-        gt_xs = energy.sample(args.eval_data_size).to(device)
-    except NotImplementedError:
-        gt_xs = None
-
-    energy_name = f"{args.energy_name}-{energy.ndim}d"
-    exp_name = get_name(args)
-
     try:
         energy.cached_sample(args.eval_data_size)
     except NotImplementedError:
         pass
 
+    exp_name = get_name(args)
+
     # parent_dir = os.path.dirname(os.path.abspath(__file__))
-    # save_dir = f"{parent_dir}/results/{energy_name}/{exp_name}"
+    # save_dir = f"{parent_dir}/results/{args.energy_name}-{energy.ndim}d/{exp_name}"
     # os.makedirs(save_dir, exist_ok=True)
 
     config = args.__dict__
     config["Experiment"] = "{args.energy}"
     wandb.init(
-        project=f"GFN-Diffusion-{energy_name}",
+        project=f"GFN-Diffusion-{args.energy_name}-{energy.ndim}d",
         config=config,
         name=exp_name,
-        tags=[f"seed{args.seed}"],
+        tags=[f"seed{args.seed}", "May8-Random"],
         mode="disabled" if args.disable_wandb else "online",
     )
 
@@ -61,7 +54,7 @@ def train(args):
         t_scale=args.t_scale,
         partial_energy=args.partial_energy,
         learn_beta_T=args.learn_beta_T,
-        state_reduce_mean=args.state_reduce_mean,
+        state_remove_mean=args.state_remove_mean,
         device=device,
     ).to(device)
 
@@ -277,7 +270,7 @@ if __name__ == "__main__":
     parser.add_argument("--lp_scaling_per_dimension", action="store_true", default=False)
     parser.add_argument("--lgv_layers", type=int, default=3)
     parser.add_argument("--no_clipping", action="store_false", dest="clipping")
-    parser.add_argument("--gfn_clip", type=float, default=1e4)
+    parser.add_argument("--out_clip", type=float, default=1e4)
     parser.add_argument("--lgv_clip", type=float, default=1e2)
     parser.add_argument("--learn_pb", action="store_true", default=False)
     parser.add_argument("--pb_scale_range", type=float, default=0.1)
@@ -392,7 +385,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    args.state_reduce_mean = True if args.energy_name in ["lj13", "lj55"] else False
+    args.state_remove_mean = True if args.energy_name in ["lj13", "lj55"] else False
 
     args.loss_type_str = args.loss_type
     if args.loss_type in ["db", "subtb"]:

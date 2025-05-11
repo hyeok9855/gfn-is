@@ -18,7 +18,7 @@ class GFN(nn.Module):
         t_scale: float = 1.0,
         partial_energy: bool = False,
         learn_beta_T: int = 0,
-        state_reduce_mean: bool = False,
+        state_remove_mean: bool = False,
         device=torch.device("cuda"),
     ) -> None:
         super().__init__()
@@ -26,7 +26,7 @@ class GFN(nn.Module):
         self.pred_module = module
         self.t_scale = t_scale
         self.partial_energy = partial_energy
-        self.state_reduce_mean = state_reduce_mean
+        self.state_remove_mean = state_remove_mean
         self.device = device
 
         self.beta_model = None
@@ -84,7 +84,7 @@ class GFN(nn.Module):
                 * torch.randn_like(s, device=self.device)
             )
 
-            if self.state_reduce_mean:
+            if self.state_remove_mean:
                 assert isinstance(self.energy, LennardJones)
                 s_next = remove_mean(s_next, self.energy.n_particles, self.energy.spatial_dim)
 
@@ -125,7 +125,7 @@ class GFN(nn.Module):
                 t != 0
             ] * torch.randn_like(s_next[t != 0])
 
-            if self.state_reduce_mean:
+            if self.state_remove_mean:
                 assert isinstance(self.energy, LennardJones)
                 s = remove_mean(s, self.energy.n_particles, self.energy.spatial_dim)
 
