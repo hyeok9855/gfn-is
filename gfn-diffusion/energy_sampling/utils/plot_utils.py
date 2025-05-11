@@ -9,6 +9,7 @@ import torch
 import wandb
 from matplotlib.figure import Figure
 
+from buffers import IntermediateStateBuffer
 from energies import (
     BaseEnergy,
     Funnel,
@@ -18,6 +19,7 @@ from energies import (
     LennardJones,
     TwentyFiveGaussianMixture,
 )
+from models import GFN
 from utils.particle_system import interatomic_distance
 
 
@@ -309,7 +311,7 @@ def viz_lennard_jones(energy: LennardJones, xs: torch.Tensor) -> dict:
     return {"visualization/hists": wandb.Image(fig_to_image(fig))}
 
 
-def plot_step(
+def _plot_step(
     energy: BaseEnergy,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
@@ -340,3 +342,46 @@ def plot_step(
 
     plt.close("all")
     return {k.replace("visualization", f"visualization{suffix}"): v for k, v in out_dict.items()}
+
+
+def plot_step(
+    energy: BaseEnergy,
+    model_trajs: torch.Tensor,
+    weights: torch.Tensor | None = None,
+    sample_xs_r: torch.Tensor | None = None,
+    buffer_xs: torch.Tensor | None = None,
+    plot_t_idx: list[int] = [],
+    gfn_model: GFN | None = None,
+    discretizer: Callable[[int, int], torch.Tensor] | None = None,
+    T: int | None = None,
+    plot_buffer_t_idx: list[int] = [],
+    buffer: IntermediateStateBuffer | None = None,
+) -> dict:
+
+    images = _plot_step(energy, model_trajs[:, -1])
+    if weights is not None:
+        images.update(_plot_step(energy, model_trajs[:, -1], weights=weights, suffix="_weighted"))
+    if sample_xs_r is not None:
+        images.update(_plot_step(energy, sample_xs_r, suffix="_resample"))
+    if buffer_xs is not None:
+        images.update(_plot_step(energy, buffer_xs, suffix="_buffer"))
+
+    # Plot intermediate states
+    if len(plot_t_idx) > 0:
+        assert discretizer is not None and T is not None and gfn_model is not None
+        eval_ts = discretizer(model_trajs.shape[0], T)
+        for t_idx in plot_t_idx:
+            inter_states = model_trajs[:, t_idx]
+            assert (eval_ts[:, t_idx] == eval_ts[0, t_idx]).all()  # uniform discretizer
+            eval_t = round(eval_ts[0, t_idx].item(), 3)
+            inter_energy = IntermediateEnergy(energy, gfn_model, eval_t)
+            images.update(_plot_step(inter_energy, inter_states, suffix=f"-t{eval_t}"))
+    if len(plot_buffer_t_idx) > 0:
+        assert isinstance(buffer, IntermediateStateBuffer) and gfn_model is not None
+        for t_idx in plot_buffer_t_idx:
+            inter_states, buf_ts, _ = buffer.sample_timestep(model_trajs.shape[0], t_idx)
+            assert (buf_ts == buf_ts[0]).all()  # uniform discretizer
+            buf_t = round(buf_ts[0].item(), 3)
+            inter_energy = IntermediateEnergy(energy, gfn_model, buf_t)
+            images.update(_plot_step(inter_energy, inter_states, suffix=f"_buffer-t{buf_t}"))
+    return images

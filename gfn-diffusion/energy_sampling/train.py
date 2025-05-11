@@ -107,7 +107,16 @@ def train(args):
         weighting=args.eval_weighting,
         buffer=buffer if args.eval_buffer else None,
     )
-    plot_step_partial = partial(plot_step, energy=energy)
+    plot_step_partial = partial(
+        plot_step,
+        energy=energy,
+        plot_t_idx=args.plot_t_idx,
+        gfn_model=gfn_model,
+        discretizer=eval_discretizer,
+        T=args.eval_T,
+        plot_buffer_t_idx=args.plot_buffer_t_idx,
+        buffer=buffer if isinstance(buffer, IntermediateStateBuffer) else None,
+    )
 
     ######################
     # Main training loop #
@@ -117,49 +126,25 @@ def train(args):
     for i in trange(args.epochs, dynamic_ncols=True):
         metrics = dict()
 
-        ### Eval ###
+        ### Eval and plot###
         if i % args.eval_freq == 0:
             results, model_trajs, weights, sample_xs_r, buffer_xs = eval_step_partial(
                 data_size=args.eval_data_size,
             )
             metrics.update(results)
             if i % args.plot_freq == 0:
-                metrics.update(plot_step_partial(samples=model_trajs[:, -1]))
-                if weights is not None:
-                    metrics.update(
-                        plot_step_partial(
-                            samples=model_trajs[:, -1], weights=weights, suffix="_weighted"
-                        )
+                metrics.update(
+                    plot_step_partial(
+                        model_trajs=model_trajs,
+                        weights=weights,
+                        sample_xs_r=sample_xs_r,
+                        buffer_xs=buffer_xs,
                     )
-                if sample_xs_r is not None:
-                    metrics.update(plot_step_partial(samples=sample_xs_r, suffix="_resample"))
-                if buffer_xs is not None:
-                    metrics.update(plot_step_partial(samples=buffer_xs, suffix="_buffer"))
-
-                # Plot intermediate states
-                if len(args.plot_t_idx) > 0:
-                    eval_ts = eval_discretizer(args.eval_data_size, args.eval_T)
-                    for t_idx in args.plot_t_idx:
-                        inter_states = model_trajs[:, t_idx]
-                        assert (eval_ts[:, t_idx] == eval_ts[0, t_idx]).all()  # uniform discretizer
-                        eval_t = round(eval_ts[0, t_idx].item(), 3)
-                        inter_energy = IntermediateEnergy(energy, gfn_model, eval_t)
-                        metrics.update(plot_step(inter_energy, inter_states, suffix=f"-t{eval_t}"))
-                if buffer is not None and len(buffer) > 0 and len(args.plot_buffer_t_idx) > 0:
-                    assert isinstance(buffer, IntermediateStateBuffer)
-                    for t_idx in args.plot_buffer_t_idx:
-                        inter_states, buf_ts, _ = buffer.sample_timestep(args.eval_data_size, t_idx)
-                        assert (buf_ts == buf_ts[0]).all()  # uniform discretizer
-                        buf_t = round(buf_ts[0].item(), 3)
-                        inter_energy = IntermediateEnergy(energy, gfn_model, buf_t)
-                        metrics.update(
-                            plot_step(inter_energy, inter_states, suffix=f"_buffer-t{buf_t}")
-                        )
+                )
             # if i % 1000 == 0:
             #     torch.save(gfn_model.state_dict(), f'{save_dir}/model.pt')
 
         ### Train ###
-
         epsilon = args.epsilon
         if args.anneal_epsilon:  # annealing half the epochs
             epsilon = linear_annealing(i, args.epochs // 2, 0.0, args.epsilon, descending=True)
@@ -195,7 +180,7 @@ def train(args):
         )
         wandb.log(metrics, step=i)
 
-    ### Final eval ###
+    ### Final eval and plot ###
     try:
         energy.cached_sample(args.final_eval_data_size)
     except NotImplementedError:
@@ -206,7 +191,14 @@ def train(args):
         final_eval=True,
     )
     metrics.update(final_results)
-    metrics.update(plot_step_partial(samples=model_trajs[:, -1]))
+    metrics.update(
+        plot_step_partial(
+            model_trajs=model_trajs,
+            weights=weights,
+            sample_xs_r=sample_xs_r,
+            buffer_xs=buffer_xs,
+        )
+    )
     wandb.log(metrics, step=args.epochs)
     # torch.save(gfn_model.state_dict(), f'{save_dir}/model_final.pt')
 
