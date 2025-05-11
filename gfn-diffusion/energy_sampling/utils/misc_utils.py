@@ -109,7 +109,7 @@ def get_name(args: argparse.Namespace) -> str:
             if args.prioritization != "none":
                 name += f"-{args.prioritization}-{args.buffer_sampling}"
 
-    name += f"-T{args.T}-{args.discretizer}"
+    name += f"_T{args.T}-{args.discretizer}"
     if args.discretizer == "random":
         name += f"-maxr{args.discretizer_max_ratio}"
 
