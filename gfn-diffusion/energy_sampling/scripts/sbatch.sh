@@ -47,6 +47,8 @@ for LOSS in pis tb logvar db subtb fldb flsubtb; do  # pis tb logvar db subtb fl
             for LP in False True; do
                 if [ "$LP" = "True" ]; then
                     ARGS4="--lp --hidden_dim 64 --flow_hidden_dim 64"
+                else
+                    ARGS4=""
                 fi
 
                 for BUFFER_PRIORITIZATION in normalized_iw target loss none; do  # normalized_iw none
