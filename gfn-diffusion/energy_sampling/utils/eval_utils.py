@@ -356,6 +356,7 @@ def density_metrics(
         "log_Z_learned": log_Z_learned,
         "elbo": elbo,
         "eubo": eubo,
+        "eubo-elbo": eubo - elbo,
         "ess": ess,
     }
     return metrics
