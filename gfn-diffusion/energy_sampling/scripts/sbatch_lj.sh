@@ -20,15 +20,7 @@ for STARTSEED in 0 1 2 3 4; do  # 0 1 2 3 4
 
                 ##### Handle loss-specific arguments #####
                 for LOSS in pis tb logvar; do  # pis tb logvar // TODO: db subtb fldb flsubtb
-                    if [ "$LOSS" = "fldb" ]; then
-                        LOSS_TYPE=db
-                    elif [ "$LOSS" = "flsubtb" ]; then
-                        LOSS_TYPE=subtb
-                    else
-                        LOSS_TYPE=$LOSS
-                    fi
-
-                    ARGS3="--loss_type $LOSS_TYPE"
+                     ARGS3="--loss_type ${LOSS#"fl"}"
 
                     if [ "$LOSS" = "db" ] || [ "$LOSS" = "fldb" ] || [ "$LOSS" = "subtb" ] || [ "$LOSS" = "flsubtb" ]; then
                         ARGS3="$ARGS3 --plot_t_idx 25 50 75"

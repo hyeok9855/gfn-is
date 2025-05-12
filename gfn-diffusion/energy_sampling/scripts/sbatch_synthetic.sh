@@ -19,15 +19,7 @@ for ENERGY_NAME in gmm40 manywell; do  # gmm40 manywell
 
     ##### Handle loss-specific arguments #####
     for LOSS in pis tb logvar db subtb fldb flsubtb; do  # pis tb logvar db subtb fldb flsubtb
-        if [ "$LOSS" = "fldb" ]; then
-            LOSS_TYPE=db
-        elif [ "$LOSS" = "flsubtb" ]; then
-            LOSS_TYPE=subtb
-        else
-            LOSS_TYPE=$LOSS
-        fi
-
-        ARGS2="--loss_type $LOSS_TYPE"
+        ARGS2="--loss_type ${LOSS#"fl"}"
 
         if [ "$LOSS" = "db" ] || [ "$LOSS" = "fldb" ] || [ "$LOSS" = "subtb" ] || [ "$LOSS" = "flsubtb" ]; then
             ARGS2="$ARGS2 --plot_t_idx 25 50 75"
