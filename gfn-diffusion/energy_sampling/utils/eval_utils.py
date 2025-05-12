@@ -57,7 +57,6 @@ def wasserstein(
     weights: np.ndarray | None = None,
     method: str = "emd",
     power: int = 2,
-    max_iter: int = 2000,
 ) -> float:
     assert power == 1 or power == 2
     # ot_fn should take (a, b, M) as arguments where a, b are marginals and
@@ -72,7 +71,7 @@ def wasserstein(
 
     if method == "emd":
         M = pot.dist(x0, x1, metric="euclidean" if power == 1 else "sqeuclidean")
-        ret = cast(float, pot.emd2(a, b, M, numItermax=max_iter))
+        ret = cast(float, pot.emd2(a, b, M, numItermax=10_000_000))
         ret = math.sqrt(ret)  # To make it consistent with previous works
     elif method == "sinkhorn":
         assert power == 2
