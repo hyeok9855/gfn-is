@@ -15,57 +15,59 @@ for STARTSEED in 0 1 2 3 4; do  # 0 1 2 3 4
         fi
 
         for TSCALE in 0.1 0.2 0.5 1.0; do  # 0.1 0.2 0.5 1.0
-            ARGS2="--energy_name $ENERGY_NAME --module egnn --t_scale $TSCALE --batch_size $BATCHSIZE --prefill $PREFILL"
+            for LRFWD in 1e-4 3e-4 1e-3; do
+                ARGS2="--energy_name $ENERGY_NAME --module egnn --t_scale $TSCALE --lr_fwd $LRFWD"
 
-            ##### Handle loss-specific arguments #####
-            for LOSS in pis tb logvar; do  # pis tb logvar // TODO: db subtb fldb flsubtb
-                if [ "$LOSS" = "fldb" ]; then
-                    LOSS_TYPE=db
-                elif [ "$LOSS" = "flsubtb" ]; then
-                    LOSS_TYPE=subtb
-                else
-                    LOSS_TYPE=$LOSS
-                fi
-
-                ARGS3="--loss_type $LOSS_TYPE"
-
-                if [ "$LOSS" = "db" ] || [ "$LOSS" = "fldb" ] || [ "$LOSS" = "subtb" ] || [ "$LOSS" = "flsubtb" ]; then
-                    ARGS3="$ARGS3 --plot_t_idx 25 50 75"
-                    if [ "$LOSS" = "fldb" ] || [ "$LOSS" = "flsubtb" ]; then
-                        ARGS3="$ARGS3 --partial_energy"
+                ##### Handle loss-specific arguments #####
+                for LOSS in pis tb logvar; do  # pis tb logvar // TODO: db subtb fldb flsubtb
+                    if [ "$LOSS" = "fldb" ]; then
+                        LOSS_TYPE=db
+                    elif [ "$LOSS" = "flsubtb" ]; then
+                        LOSS_TYPE=subtb
+                    else
+                        LOSS_TYPE=$LOSS
                     fi
 
-                    if [ "$LOSS" = "subtb" ] || [ "$LOSS" = "flsubtb" ]; then
-                        N_CHUNKS=10
-                        ARGS3="$ARGS3 --subtb_n_chunks $N_CHUNKS"
-                    fi
-                fi
+                    ARGS3="--loss_type $LOSS_TYPE"
 
-                ##### Handle Miscellaneous #####
-                # Note: For LJs, LP is not used since it's much worse than the default
-                for T in 20 50 100; do  # 20 50 100
-                    ARGS4="--T $T --eval_T 100"
-
-                    for TRAININGMODE in fwd both; do  # fwd both
-                        ARGS5="--training_mode $TRAININGMODE"
-
-                        # On-policy
-                        if [ "$TRAININGMODE" = "fwd" ]; then
-                            sbatch scripts/run_seeds.sh "$ARGS1 $ARGS2 $ARGS3 $ARGS4 $ARGS5" $STARTSEED $ENDSEED
-
-                        # Off-policy with buffer
-                        else
-                            if [ "$LOSS" = "pis" ]; then
-                                continue
-                            fi
-
-                            for BUFFER_PRIORITIZATION in normalized_iw target loss none; do  # normalized_iw target loss none
-                                BUFFER_SIZE=200000
-                                PREFILL=100
-                                ARGS6="--buffer_size $BUFFER_SIZE --prefill $PREFILL --prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper --eval_buffer"
-                                sbatch scripts/run_seeds.sh "$ARGS1 $ARGS2 $ARGS3 $ARGS4 $ARGS5 $ARGS6" $STARTSEED $ENDSEED
-                            done
+                    if [ "$LOSS" = "db" ] || [ "$LOSS" = "fldb" ] || [ "$LOSS" = "subtb" ] || [ "$LOSS" = "flsubtb" ]; then
+                        ARGS3="$ARGS3 --plot_t_idx 25 50 75"
+                        if [ "$LOSS" = "fldb" ] || [ "$LOSS" = "flsubtb" ]; then
+                            ARGS3="$ARGS3 --partial_energy"
                         fi
+
+                        if [ "$LOSS" = "subtb" ] || [ "$LOSS" = "flsubtb" ]; then
+                            N_CHUNKS=10
+                            ARGS3="$ARGS3 --subtb_n_chunks $N_CHUNKS"
+                        fi
+                    fi
+
+                    ##### Handle Miscellaneous #####
+                    # Note: For LJs, LP is not used since it's much worse than the default
+                    for T in 20 50 100; do  # 20 50 100
+                        ARGS4="--T $T --eval_T 100"
+
+                        for TRAININGMODE in fwd both; do  # fwd both
+                            ARGS5="--training_mode $TRAININGMODE"
+
+                            # On-policy
+                            if [ "$TRAININGMODE" = "fwd" ]; then
+                                sbatch scripts/run_seeds.sh "$ARGS1 $ARGS2 $ARGS3 $ARGS4 $ARGS5" $STARTSEED $ENDSEED
+
+                            # Off-policy with buffer
+                            else
+                                if [ "$LOSS" = "pis" ]; then
+                                    continue
+                                fi
+
+                                for BUFFER_PRIORITIZATION in normalized_iw target loss none; do  # normalized_iw target loss none
+                                    BUFFER_SIZE=200000
+                                    PREFILL=100
+                                    ARGS6="--buffer_size $BUFFER_SIZE --prefill $PREFILL --prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper --eval_buffer"
+                                    sbatch scripts/run_seeds.sh "$ARGS1 $ARGS2 $ARGS3 $ARGS4 $ARGS5 $ARGS6" $STARTSEED $ENDSEED
+                                done
+                            fi
+                        done
                     done
                 done
             done
