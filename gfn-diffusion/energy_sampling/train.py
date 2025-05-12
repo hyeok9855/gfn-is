@@ -98,7 +98,7 @@ def train(args):
         bwd_to_fwd_ratio=args.bwd_to_fwd_ratio,
         buffer=buffer,
         buffer_save_interval=args.buffer_save_interval,
-        prefill_epochs=args.prefill,
+        prefill_epochs=args.prefill_epochs,
         batch_size=args.batch_size,
         train_discretizer=train_discretizer,
         train_T=args.T,
@@ -297,7 +297,7 @@ if __name__ == "__main__":
     # (0 means only save terminal states, n>0 saves states at every nth timestep)
     parser.add_argument("--buffer_save_interval", type=int, default=0)
     # prefill to wait before starting to sample from buffer
-    parser.add_argument("--prefill", type=int, default=0)
+    parser.add_argument("--prefill_epochs", type=int, default=-1)
     ################################################################
 
     ################################################################
@@ -338,7 +338,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--resampling_strategy",
         type=str,
-        default="multinomial",
+        default="systematic",
         choices=("multinomial", "stratified", "systematic"),
     )
     ################################################################
@@ -375,6 +375,9 @@ if __name__ == "__main__":
 
     if args.buffer_size == -1:
         args.buffer_size = 100 * args.batch_size
+
+    if args.prefill_epochs == -1:
+        args.prefill_epochs = min(100, args.buffer_size / args.batch_size // 10)
 
     assert args.plot_freq % args.eval_freq == 0
 
