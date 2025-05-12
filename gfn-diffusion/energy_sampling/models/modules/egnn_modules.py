@@ -26,6 +26,7 @@ class EGNNModule(BaseModule):
         pb_scale_range: float = 1.0,
         learn_variance: bool = True,
         log_var_range: float = 4.0,
+        use_checkpoint: bool = False,
         ### EGNN arguments
         hidden_nf=128,
         n_layers=5,
@@ -47,6 +48,7 @@ class EGNNModule(BaseModule):
             pb_scale_range=pb_scale_range,
             learn_variance=learn_variance,
             log_var_range=log_var_range,
+            use_checkpoint=use_checkpoint,
         )
         if conditional_flow_model:
             raise NotImplementedError("Conditional flow model is not implemented for EGNN")

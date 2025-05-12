@@ -174,7 +174,6 @@ def train(args):
             prefill=args.prefill,
             buffer_save_interval=args.buffer_save_interval,
             clip_grad_norm=args.clip_grad_norm,
-            device=device,
             resampling=args.train_resampling,
             resampling_strategy=args.resampling_strategy,
             weighting=args.train_weighting,
@@ -253,6 +252,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=25000)
 
     parser.add_argument("--module", type=str, default="pismlp", choices=("pismlp", "mlp", "egnn"))
+    parser.add_argument("--use_checkpoint", action="store_true", default=False)
     ################################################################
     ### MLP parameters
     parser.add_argument("--hidden_dim", type=int, default=256)

@@ -22,6 +22,7 @@ class MLPModule(BaseModule):
         pb_scale_range: float = 1.0,
         learn_variance: bool = True,
         log_var_range: float = 4.0,
+        use_checkpoint: bool = False,
         ### MLP arguments
         harmonics_dim: int = 64,
         t_emb_dim: int = 64,
@@ -49,6 +50,7 @@ class MLPModule(BaseModule):
             pb_scale_range=pb_scale_range,
             learn_variance=learn_variance,
             log_var_range=log_var_range,
+            use_checkpoint=use_checkpoint,
         )
 
         self.ndim = ndim

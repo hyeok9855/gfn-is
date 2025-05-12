@@ -14,12 +14,18 @@ module --quiet purge
 module --quiet load anaconda/3
 module --quiet load cuda/12.6.0/cudnn/9.3
 conda activate gfn-is
+
+# Make wandb directory if it doesn't exist
+export WANDB_DIR=.../gfn-is/gfn-diffusion/energy_sampling/
+mkdir -p $WANDB_DIR
 wandb login --relogin ...
 
 
 ARGS=$1
+START_SEED=${2:-0}
+END_SEED=${3:-4}
 
-for SEED in 0 1 2 3 4; do
+for SEED in $(seq $START_SEED $END_SEED); do
     if [ "$SEED" = "0" ]; then
         python train.py $ARGS --seed $SEED &
     else

@@ -20,6 +20,7 @@ def get_module(args: argparse.Namespace, energy: BaseEnergy) -> BaseModule:
         "pb_scale_range": args.pb_scale_range,
         "learn_variance": args.learn_variance,
         "log_var_range": args.log_var_range,
+        "use_checkpoint": args.use_checkpoint,
     }
     if "mlp" in args.module:
         mlp_kwargs = {

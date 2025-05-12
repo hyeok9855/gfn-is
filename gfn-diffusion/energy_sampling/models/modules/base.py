@@ -4,6 +4,7 @@ from typing import Callable
 
 import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 
 @dataclass
@@ -28,6 +29,7 @@ class BaseModule(nn.Module, ABC):
         pb_scale_range: float = 1.0,
         learn_variance: bool = True,
         log_var_range: float = 4.0,
+        use_checkpoint: bool = False,
     ) -> None:
         super().__init__()
 
@@ -52,6 +54,8 @@ class BaseModule(nn.Module, ABC):
         self.out_dim = 2 * ndim if learn_variance else ndim
         self.lgv_out_dim = ndim if lp_scaling_per_dimension else 1
 
+        self.use_checkpoint = use_checkpoint
+
     @abstractmethod
     def get_param_groups(self) -> ParamGroups:
         raise NotImplementedError
@@ -66,6 +70,20 @@ class BaseModule(nn.Module, ABC):
         # 3. Get `flow` with `predict_flow`
         # 4. Return `mean`, `logvar`, `flow`
         raise NotImplementedError
+
+    def forward(
+        self, s: torch.Tensor, t: torch.Tensor, logr_fn: Callable | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:  # mean, logvar, flow
+        if self.use_checkpoint and self.training:
+            return checkpoint(  # type: ignore
+                self.predict_forward,
+                s,
+                t,
+                logr_fn,
+                use_reentrant=False,
+            )
+        else:
+            return self.predict_forward(s, t, logr_fn)
 
     def predict_flow(self, **kwargs) -> torch.Tensor:
         if self.conditional_flow_model:
@@ -84,6 +102,20 @@ class BaseModule(nn.Module, ABC):
             return self.predict_backward_correction(s_next, t_next, **kwargs)
         else:
             return torch.ones_like(s_next), torch.ones_like(s_next)
+
+    def backward(
+        self, s_next: torch.Tensor, t_next: torch.Tensor, **kwargs
+    ) -> tuple[torch.Tensor, torch.Tensor]:  # bwd_mean_correction, bwd_var_correction
+        if self.use_checkpoint and self.training:
+            return checkpoint(  # type: ignore
+                self.predict_backward,
+                s_next,
+                t_next,
+                **kwargs,
+                use_reentrant=False,
+            )
+        else:
+            return self.predict_backward(s_next, t_next, **kwargs)
 
     def predict_backward_correction(
         self, s_next: torch.Tensor, t_next: torch.Tensor, **kwargs

@@ -115,7 +115,7 @@ class GFN(nn.Module):
 
         dts = (t_next - t).unsqueeze(1)
 
-        mean_correction, var_correction = self.pred_module.predict_backward(s_next, t_next)
+        mean_correction, var_correction = self.pred_module.backward(s_next, t_next)
         back_mean = s_next - s_next * dts / (t_next).unsqueeze(1) * mean_correction
         back_var = self.t_scale * dts * (t / t_next).unsqueeze(1) * var_correction
 
@@ -177,9 +177,7 @@ class GFN(nn.Module):
         states[:, 0] = s
 
         for i in range(T):
-            pf_mean, pf_logvar, flow = self.pred_module.predict_forward(
-                s, ts[:, i], self.energy.log_reward
-            )
+            pf_mean, pf_logvar, flow = self.pred_module.forward(s, ts[:, i], self.energy.log_reward)
 
             if self.pred_module.conditional_flow_model or i == 0:
                 log_fs[:, i] = flow
@@ -228,7 +226,7 @@ class GFN(nn.Module):
             else:
                 s_ = torch.zeros_like(s)
 
-            pf_mean, pf_logvar, flow = self.pred_module.predict_forward(
+            pf_mean, pf_logvar, flow = self.pred_module.forward(
                 s_, ts[:, T - i - 1], self.energy.log_reward
             )
 
@@ -278,7 +276,7 @@ class GFN(nn.Module):
 
         if (is_intermediate := t_idx_intermediate != T).any():
             # For non-terminal states, we should predict the flow at the current timestep
-            _, _, flow = self.pred_module.predict_forward(
+            _, _, flow = self.pred_module.forward(
                 s[is_intermediate], curr_t[is_intermediate], self.energy.log_reward
             )
             log_fs[is_intermediate, t_idx_intermediate[is_intermediate]] = flow
@@ -313,7 +311,7 @@ class GFN(nn.Module):
                 log_pbs[is_backward, t1_idx_bwd] = log_pb_bwd
 
             # Forward pass with the one-step forward state of t1
-            pf_mean, pf_logvars, flow = self.pred_module.predict_forward(
+            pf_mean, pf_logvars, flow = self.pred_module.forward(
                 states[arange, t1_idx], t1, self.energy.log_reward
             )
             log_fs[arange, t1_idx] = flow
