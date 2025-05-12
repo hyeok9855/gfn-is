@@ -1,21 +1,16 @@
 import math
-from typing import Callable, Literal, cast
-
-import numpy as np
-import ot as pot
-import torch
+from typing import cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+import ot as pot
+import torch
 from ott.geometry import pointcloud
 from ott.problems.linear import linear_problem
 from ott.solvers.linear import sinkhorn
 
-from buffers import BaseBuffer
-from energies import BaseEnergy
-from models import GFN
 from utils.misc_utils import logmeanexp
-from utils.sampling_utils import get_sampling_func
 
 MIN_VAR_EST = 1e-8
 
@@ -360,132 +355,3 @@ def density_metrics(
         "ess": ess,
     }
     return metrics
-
-
-def eval_step(
-    data_size: int,
-    batch_size: int,
-    gfn_model: GFN,
-    energy: BaseEnergy,
-    discretizer: Callable[[int, int], torch.Tensor],
-    T: int,
-    pis: bool = False,
-    resampling: bool = False,
-    resampling_strategy: Literal["multinomial", "stratified", "systematic"] = "multinomial",
-    weighting: bool = False,
-    buffer: BaseBuffer | None = None,
-    final_eval: bool = False,
-    full_eval: bool = True,  # If false, eval only density metrics
-) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
-    if final_eval:
-        full_eval = True
-
-    metrics = {}
-
-    with torch.no_grad():
-        divisible = data_size % batch_size == 0
-        n_epochs = data_size // batch_size + (1 if not divisible else 0)
-
-        model_trajs, log_pfs, log_pbs, log_fs, log_rewards = [], [], [], [], []
-
-        for i in range(n_epochs):
-            if i == n_epochs - 1 and not divisible:
-                bsz = data_size - batch_size * (n_epochs - 1)
-            else:
-                bsz = batch_size
-
-            init_state = torch.zeros(bsz, energy.ndim).to(gfn_model.device)
-            ts = discretizer(bsz, T).to(gfn_model.device)
-            _model_trajs, _log_pfs, _log_pbs, _log_fs, _ = gfn_model.get_trajectory_fwd(
-                init_state, ts, epsilon=0.0, pis=pis
-            )
-            _log_rewards = energy.log_reward(_model_trajs[:, -1])
-            model_trajs.append(_model_trajs)
-            log_pfs.append(_log_pfs)
-            log_pbs.append(_log_pbs)
-            log_fs.append(_log_fs)
-            log_rewards.append(_log_rewards)
-        model_trajs = torch.cat(model_trajs, dim=0)
-        sample_xs = model_trajs[:, -1]
-        log_pfs = torch.cat(log_pfs, dim=0)
-        log_pbs = torch.cat(log_pbs, dim=0)
-        log_fs = torch.cat(log_fs, dim=0)
-        log_rewards = torch.cat(log_rewards, dim=0)
-
-        try:
-            gt_xs, gt_log_rewards = energy.cached_sample(data_size)
-            gt_log_pfs, gt_log_pbs = [], []
-            for i in range(n_epochs):
-                gt_xs_batch = gt_xs[i * batch_size : (i + 1) * batch_size]
-                ts = discretizer(gt_xs_batch.shape[0], T).to(gfn_model.device)
-                gt_log_rewards_batch = gt_log_rewards[i * batch_size : (i + 1) * batch_size]
-                _, _log_pfs, _log_pbs, _ = gfn_model.get_trajectory_bwd(
-                    gt_xs_batch, ts, gt_log_rewards_batch
-                )
-                gt_log_pfs.append(_log_pfs)
-                gt_log_pbs.append(_log_pbs)
-            gt_log_pfs = torch.cat(gt_log_pfs, dim=0)
-            gt_log_pbs = torch.cat(gt_log_pbs, dim=0)
-        except NotImplementedError:
-            gt_xs = gt_log_rewards = gt_log_pfs = gt_log_pbs = None
-
-    try:
-        gt_log_Z = energy.gt_logz()
-    except NotImplementedError:
-        gt_log_Z = None
-
-    metrics.update(
-        density_metrics(
-            log_pfs,
-            log_pbs,
-            log_fs,
-            log_rewards,
-            gt_log_pfs=gt_log_pfs,
-            gt_log_pbs=gt_log_pbs,
-            gt_log_rewards=gt_log_rewards,
-            gt_log_Z=gt_log_Z,
-        )
-    )
-
-    if gt_xs is not None and full_eval:
-        # "1-Wasserstein", "2-Wasserstein", "Linear_MMD", "Poly_MMD", "RBF_MMD",
-        # "Mean_MSE", "Mean_L2", "Mean_L1", "Median_MSE", "Median_L2", "Median_L1"
-        metrics.update(distribution_distance_metrics(sample_xs, gt_xs))
-
-    metrics = {f"eval/{k}": v for k, v in metrics.items()}
-
-    ### Resample or weighted
-    weights = (log_rewards + log_pbs.sum(-1) - log_pfs.sum(-1)).softmax(0)
-    sample_xs_r = None
-    if resampling and full_eval:
-        # We can't use `estimate_partition_function` with resampled trajectories
-        # since we don't know the distribution of the resampled trajectories
-        assert gt_xs is not None
-        metrics_r = {}
-        sampled_idx = get_sampling_func(resampling_strategy)(weights, batch_size, True)
-        model_trajs_r = model_trajs[sampled_idx]
-        sample_xs_r = model_trajs_r[:, -1]
-        metrics_r.update(distribution_distance_metrics(sample_xs_r, gt_xs))
-        metrics_r = {f"eval_resampled/{k}": v for k, v in metrics_r.items()}
-        metrics.update(metrics_r)
-
-    if weighting and full_eval:
-        assert gt_xs is not None
-        metrics_w = {}
-        metrics_w.update(distribution_distance_metrics(sample_xs, gt_xs, weights=weights))
-        metrics_w = {f"eval_weighted/{k}": v for k, v in metrics_w.items()}
-        metrics.update(metrics_w)
-
-    buffer_xs = None
-    if buffer is not None and len(buffer) > 0 and full_eval:
-        assert gt_xs is not None
-        buffer_xs, _ = buffer.sample_terminal(data_size)
-        metrics_b = {}
-        metrics_b.update(distribution_distance_metrics(buffer_xs, gt_xs))
-        metrics_b = {f"eval_buffer/{k}": v for k, v in metrics_b.items()}
-        metrics.update(metrics_b)
-
-    if final_eval:
-        metrics = {k.replace("eval", "final_eval"): v for k, v in metrics.items()}
-
-    return metrics, model_trajs, weights, sample_xs_r, buffer_xs

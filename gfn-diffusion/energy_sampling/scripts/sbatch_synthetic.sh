@@ -59,14 +59,14 @@ for ENERGY_NAME in gmm40 manywell; do  # gmm40 manywell
                     if [ "$TRAININGMODE" = "fwd" ]; then
                         sbatch scripts/run_seeds.sh "$ARGS1 $ARGS2 $ARGS3 $ARGS4 $ARGS5" $STARTSEED $ENDSEED
 
-                    # Off-policy
+                    # Off-policy with buffer
                     else
                         if [ "$LOSS" = "pis" ]; then
                             continue
                         fi
 
                         for BUFFER_PRIORITIZATION in normalized_iw target loss none; do  # normalized_iw target loss none
-                            ARGS6="--prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper"
+                            ARGS6="--prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper --eval_buffer"
                             sbatch scripts/run_seeds.sh "$ARGS1 $ARGS2 $ARGS3 $ARGS4 $ARGS5 $ARGS6" $STARTSEED $ENDSEED
                         done
                     fi

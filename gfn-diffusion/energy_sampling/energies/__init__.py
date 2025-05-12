@@ -1,10 +1,11 @@
 import argparse
+
 import torch
 
 from .base import BaseEnergy
 from .funnel import Funnel
 from .gmm40 import GMM40
-from .lennard_jones import LennardJones, LJ13, LJ55
+from .lennard_jones import LJ13, LJ55, LennardJones
 from .lgcp import LGCP
 from .manywell import ManyWell
 from .twenty_five_gmm import TwentyFiveGaussianMixture

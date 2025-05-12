@@ -3,6 +3,7 @@ Adapted from https://github.com/jarridrb/DEM/blob/main/dem/models/components/egn
 """
 
 from typing import Callable
+
 import torch
 import torch.nn as nn
 

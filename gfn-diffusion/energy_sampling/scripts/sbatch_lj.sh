@@ -8,12 +8,10 @@ for STARTSEED in 0 1 2 3 4; do  # 0 1 2 3 4
     for ENERGY_NAME in lj13 lj55; do  # lj13 lj55
         if [ "$ENERGY_NAME" = "lj13" ]; then
             BATCHSIZE=64
-            PREFILL=100
-            ARGS1="--batch_size $BATCHSIZE --prefill $PREFILL"
+            ARGS1="--batch_size $BATCHSIZE"
         elif [ "$ENERGY_NAME" = "lj55" ]; then
             BATCHSIZE=64
-            PREFILL=100
-            ARGS1="--batch_size $BATCHSIZE --prefill $PREFILL --use_checkpoint --logr_lb=-1e7"
+            ARGS1="--batch_size $BATCHSIZE --use_checkpoint --logr_lb=-1e7"
         fi
 
         for TSCALE in 0.1 0.2 0.5 1.0; do  # 0.1 0.2 0.5 1.0
@@ -55,14 +53,16 @@ for STARTSEED in 0 1 2 3 4; do  # 0 1 2 3 4
                         if [ "$TRAININGMODE" = "fwd" ]; then
                             sbatch scripts/run_seeds.sh "$ARGS1 $ARGS2 $ARGS3 $ARGS4 $ARGS5" $STARTSEED $ENDSEED
 
-                        # Off-policy
+                        # Off-policy with buffer
                         else
                             if [ "$LOSS" = "pis" ]; then
                                 continue
                             fi
 
                             for BUFFER_PRIORITIZATION in normalized_iw target loss none; do  # normalized_iw target loss none
-                                ARGS6="--prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper"
+                                BUFFER_SIZE=200000
+                                PREFILL=100
+                                ARGS6="--buffer_size $BUFFER_SIZE --prefill $PREFILL --prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper --eval_buffer"
                                 sbatch scripts/run_seeds.sh "$ARGS1 $ARGS2 $ARGS3 $ARGS4 $ARGS5 $ARGS6" $STARTSEED $ENDSEED
                             done
                         fi

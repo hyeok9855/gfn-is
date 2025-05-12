@@ -1,21 +1,18 @@
 import argparse
-from functools import partial
 import os
 
 import torch
 import wandb
 from tqdm import trange
 
-from buffers import TerminalStateBuffer, IntermediateStateBuffer
+from buffers import IntermediateStateBuffer, TerminalStateBuffer
 from discretizers import get_discretizer
 from energies import get_energy
-from losses import cal_subtb_coef_matrix
 from models import GFN
 from models.modules import get_module
-from utils.eval_utils import eval_step
-from utils.misc_utils import set_seed, get_name, linear_annealing
-from utils.plot_utils import plot_step
-from utils.train_utils import get_gfn_optimizer, train_step
+from trainer import Trainer
+from utils.misc_utils import get_name, set_seed
+from utils.train_utils import get_gfn_optimizer
 
 
 def train(args):
@@ -25,26 +22,20 @@ def train(args):
 
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
     energy = get_energy(args, device)
-    try:
-        energy.cached_sample(args.eval_data_size)
-    except NotImplementedError:
-        pass
-
     exp_name = get_name(args)
 
-    # parent_dir = os.path.dirname(os.path.abspath(__file__))
-    # save_dir = f"{parent_dir}/results/{args.energy_name}-{energy.ndim}d/{exp_name}"
-    # os.makedirs(save_dir, exist_ok=True)
-
     config = args.__dict__
-    config["Experiment"] = "{args.energy}"
     wandb.init(
         project=f"GFN-Diffusion-{args.energy_name}-{energy.ndim}d",
         config=config,
         name=exp_name,
-        tags=[f"seed{args.seed}", "May8-Random"],
+        tags=[f"seed{args.seed}"],
         mode="disabled" if args.disable_wandb else "online",
     )
+
+    #########################
+    # Initialize components #
+    #########################
 
     module = get_module(args, energy)
 
@@ -86,128 +77,93 @@ def train(args):
             logr_lb=args.logr_lb,
         )
 
-    subtb_coef_matrix = None
-    if args.loss_type == "subtb" and args.subtb_n_chunks == 0:
-        subtb_coef_matrix = cal_subtb_coef_matrix(args.subtb_lambda, args.T).to(device)
-
     train_discretizer = get_discretizer(
         discretizer=args.discretizer, max_ratio=args.discretizer_max_ratio
     )
     eval_discretizer = get_discretizer(discretizer="uniform")
 
-    eval_step_partial = partial(
-        eval_step,
+    trainer = Trainer(
+        energy=energy,
+        gfn_model=gfn_model,
+        optimizer=gfn_optimizer,
+        scheduler=gfn_scheduler,
+        clip_grad_norm=args.clip_grad_norm,
+        loss_type=args.loss_type,
+        subtb_lambda=args.subtb_lambda,
+        subtb_n_chunks=args.subtb_n_chunks,
+        sublogvar_K=args.sublogvar_K,
+        n_epochs=args.epochs,
+        training_mode=args.training_mode,
+        bwd_from=args.bwd_from,
+        bwd_to_fwd_ratio=args.bwd_to_fwd_ratio,
+        buffer=buffer,
+        buffer_save_interval=args.buffer_save_interval,
+        prefill_epochs=args.prefill,
         batch_size=args.batch_size,
-        gfn_model=gfn_model,
-        energy=energy,
-        discretizer=eval_discretizer,
-        T=args.eval_T,
-        pis=args.loss_type == "pis",
-        resampling=args.eval_resampling,
+        train_discretizer=train_discretizer,
+        train_T=args.T,
+        epsilon=args.epsilon,
+        anneal_epsilon=args.anneal_epsilon,
+        weighting=args.train_weighting,
+        resampling=args.train_resampling,
         resampling_strategy=args.resampling_strategy,
-        weighting=args.eval_weighting,
-        buffer=buffer if args.eval_buffer else None,
-    )
-    plot_step_partial = partial(
-        plot_step,
-        energy=energy,
+        alternating=args.alternating,
+        aux_target=args.aux_target,
+        target_ess=args.target_ess,
+        smoothing_strategy=args.smoothing,
+        eval_discretizer=eval_discretizer,
+        eval_T=args.eval_T,
+        eval_weighting=args.eval_weighting,
+        eval_resampling=args.eval_resampling,
         plot_t_idx=args.plot_t_idx,
-        gfn_model=gfn_model,
-        discretizer=eval_discretizer,
-        T=args.eval_T,
         plot_buffer_t_idx=args.plot_buffer_t_idx,
-        buffer=buffer if isinstance(buffer, IntermediateStateBuffer) else None,
     )
 
     ######################
     # Main training loop #
     ######################
 
-    gfn_model.train()
-    for i in trange(args.epochs, dynamic_ncols=True):
+    pbar = trange(args.epochs, dynamic_ncols=True)
+    for it in pbar:
         metrics = dict()
 
         ### Eval and plot###
-        if i % args.eval_freq == 0:
-            gfn_model.eval()
-            with torch.no_grad():
-                results, model_trajs, weights, sample_xs_r, buffer_xs = eval_step_partial(
-                    data_size=args.eval_data_size,
-                    full_eval=True if i % args.full_eval_freq == 0 else False,
-                )
-                metrics.update(results)
-                if args.plot and i % args.plot_freq == 0:
-                    metrics.update(
-                        plot_step_partial(
-                            model_trajs=model_trajs,
-                            weights=weights,
-                            sample_xs_r=sample_xs_r,
-                            buffer_xs=buffer_xs,
-                        )
-                    )
-            gfn_model.train()
-            # if i % 1000 == 0:
-            #     torch.save(gfn_model.state_dict(), f'{save_dir}/model.pt')
-
-        ### Train ###
-        epsilon = args.epsilon
-        if args.anneal_epsilon:  # annealing half the epochs
-            epsilon = linear_annealing(i, args.epochs // 2, 0.0, args.epsilon, descending=True)
-
-        metrics["train/loss"] = train_step(
-            energy,
-            gfn_model,
-            gfn_optimizer,
-            gfn_scheduler,
-            i,
-            batch_size=args.batch_size,
-            loss_type=args.loss_type,
-            training_mode=args.training_mode,
-            bwd_from=args.bwd_from,
-            bwd_to_fwd_ratio=args.bwd_to_fwd_ratio,
-            discretizer=train_discretizer,
-            T=args.T,
-            subtb_coef_matrix=subtb_coef_matrix,
-            subtb_n_chunks=args.subtb_n_chunks,
-            epsilon=epsilon,
-            buffer=buffer,
-            prefill=args.prefill,
-            buffer_save_interval=args.buffer_save_interval,
-            clip_grad_norm=args.clip_grad_norm,
-            resampling=args.train_resampling,
-            resampling_strategy=args.resampling_strategy,
-            weighting=args.train_weighting,
-            aux_target=args.aux_target,
-            target_ess=args.target_ess,
-            smoothing=args.smoothing,
-            alternating=args.alternating,
-        )
-        wandb.log(metrics, step=i)
-
-    ### Final eval and plot ###
-    try:
-        energy.cached_sample(args.final_eval_data_size)
-    except NotImplementedError:
-        pass
-
-    gfn_model.eval()
-    with torch.no_grad():
-        final_results, model_trajs, weights, sample_xs_r, buffer_xs = eval_step_partial(
-            data_size=args.final_eval_data_size,
-            final_eval=True,
-        )
-        metrics.update(final_results)
-        if args.plot:
+        if it % args.eval_freq == 0:
             metrics.update(
-                plot_step_partial(
-                    model_trajs=model_trajs,
-                    weights=weights,
-                    sample_xs_r=sample_xs_r,
-                    buffer_xs=buffer_xs,
+                trainer.eval_and_plot(
+                    data_size=args.eval_data_size,
+                    full_eval=True if it % args.full_eval_freq == 0 else False,
+                    plot=args.plot if it % args.plot_freq == 0 else False,
                 )
             )
-    wandb.log(metrics, step=args.epochs)
-    # torch.save(gfn_model.state_dict(), f'{save_dir}/model_final.pt')
+            if metrics.get("eval/eubo-elbo") is not None:
+                desc = f"EUBO-ELBO: {metrics['eval/eubo-elbo']:.3f}"
+            else:
+                desc = f"ELBO: {metrics['eval/elbo']:.3f}"
+            pbar.set_description(desc)
+
+        ### Train ###
+        metrics["train/loss"] = trainer.train_step(it)
+        pbar.set_postfix({"Loss": metrics["train/loss"]})
+
+        ### Log ###
+        wandb.log(metrics, step=it)
+
+    ### Final eval and plot ###
+    final_metrics = trainer.eval_and_plot(
+        data_size=args.final_eval_data_size, full_eval=True, final_eval=True, plot=args.plot
+    )
+    wandb.log(final_metrics, step=args.epochs)
+    desc = ""
+    if final_metrics.get("eval/eubo-elbo") is not None:
+        desc += f"{'EUBO-ELBO':<10}: {final_metrics['eval/eubo-elbo']:.3f}\n"
+    else:
+        desc += f"{'ELBO':<10}: {final_metrics['eval/elbo']:.3f}\n"
+    if final_metrics.get("eval/Sinkhorn") is not None:
+        desc += f"{'Sinkhorn':<10}: {final_metrics['eval/Sinkhorn']:.3f}\n"
+    if final_metrics.get("eval/ess") is not None:
+        desc += f"{'ESS':<10}: {final_metrics['eval/ess']:.3f}\n"
+    print(f"Final results:\n {desc}")
 
 
 if __name__ == "__main__":
@@ -231,6 +187,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
     parser.add_argument("--subtb_n_chunks", type=int, default=0)
+    parser.add_argument("--sublogvar_K", type=int, default=1)
 
     parser.add_argument("--lr_fwd", type=float, default=1e-3)
     parser.add_argument("--lr_bwd", type=float, default=None)
@@ -356,7 +313,7 @@ if __name__ == "__main__":
     parser.add_argument("--full_eval_freq", type=int, default=2500)
     parser.add_argument("--eval_data_size", type=int, default=2000)
     parser.add_argument("--final_eval_data_size", type=int, default=2000)
-    parser.add_argument("--no_plot", action="store_true", dest="plot")
+    parser.add_argument("--no_plot", action="store_false", dest="plot")
     parser.add_argument("--plot_freq", type=int, default=2500)
     parser.add_argument("--plot_t_idx", type=int, nargs="+", default=[])
     parser.add_argument("--plot_buffer_t_idx", type=int, nargs="+", default=[])
