@@ -3,4 +3,3 @@ __pycache__/
 wandb/
 .vscode/
 slurm_logs/
-scripts/

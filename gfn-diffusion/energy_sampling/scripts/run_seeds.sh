@@ -20,6 +20,10 @@ wandb login --relogin ...
 ARGS=$1
 
 for SEED in 0 1 2 3 4; do
-    python train.py $ARGS --seed $SEED &
+    if [ "$SEED" = "0" ]; then
+        python train.py $ARGS --seed $SEED &
+    else
+        python train.py $ARGS --seed $SEED --no_plot &
+    fi
 done
 wait

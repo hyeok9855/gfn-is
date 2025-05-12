@@ -44,14 +44,14 @@ for LOSS in pis tb logvar db subtb fldb flsubtb; do  # pis tb logvar db subtb fl
         for T in 20 50 100; do  # 20 50 100
             ARGS3="--T $T --eval_T 100"
 
-            for LP in False True; do
+            for LP in False True; do  # False True
                 if [ "$LP" = "True" ]; then
                     ARGS4="--lp --hidden_dim 64 --flow_hidden_dim 64"
                 else
                     ARGS4=""
                 fi
 
-                for BUFFER_PRIORITIZATION in normalized_iw target loss none; do  # normalized_iw none
+                for BUFFER_PRIORITIZATION in normalized_iw target loss none; do  # normalized_iw target loss none
                     ARGS5="--prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper"
 
                     ##### Run with algorithm-specific arguments #####

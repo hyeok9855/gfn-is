@@ -136,7 +136,7 @@ def train(args):
                     full_eval=True if i % args.full_eval_freq == 0 else False,
                 )
                 metrics.update(results)
-                if i % args.plot_freq == 0:
+                if args.plot and i % args.plot_freq == 0:
                     metrics.update(
                         plot_step_partial(
                             model_trajs=model_trajs,
@@ -198,14 +198,15 @@ def train(args):
             final_eval=True,
         )
         metrics.update(final_results)
-        metrics.update(
-            plot_step_partial(
-                model_trajs=model_trajs,
-                weights=weights,
-                sample_xs_r=sample_xs_r,
-                buffer_xs=buffer_xs,
+        if args.plot:
+            metrics.update(
+                plot_step_partial(
+                    model_trajs=model_trajs,
+                    weights=weights,
+                    sample_xs_r=sample_xs_r,
+                    buffer_xs=buffer_xs,
+                )
             )
-        )
     wandb.log(metrics, step=args.epochs)
     # torch.save(gfn_model.state_dict(), f'{save_dir}/model_final.pt')
 
@@ -355,6 +356,7 @@ if __name__ == "__main__":
     parser.add_argument("--full_eval_freq", type=int, default=2500)
     parser.add_argument("--eval_data_size", type=int, default=2000)
     parser.add_argument("--final_eval_data_size", type=int, default=2000)
+    parser.add_argument("--no_plot", action="store_true", dest="plot")
     parser.add_argument("--plot_freq", type=int, default=2500)
     parser.add_argument("--plot_t_idx", type=int, nargs="+", default=[])
     parser.add_argument("--plot_buffer_t_idx", type=int, nargs="+", default=[])
