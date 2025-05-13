@@ -2,6 +2,7 @@ import numpy as np
 import torch
 
 from energies.base import BaseEnergy
+from utils.misc_utils import temp_seed
 from utils.particle_system import interatomic_distance, remove_mean
 
 
@@ -22,6 +23,7 @@ class LennardJones(BaseEnergy):
         oscillator: bool = True,
         oscillator_scale: float = 1.0,
         energy_factor: float = 1.0,
+        seed: int = 0,
     ):
         super().__init__(device=device, ndim=spatial_dim * n_particles, plot_bound=1.0)
 
@@ -30,12 +32,12 @@ class LennardJones(BaseEnergy):
 
         self.epsilon = epsilon
         self.min_radius = min_radius
-
         self.oscillator = oscillator
         self.oscillator_scale = oscillator_scale
-
         self.energy_factor = energy_factor
+
         self.approx_sample = torch.tensor(np.load(data_path), device=device)
+        self.seed = seed
 
     def energy(self, x: torch.Tensor):
         assert x.shape[-1] == self.ndim
@@ -56,7 +58,9 @@ class LennardJones(BaseEnergy):
 
     def sample(self, batch_size: int) -> torch.Tensor:
         assert self.approx_sample is not None
-        return self.approx_sample[torch.randperm(batch_size)]
+        with temp_seed(self.seed):
+            perm_idx = torch.randperm(self.approx_sample.shape[0])[:batch_size]
+        return self.approx_sample[perm_idx]
 
 
 class LJ13(LennardJones):
