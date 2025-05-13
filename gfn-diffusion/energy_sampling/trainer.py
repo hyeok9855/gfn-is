@@ -35,8 +35,6 @@ class Trainer:
         batch_size: int,
         train_discretizer: Callable[[int, int], torch.Tensor],
         train_T: int,
-        epsilon: float,
-        anneal_epsilon: bool,
         weighting: bool,
         resampling: bool,
         resampling_strategy: Literal["multinomial", "stratified", "systematic"],
@@ -44,6 +42,10 @@ class Trainer:
         aux_target: Literal["target", "loss"],
         target_ess: float,
         smoothing_strategy: Literal["temper", "clip_above", "clip_below"],
+        epsilon: float,
+        anneal_epsilon: bool,
+        invtemp: float,
+        invtemp_anneal: bool,
         eval_discretizer: Callable[[int, int], torch.Tensor],
         eval_T: int,
         eval_weighting: bool,
@@ -85,8 +87,6 @@ class Trainer:
 
         # Sampling parameters
         self.batch_size = batch_size
-        self.epsilon = epsilon
-        self.anneal_epsilon = anneal_epsilon
         self.train_discretizer = train_discretizer
         self.train_T = train_T
 
@@ -101,6 +101,12 @@ class Trainer:
         self.aux_target = aux_target
         self.target_ess = target_ess
         self.smoothing_strategy = smoothing_strategy
+
+        # Misc
+        self.epsilon = epsilon
+        self.anneal_epsilon = anneal_epsilon
+        self.invtemp = invtemp
+        self.invtemp_anneal = invtemp_anneal
 
         # Eval and Plot
         self.eval_discretizer = eval_discretizer
@@ -134,6 +140,13 @@ class Trainer:
 
     def train_step(self, it: int) -> float:
         self.gfn_model.train()
+        self.energy.invtemp = (
+            self.invtemp
+            if not self.invtemp_anneal
+            else linear_annealing(
+                it // 100, int(0.8 * self.n_epochs) // 100, self.invtemp, 1.0, descending=False
+            )
+        )
 
         if self.training_mode == "bwd":
             loss = self.bwd_train_step()
@@ -165,10 +178,10 @@ class Trainer:
     def fwd_train_step(self, it: int) -> torch.Tensor:
         init_states = torch.zeros(self.batch_size, self.energy.ndim).to(self.device)
         ts = self.train_discretizer(self.batch_size, self.train_T).to(self.device)
-        epsilon = (  # annealing half the epochs
+        epsilon = (
             self.epsilon
-            if not self.anneal_epsilon or it < self.n_epochs // 2
-            else linear_annealing(it, self.n_epochs // 2, 0.0, self.epsilon, descending=True)
+            if not self.anneal_epsilon
+            else linear_annealing(it, int(self.n_epochs * 0.8), 0.0, self.epsilon, descending=True)
         )
 
         # Forward sampling
@@ -371,7 +384,7 @@ class Trainer:
                 _model_trajs, _log_pfs, _log_pbs, _log_fs, _ = self.gfn_model.get_trajectory_fwd(
                     init_state, ts, epsilon=0.0, pis=self.loss_type == "pis"
                 )
-                _log_rewards = self.energy.log_reward(_model_trajs[:, -1])
+                _log_rewards = self.energy.log_reward(_model_trajs[:, -1], temper=False)
                 model_trajs.append(_model_trajs)
                 log_pfs.append(_log_pfs)
                 log_pbs.append(_log_pbs)

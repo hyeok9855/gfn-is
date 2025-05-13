@@ -46,14 +46,16 @@ def linear_annealing(
     descending=False,
     avoid_zero=False,
 ) -> float:
+    assert min_val <= max_val
+    start_val, end_val = min_val, max_val
     if descending:
-        min_val, max_val = max_val, min_val
+        start_val, end_val = end_val, start_val
 
     if current >= n_rounds:
-        return max_val
+        return end_val
 
-    avoid_zero = int(avoid_zero) if min_val == 0.0 else 0
-    return min_val + (max_val - min_val) * ((current + avoid_zero) / (n_rounds + avoid_zero))
+    multiplier = (current / n_rounds) if not avoid_zero else (current + 1) / (n_rounds + 1)
+    return start_val + (end_val - start_val) * multiplier
 
 
 def get_name(args: argparse.Namespace) -> str:

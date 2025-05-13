@@ -141,7 +141,7 @@ def viz_2d_slice(
     def logp_func(x_2d: torch.Tensor) -> torch.Tensor:
         _x = torch.zeros((x_2d.shape[0], energy.ndim))
         _x[:, dims] = x_2d
-        return energy.log_reward(_x.to(energy.device))
+        return energy.log_reward(_x.to(energy.device), temper=False)
 
     fig_contour, ax_contour = viz_contour_sample2d(
         x,
@@ -252,7 +252,7 @@ def viz_gmm(
 
 
 def viz_lennard_jones(energy: LennardJones, xs: torch.Tensor) -> dict:
-    xs_logr = energy.log_reward(xs)
+    xs_logr = energy.log_reward(xs, temper=False)
     gt_xs, gt_xs_logr = energy.cached_sample(xs.shape[0])
 
     xs, gt_xs = xs.cpu(), gt_xs.cpu()

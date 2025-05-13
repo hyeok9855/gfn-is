@@ -111,6 +111,8 @@ def train(args):
         aux_target=args.aux_target,
         target_ess=args.target_ess,
         smoothing_strategy=args.smoothing,
+        invtemp=args.invtemp,
+        invtemp_anneal=args.invtemp_anneal,
         eval_discretizer=eval_discretizer,
         eval_T=args.eval_T,
         eval_weighting=args.eval_weighting,
@@ -137,9 +139,11 @@ def train(args):
                 )
             )
             if metrics.get("eval/eubo-elbo") is not None:
-                desc = f"EUBO-ELBO: {metrics['eval/eubo-elbo']:.3f}"
+                desc = f"EUBO-ELBO {metrics['eval/eubo-elbo']:.3f} | "
+                desc += f"ESS {metrics['eval/ess']:.3f}"
             else:
-                desc = f"ELBO: {metrics['eval/elbo']:.3f}"
+                desc = f"ELBO {metrics['eval/elbo']:.3f} | "
+                desc += f"ESS {metrics['eval/ess']:.3f}"
             pbar.set_description(desc)
 
         ### Train ###
@@ -286,7 +290,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--buffer_sampling",
         type=str,
-        default="multinomial",
+        default="systematic",
         choices=("multinomial", "stratified", "systematic", "rank"),
     )
     # low rank_k give steep priorization in rank-based replay sampling
@@ -303,7 +307,13 @@ if __name__ == "__main__":
     ################################################################
     ### Exploration with extra noise
     parser.add_argument("--epsilon", type=float, default=0.0)
-    parser.add_argument("--anneal_epsilon", action="store_true", default=False)
+    parser.add_argument("--no_anneal_epsilon", action="store_false", dest="anneal_epsilon")
+    ################################################################
+
+    ################################################################
+    ### Inverse temperature of the energy
+    parser.add_argument("--invtemp", type=float, default=1.0)
+    parser.add_argument("--no_invtemp_anneal", action="store_false", dest="invtemp_anneal")
     ################################################################
 
     ################################################################
