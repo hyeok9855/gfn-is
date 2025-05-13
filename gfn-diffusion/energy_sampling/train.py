@@ -155,14 +155,14 @@ def train(args):
     )
     wandb.log(final_metrics, step=args.epochs)
     desc = ""
-    if final_metrics.get("eval/eubo-elbo") is not None:
-        desc += f"{'EUBO-ELBO':<10}: {final_metrics['eval/eubo-elbo']:.3f}\n"
+    if final_metrics.get("final_eval/eubo-elbo") is not None:
+        desc += f"{'EUBO-ELBO':<10}: {final_metrics['final_eval/eubo-elbo']:.3f}\n"
     else:
-        desc += f"{'ELBO':<10}: {final_metrics['eval/elbo']:.3f}\n"
-    if final_metrics.get("eval/Sinkhorn") is not None:
-        desc += f"{'Sinkhorn':<10}: {final_metrics['eval/Sinkhorn']:.3f}\n"
-    if final_metrics.get("eval/ess") is not None:
-        desc += f"{'ESS':<10}: {final_metrics['eval/ess']:.3f}\n"
+        desc += f"{'ELBO':<10}: {final_metrics['final_eval/elbo']:.3f}\n"
+    if final_metrics.get("final_eval/Sinkhorn") is not None:
+        desc += f"{'Sinkhorn':<10}: {final_metrics['final_eval/Sinkhorn']:.3f}\n"
+    if final_metrics.get("final_eval/ess") is not None:
+        desc += f"{'ESS':<10}: {final_metrics['final_eval/ess']:.3f}\n"
     print(f"Final results:\n {desc}")
 
 
@@ -203,7 +203,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--training_mode", type=str, default="both", choices=("fwd", "bwd", "both"))
     parser.add_argument("--bwd_from", type=str, default="buffer", choices=("energy", "buffer"))
-    parser.add_argument("--bwd_to_fwd_ratio", type=int, default=1)
+    parser.add_argument("--bwd_to_fwd_ratio", type=float, default=1.0)
     parser.add_argument("--clip_grad_norm", type=float, default=3.0)
     parser.add_argument("--batch_size", type=int, default=2000)
     parser.add_argument("--epochs", type=int, default=25000)

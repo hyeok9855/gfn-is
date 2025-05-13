@@ -73,7 +73,12 @@ class Trainer:
         self.n_epochs = n_epochs
         self.training_mode = training_mode
         self.bwd_from = bwd_from
-        self.bwd_to_fwd_ratio = bwd_to_fwd_ratio
+        if bwd_to_fwd_ratio < 1:
+            self.bwd_to_fwd_ratio = -1.0
+            self.fwd_to_bwd_ratio = round(1 / bwd_to_fwd_ratio)
+        else:
+            self.bwd_to_fwd_ratio = bwd_to_fwd_ratio
+            self.fwd_to_bwd_ratio = -1.0
         self.buffer = buffer
         self.buffer_save_interval = buffer_save_interval
         self.prefill_epochs = prefill_epochs
@@ -135,7 +140,11 @@ class Trainer:
         elif self.training_mode == "fwd":
             loss = self.fwd_train_step(it)
         else:  # both
-            if it % (self.bwd_to_fwd_ratio + 1) == 0 or it < self.prefill_epochs:
+
+            if (
+                (self.bwd_to_fwd_ratio > 0 and it % (self.bwd_to_fwd_ratio + 1) == 0)
+                or (self.bwd_to_fwd_ratio < 0 and it % (self.fwd_to_bwd_ratio + 1) != 0)
+            ) or it < self.prefill_epochs:
                 loss = self.fwd_train_step(it)
             else:
                 loss = self.bwd_train_step()
