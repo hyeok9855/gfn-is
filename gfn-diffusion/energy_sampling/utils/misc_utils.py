@@ -47,6 +47,9 @@ def linear_annealing(
     avoid_zero=False,
 ) -> float:
     assert min_val <= max_val
+    if min_val == max_val:
+        return min_val
+
     start_val, end_val = min_val, max_val
     if descending:
         start_val, end_val = end_val, start_val
@@ -119,6 +122,11 @@ def get_name(args: argparse.Namespace) -> str:
         name += f"_eps{args.epsilon}"
         if args.anneal_epsilon:
             name += f"-annealed"
+
+    if args.invtemp != 1.0:
+        name += f"_invtemp{args.invtemp}"
+        if args.invtemp_anneal:
+            name += "-annealed"
 
     if args.train_resampling or args.train_weighting:
         if args.train_resampling:
