@@ -1,3 +1,4 @@
+import warnings
 from functools import partial
 from typing import Callable, Literal
 
@@ -22,7 +23,13 @@ def stratified(weights, N, replacement=True) -> torch.Tensor:
         weights: (bs,)
         N: int
     """
-    assert replacement, "Stratified sampling does not support sampling without replacement"
+    if not replacement:
+        warnings.warn(
+            "Stratified sampling does not support sampling without replacement. "
+            "Using multinomial sampling instead."
+        )
+        return multinomial(weights, N, replacement=True)
+
     # Normalize weights if they're not already normalized
     weights_sum = weights.sum()
     if not torch.isclose(weights_sum, torch.tensor(1.0, device=weights.device)):
@@ -42,7 +49,13 @@ def systematic(weights, N, replacement=True) -> torch.Tensor:
         weights: (bs,)
         N: int
     """
-    assert replacement, "Systematic sampling does not support sampling without replacement"
+    if not replacement:
+        warnings.warn(
+            "Systematic sampling does not support sampling without replacement. "
+            "Using multinomial sampling instead."
+        )
+        return multinomial(weights, N, replacement=True)
+
     # Normalize weights if they're not already normalized
     weights_sum = weights.sum()
     if not torch.isclose(weights_sum, torch.tensor(1.0, device=weights.device)):
