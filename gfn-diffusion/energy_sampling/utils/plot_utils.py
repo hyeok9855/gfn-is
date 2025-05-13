@@ -1,3 +1,4 @@
+from functools import partial
 import itertools
 import warnings
 from typing import Callable
@@ -16,18 +17,16 @@ from energies import (
     IntermediateEnergy,
     LennardJones,
     ManyWell,
+    StudentTMixture,
     TwentyFiveGaussianMixture,
 )
 from utils.particle_system import interatomic_distance
 
 
-def get_figure(bounds=(-10.0, 10.0)):
-    fig, ax = plt.subplots(1, figsize=(16, 16))
-    ax.axis("off")
-    ax.set_autoscale_on(False)
-    ax.set_xlim([bounds[0], bounds[1]])
-    ax.set_ylim([bounds[0], bounds[1]])
-    return fig, ax
+def sliced_log_reward(x: torch.Tensor, energy: BaseEnergy, dims: tuple) -> torch.Tensor:
+    _x = torch.zeros((x.shape[0], energy.ndim))
+    _x[:, dims] = x
+    return energy.log_reward(_x.to(energy.device), temper=False).detach().cpu()
 
 
 def fig_to_image(fig):
@@ -73,7 +72,7 @@ def viz_contour_with_ax(
     x_points_dim1 = torch.linspace(-lim, lim, grid_width_n_points)
     x_points_dim2 = x_points_dim1
     x_points = torch.tensor(list(itertools.product(x_points_dim1, x_points_dim2)))
-    log_p_x = log_prob_func(x_points).detach().cpu()
+    log_p_x = log_prob_func(x_points)
     log_p_x = torch.clamp_min(log_p_x, clamp_min)
     log_p_x = log_p_x.reshape((grid_width_n_points, grid_width_n_points))
     x_points_dim1 = x_points[:, 0].reshape((grid_width_n_points, grid_width_n_points)).numpy()
@@ -138,14 +137,9 @@ def viz_2d_slice(
     else:
         fig_kde, ax_kde = None, None
 
-    def logp_func(x_2d: torch.Tensor) -> torch.Tensor:
-        _x = torch.zeros((x_2d.shape[0], energy.ndim))
-        _x[:, dims] = x_2d
-        return energy.log_reward(_x.to(energy.device), temper=False)
-
     fig_contour, ax_contour = viz_contour_sample2d(
         x,
-        logp_func,
+        partial(sliced_log_reward, energy=energy, dims=dims),
         weights=weights,
         lim=lim,
         alpha=alpha,
@@ -158,7 +152,7 @@ def viz_2d_slice(
 
 
 def viz_manywell(
-    energy: BaseEnergy,
+    energy: ManyWell,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
 ) -> dict:
@@ -191,7 +185,7 @@ def viz_manywell(
 
 
 def viz_funnel(
-    energy: BaseEnergy,
+    energy: Funnel,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
 ) -> dict:
@@ -216,7 +210,7 @@ def viz_funnel(
 
 
 def viz_gmm(
-    energy: BaseEnergy,
+    energy: GMM40 | TwentyFiveGaussianMixture,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
     clamp_min=-1000.0,
@@ -276,7 +270,7 @@ def viz_lennard_jones(energy: LennardJones, xs: torch.Tensor) -> dict:
     else:
         raise ValueError(f"Unknown number of particles: {energy.n_particles}")
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 
     for _xs, color in zip([dist_xs, dist_gt_xs], ["r", "g"]):
         axes[0].hist(
@@ -309,6 +303,46 @@ def viz_lennard_jones(energy: LennardJones, xs: torch.Tensor) -> dict:
     return {"visualization/hists": wandb.Image(fig_to_image(fig))}
 
 
+def viz_student_t_mixture(
+    energy: StudentTMixture | IntermediateEnergy,
+    samples: torch.Tensor,
+    weights: torch.Tensor | None = None,
+) -> dict:
+    if energy.ndim != 2:
+        samples = samples[:, :2]
+        logp_func = partial(sliced_log_reward, energy=energy, dims=(0, 1))
+    else:
+        logp_func = partial(energy.log_reward, temper=False)
+
+    samples = samples.detach().cpu()
+    weights = weights.detach().cpu() if weights is not None else None
+
+    boarder = [-energy.plot_bound, energy.plot_bound]
+    fig, ax = plt.subplots(1, 1, figsize=(7, 7))
+    x, y = torch.meshgrid(
+        torch.linspace(boarder[0], boarder[1], 100), torch.linspace(boarder[0], boarder[1], 100)
+    )
+    grid = torch.cat([x.ravel().unsqueeze(1), y.ravel().unsqueeze(1)], dim=1)
+    pdf_values = torch.exp(logp_func(grid))
+    pdf_values = pdf_values.reshape(x.shape)
+    ax.contourf(x, y, pdf_values, levels=50)
+
+    if samples is not None:
+        samples = samples.detach().cpu()
+        weights = weights.detach().cpu() if weights is not None else None
+        plt.scatter(
+            samples[:, 0],
+            samples[:, 1],
+            c="r",
+            alpha=0.5,
+            marker="x",
+            s=weights[: len(samples)] * len(samples) * 5 if weights is not None else 5,
+        )
+    ax.set_xlim(boarder[0], boarder[1])
+    ax.set_ylim(boarder[0], boarder[1])
+    return {"visualization/contour": wandb.Image(fig_to_image(fig))}
+
+
 def visualize(
     energy: BaseEnergy,
     samples: torch.Tensor,
@@ -330,6 +364,8 @@ def visualize(
             out_dict = viz_funnel(energy, samples, weights)
         elif isinstance(_energy, (TwentyFiveGaussianMixture, GMM40)):
             out_dict = viz_gmm(energy, samples, weights)
+        elif isinstance(_energy, StudentTMixture):
+            out_dict = viz_student_t_mixture(energy, samples, weights)
         else:
             warnings.warn(
                 f"Warning: {_energy.__class__.__name__} is not supported for visualization."

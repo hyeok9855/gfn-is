@@ -143,9 +143,7 @@ class Trainer:
         self.energy.invtemp = (
             self.invtemp
             if not self.invtemp_anneal
-            else linear_annealing(
-                it // 100, int(0.8 * self.n_epochs) // 100, self.invtemp, 1.0, descending=False
-            )
+            else linear_annealing(it, int(0.8 * self.n_epochs), self.invtemp, 1.0, descending=False)
         )
 
         if self.training_mode == "bwd":

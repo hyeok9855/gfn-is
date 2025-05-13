@@ -176,7 +176,16 @@ if __name__ == "__main__":
         "--energy_name",
         type=str,
         default="gmm40",
-        choices=("25gmm", "gmm40", "funnel", "manywell", "lgcp", "lj13", "lj55"),
+        choices=(
+            "25gmm",
+            "gmm40",
+            "student_t_mixture",
+            "funnel",
+            "manywell",
+            "lgcp",
+            "lj13",
+            "lj55",
+        ),
     )
     parser.add_argument("--ndim", type=int, default=2)
     parser.add_argument("--exp_name", type=str, default="")
@@ -208,7 +217,7 @@ if __name__ == "__main__":
     parser.add_argument("--training_mode", type=str, default="both", choices=("fwd", "bwd", "both"))
     parser.add_argument("--bwd_from", type=str, default="buffer", choices=("energy", "buffer"))
     parser.add_argument("--bwd_to_fwd_ratio", type=float, default=1.0)
-    parser.add_argument("--clip_grad_norm", type=float, default=3.0)
+    parser.add_argument("--clip_grad_norm", type=float, default=1.0)
     parser.add_argument("--batch_size", type=int, default=2000)
     parser.add_argument("--epochs", type=int, default=25000)
 

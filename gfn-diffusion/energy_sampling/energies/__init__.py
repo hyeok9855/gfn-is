@@ -8,6 +8,7 @@ from .gmm40 import GMM40
 from .lennard_jones import LJ13, LJ55, LennardJones
 from .lgcp import LGCP
 from .manywell import ManyWell
+from .student_t_mixture import StudentTMixture
 from .twenty_five_gmm import TwentyFiveGaussianMixture
 
 from .intermediate_energy import IntermediateEnergy
@@ -23,6 +24,8 @@ def get_energy(args: argparse.Namespace, device: torch.device) -> BaseEnergy:
         energy = TwentyFiveGaussianMixture(device=device)
     elif energy_name == "gmm40":
         energy = GMM40(device=device, ndim=ndim)
+    elif energy_name == "student_t_mixture":
+        energy = StudentTMixture(device=device, ndim=ndim)
     elif energy_name == "funnel":
         energy = Funnel(device=device, ndim=ndim)
     elif energy_name == "manywell":

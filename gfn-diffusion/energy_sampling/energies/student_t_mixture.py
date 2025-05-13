@@ -6,33 +6,34 @@ from energies.base import BaseEnergy
 from utils.misc_utils import temp_seed
 
 
-class GMM40(BaseEnergy):
+class StudentTMixture(BaseEnergy):
     def __init__(
         self,
         device: str | torch.device,
         ndim: int = 2,
-        num_components: int = 40,
-        loc_scaling: float = 40.0,
-        scale_scaling: float = 1.0,
+        num_components: int = 10,
+        degree_of_freedom: int = 2,
         seed: int = 0,
     ) -> None:
-        super().__init__(device=device, ndim=ndim, plot_bound=loc_scaling * 1.4)
+        super().__init__(device=device, ndim=ndim, plot_bound=15)
         self.device = device
 
         self.seed = seed
 
         try:
-            locs = torch.from_numpy(np.load(f"energies/data/gmm40-{ndim}d_locs.npy"))
+            locs = torch.from_numpy(np.load(f"energies/data/mos-{ndim}d_locs.npy"))
         except FileNotFoundError:
             with temp_seed(seed):
-                locs = torch.rand(num_components, ndim) * 2 - 1
-        locs = locs.to(dtype=torch.float32, device=device) * loc_scaling
-        scales = torch.ones(num_components, ndim, device=device) * scale_scaling
-        logits = torch.ones(num_components, device=device)
+                locs = (torch.rand(num_components, ndim) * 2 - 1) * 10  # 10 from Beyond ELBOs
+        locs = locs.to(dtype=torch.float32, device=device)
+
+        dofs = torch.ones((num_components, ndim), device=device) * degree_of_freedom
+        scales = torch.ones((num_components, ndim), device=device)
+        logits = torch.ones(num_components, device=device)  # uniform, default in Beyond ELBOs
 
         mixture_dist = D.Categorical(logits=logits)
         components_dist = D.Independent(
-            D.Normal(loc=locs, scale=scales), reinterpreted_batch_ndims=1
+            D.StudentT(loc=locs, scale=scales, df=dofs), reinterpreted_batch_ndims=1  # type: ignore
         )
         self.distribution = D.MixtureSameFamily(mixture_dist, components_dist)
 
