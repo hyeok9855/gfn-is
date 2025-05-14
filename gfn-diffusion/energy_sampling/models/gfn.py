@@ -3,9 +3,8 @@ import math
 import torch
 import torch.nn as nn
 
-from energies import BaseEnergy, LennardJones
+from energies import BaseEnergy
 from models.modules import BaseModule
-from utils.particle_system import remove_mean
 
 logtwopi = math.log(2 * math.pi)
 
@@ -84,10 +83,6 @@ class GFN(nn.Module):
                 * torch.randn_like(s, device=self.device)
             )
 
-            if self.state_remove_mean:
-                assert isinstance(self.energy, LennardJones)
-                s_next = remove_mean(s_next, self.energy.n_particles, self.energy.spatial_dim)
-
         noise = ((s_next - s) - dts * pf_mean) / (dts.sqrt() * (pf_logvar / 2).exp())
         log_pfs = -0.5 * (noise**2 + logtwopi + dts.log() + pf_logvar).sum(1)
 
@@ -124,10 +119,6 @@ class GFN(nn.Module):
             s[t != 0] = back_mean.detach()[t != 0] + back_var.sqrt().detach()[
                 t != 0
             ] * torch.randn_like(s_next[t != 0])
-
-            if self.state_remove_mean:
-                assert isinstance(self.energy, LennardJones)
-                s = remove_mean(s, self.energy.n_particles, self.energy.spatial_dim)
 
         noise_backward = (s - back_mean) / back_var.sqrt()
         log_pbs = torch.zeros_like(back_mean[:, 0])
