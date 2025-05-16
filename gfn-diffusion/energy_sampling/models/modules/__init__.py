@@ -45,8 +45,9 @@ def get_module(args: argparse.Namespace, energy: BaseEnergy) -> BaseModule:
 
     elif "egnn" in args.module:
         egnn_kwargs = {
-            "n_particles": getattr(energy, "n_particles"),
-            "spatial_dim": getattr(energy, "spatial_dim"),
+            "n_particles": energy.n_particles,  # type: ignore
+            "spatial_dim": energy.spatial_dim,  # type: ignore
+            "h_initial": energy.h_initial,  # type: ignore
             "hidden_nf": args.egnn_hidden_nf,
             "n_layers": args.egnn_n_layers,
             "recurrent": args.egnn_recurrent,

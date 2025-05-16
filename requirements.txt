@@ -9,3 +9,6 @@ seaborn
 tqdm
 POT
 wandb
+# For ALDP
+ase==3.25.0
+torchani==2.2.4

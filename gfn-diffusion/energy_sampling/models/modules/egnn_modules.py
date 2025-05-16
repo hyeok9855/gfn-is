@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 
 from models.modules.base import BaseModule, ParamGroups
-from models.modules.pismlp_modules import LangevinScalingModelPIS
+from models.modules.pismlp_modules import LangevinScalingModelPIS, TimeEncodingPIS
 
 
 class EGNNModule(BaseModule):
@@ -16,6 +16,7 @@ class EGNNModule(BaseModule):
         self,
         n_particles: int,
         spatial_dim: int,
+        h_initial: torch.Tensor,
         ### Common arguments
         conditional_flow_model: bool = False,
         lp: bool = False,
@@ -29,6 +30,8 @@ class EGNNModule(BaseModule):
         log_var_range: float = 4.0,
         use_checkpoint: bool = False,
         ### EGNN arguments
+        time_embedding: bool = False,
+        t_emb_dim: int = 128,
         hidden_nf=128,
         n_layers=5,
         recurrent=True,
@@ -51,7 +54,7 @@ class EGNNModule(BaseModule):
             log_var_range=log_var_range,
             use_checkpoint=use_checkpoint,
         )
-        if conditional_flow_model:
+        if conditional_flow_model:  # TODO
             raise NotImplementedError("Conditional flow model is not implemented for EGNN")
 
         if learn_pb:
@@ -60,8 +63,22 @@ class EGNNModule(BaseModule):
         if learn_variance:
             raise NotImplementedError("Learnable variance is not implemented for EGNN")
 
+        assert h_initial.ndim == 2
+        assert h_initial.shape[0] == n_particles
+        self.h_initial = h_initial
+
+        self.time_embedding = (
+            TimeEncodingPIS(t_emb_dim, t_emb_dim, t_emb_dim)
+            if time_embedding
+            else lambda t: t.unsqueeze(-1)
+        )
+
+        h_size = h_initial.shape[1]
+        if condition_time:
+            h_size += t_emb_dim if time_embedding else 1
+
         self.egnn = EGNN(
-            in_node_nf=1,
+            in_node_nf=h_size,
             in_edge_nf=1,
             hidden_nf=hidden_nf,
             n_layers=n_layers,
@@ -107,25 +124,32 @@ class EGNNModule(BaseModule):
     def predict_forward(
         self, s: torch.Tensor, t: torch.Tensor, logr_fn: Callable | None = None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # t.shape: (bsz, 1)
+        # t.shape: (bsz,)
         # xs.shape: (bsz, ndim)
-        t = t.unsqueeze(-1)
-        n_batch = s.shape[0]
-        edges = self._cast_edges2batch(self.edges, n_batch, self._n_particles)
-        edges = [edges[0].to(s.device), edges[1].to(s.device)]
-        x = s.reshape(n_batch * self._n_particles, self._spatial_dim).clone()
-        h = torch.ones(n_batch, self._n_particles).to(s.device)
+
+        bsz = s.shape[0]
+        x = s.reshape(bsz * self._n_particles, self._spatial_dim).clone()
+
+        h = self.h_initial.to(s.device).reshape(1, -1)  # (1, n_particles * h_initial_dim)
+        h = h.repeat(bsz, 1)  # (bsz, n_particles * h_size)
+        h = h.reshape(bsz * self._n_particles, -1)  # (bsz * n_particles, h_initial_dim)
 
         if self.condition_time:
-            h = h * t
-        h = h.reshape(n_batch * self._n_particles, 1)
+            t_emb = self.time_embedding(t)  # (bsz, t_emb_dim)
+            t_emb = t_emb.repeat(1, self._n_particles)  # (bsz, n_particles * t_emb_dim)
+            t_emb = t_emb.reshape(bsz * self._n_particles, -1)  # (bsz * n_particles, t_emb_dim)
+            h = torch.cat([h, t_emb], dim=1)  # (bsz * n_particles, h_size + t_emb_dim)
+
+        edges = self._cast_edges2batch(self.edges, bsz, self._n_particles)
+        edges = [edges[0].to(s.device), edges[1].to(s.device)]
         edge_attr = torch.sum((x[edges[0]] - x[edges[1]]) ** 2, dim=1, keepdim=True)
+
         _, x_final = self.egnn(h, x, edges, edge_attr=edge_attr)
         vel = x_final - x
 
-        vel = vel.view(n_batch, self._n_particles, self._spatial_dim)
+        vel = vel.view(bsz, self._n_particles, self._spatial_dim)
         vel = vel - torch.mean(vel, dim=1, keepdim=True)
-        vel = vel.view(n_batch, self._n_particles * self._spatial_dim)
+        vel = vel.view(bsz, self._n_particles * self._spatial_dim)
 
         mean, logvar = self.get_gaussian_params(vel, s, t, logr_fn)
         flow = self.predict_flow()  # TODO: support conditional flow model
@@ -144,7 +168,7 @@ class EGNNModule(BaseModule):
     ) -> torch.Tensor:
         raise NotImplementedError("Backward correction is not implemented for EGNN")
 
-    def _create_edges(self):
+    def _create_edges(self) -> tuple[torch.LongTensor, torch.LongTensor]:
         rows, cols = [], []
         for i in range(self._n_particles):
             for j in range(i + 1, self._n_particles):
@@ -152,9 +176,11 @@ class EGNNModule(BaseModule):
                 cols.append(j)
                 rows.append(j)
                 cols.append(i)
-        return [torch.LongTensor(rows), torch.LongTensor(cols)]
+        return torch.LongTensor(rows), torch.LongTensor(cols)
 
-    def _cast_edges2batch(self, edges, n_batch, n_nodes):
+    def _cast_edges2batch(
+        self, edges: tuple[torch.LongTensor, torch.LongTensor], n_batch: int, n_nodes: int
+    ) -> tuple[torch.LongTensor, torch.LongTensor]:
         if n_batch not in self._edges_dict:
             self._edges_dict = {}
             rows, cols = edges
@@ -165,7 +191,7 @@ class EGNNModule(BaseModule):
             rows_total = torch.cat(rows_total)
             cols_total = torch.cat(cols_total)
 
-            self._edges_dict[n_batch] = [rows_total, cols_total]
+            self._edges_dict[n_batch] = (rows_total, cols_total)
         return self._edges_dict[n_batch]
 
 

@@ -1,9 +1,14 @@
+from pathlib import Path
+
 import numpy as np
 import torch
 
 from energies.base import BaseEnergy
 from utils.misc_utils import temp_seed
 from utils.particle_system import interatomic_distance, remove_mean
+
+
+DATA_PATH = Path(__file__).parent / "data"
 
 
 def lennard_jones_energy(r, eps=1.0, rm=1.0):
@@ -17,7 +22,7 @@ class LennardJones(BaseEnergy):
         spatial_dim: int,
         n_particles: int,
         device: str | torch.device,
-        data_path: str,
+        data_path: Path,
         epsilon: float = 1.0,
         min_radius: float = 1.0,
         oscillator: bool = True,
@@ -36,7 +41,10 @@ class LennardJones(BaseEnergy):
         self.oscillator_scale = oscillator_scale
         self.energy_factor = energy_factor
 
-        self.approx_sample = torch.tensor(np.load(data_path), device=device)
+        self.h_initial = torch.ones(n_particles, device=device).unsqueeze(1)
+
+        data = torch.tensor(np.load(data_path))
+        self.approx_sample = remove_mean(data, self.n_particles, self.spatial_dim)
         self.seed = seed
 
     def energy(self, x: torch.Tensor):
@@ -60,24 +68,29 @@ class LennardJones(BaseEnergy):
         assert self.approx_sample is not None
         with temp_seed(self.seed):
             perm_idx = torch.randperm(self.approx_sample.shape[0])[:batch_size]
-        return self.approx_sample[perm_idx]
+        return self.approx_sample[perm_idx].to(self.device)
+
+    def interatomic_distance(self, x: torch.Tensor) -> torch.Tensor:
+        return interatomic_distance(x, self.n_particles, self.spatial_dim, remove_duplicates=True)
 
 
 class LJ13(LennardJones):
-    def __init__(self, device: str | torch.device):
+    def __init__(self, device: str | torch.device, seed: int = 0):
         super().__init__(
             spatial_dim=3,
             n_particles=13,
             device=device,
-            data_path=f"energies/data/LJ13.npy",
+            data_path=DATA_PATH / "LJ13.npy",
+            seed=seed,
         )
 
 
 class LJ55(LennardJones):
-    def __init__(self, device: str | torch.device):
+    def __init__(self, device: str | torch.device, seed: int = 0):
         super().__init__(
             spatial_dim=3,
             n_particles=55,
             device=device,
-            data_path=f"energies/data/LJ55.npy",
+            data_path=DATA_PATH / "LJ55.npy",
+            seed=seed,
         )

@@ -1,4 +1,5 @@
 from typing import Callable, Literal
+import warnings
 
 import torch
 
@@ -46,10 +47,12 @@ class Trainer:
         anneal_epsilon: bool,
         invtemp: float,
         invtemp_anneal: bool,
+        eval_batch_size: int,
         eval_discretizer: Callable[[int, int], torch.Tensor],
         eval_T: int,
         eval_weighting: bool,
         eval_resampling: bool,
+        plot_gt: bool,
         plot_t_idx: list[int],
         plot_buffer_t_idx: list[int],
     ):
@@ -83,7 +86,7 @@ class Trainer:
             self.fwd_to_bwd_ratio = -1.0
         self.buffer = buffer
         self.buffer_save_interval = buffer_save_interval
-        self.prefill_epochs = prefill_epochs
+        self.prefill_epochs = prefill_epochs if self.buffer is not None else 0
 
         # Sampling parameters
         self.batch_size = batch_size
@@ -109,10 +112,12 @@ class Trainer:
         self.invtemp_anneal = invtemp_anneal
 
         # Eval and Plot
+        self.eval_batch_size = eval_batch_size
         self.eval_discretizer = eval_discretizer
         self.eval_T = eval_T
         self.eval_weighting = eval_weighting
         self.eval_resampling = eval_resampling
+        self.plot_gt = plot_gt
         self.plot_t_idx = plot_t_idx
         self.plot_buffer_t_idx = plot_buffer_t_idx
 
@@ -145,6 +150,15 @@ class Trainer:
             if not self.invtemp_anneal
             else linear_annealing(it, int(0.8 * self.n_epochs), self.invtemp, 1.0, descending=False)
         )
+
+        if it < self.prefill_epochs:
+            # Prefill buffer with forward sampling
+            assert self.buffer is not None
+            loss = self.fwd_train_step(it)
+        elif it == self.prefill_epochs:
+            # We initialize the flow_model with unbiased estimator of the log-partition function
+            # TODO, after implementing GIS-like buffer
+            pass
 
         if self.training_mode == "bwd":
             loss = self.bwd_train_step()
@@ -347,7 +361,18 @@ class Trainer:
             data_size, full_eval, final_eval
         )
         if plot:
-            images = self.plot_step(model_trajs, weights, sample_xs_r, buffer_xs)
+            gt_xs = None
+            if self.plot_gt:
+                try:
+                    gt_xs = self.energy.cached_sample(data_size)[0]
+                except NotImplementedError:
+                    warnings.warn(
+                        f"Ground-truth samples are not available for {self.energy.__class__.__name__}."
+                        "Skipping plotting of ground-truth samples."
+                    )
+                    gt_xs = None
+                self.plot_gt = False  # disable plotting gt after first plot
+            images = self.plot_step(model_trajs, weights, sample_xs_r, buffer_xs, gt_xs)
             metrics.update(images)
         return metrics
 
@@ -366,19 +391,18 @@ class Trainer:
         metrics = {}
 
         with torch.no_grad():
-            divisible = data_size % self.batch_size == 0
-            n_epochs = data_size // self.batch_size + (1 if not divisible else 0)
+            divisible = data_size % self.eval_batch_size == 0
+            n_epochs = data_size // self.eval_batch_size + (1 if not divisible else 0)
 
             model_trajs, log_pfs, log_pbs, log_fs, log_rewards = [], [], [], [], []
 
             for i in range(n_epochs):
-                if i == n_epochs - 1 and not divisible:
-                    bsz = data_size - self.batch_size * (n_epochs - 1)
-                else:
-                    bsz = self.batch_size
-
-                init_state = torch.zeros(bsz, self.energy.ndim).to(self.gfn_model.device)
-                ts = self.eval_discretizer(bsz, self.eval_T).to(self.gfn_model.device)
+                init_state = torch.zeros(self.eval_batch_size, self.energy.ndim).to(
+                    self.gfn_model.device
+                )
+                ts = self.eval_discretizer(self.eval_batch_size, self.eval_T).to(
+                    self.gfn_model.device
+                )
                 _model_trajs, _log_pfs, _log_pbs, _log_fs, _ = self.gfn_model.get_trajectory_fwd(
                     init_state, ts, epsilon=0.0, pis=self.loss_type == "pis"
                 )
@@ -388,31 +412,31 @@ class Trainer:
                 log_pbs.append(_log_pbs)
                 log_fs.append(_log_fs)
                 log_rewards.append(_log_rewards)
-            model_trajs = torch.cat(model_trajs, dim=0)
+            model_trajs = torch.cat(model_trajs, dim=0)[:data_size]
             sample_xs = model_trajs[:, -1]
-            log_pfs = torch.cat(log_pfs, dim=0)
-            log_pbs = torch.cat(log_pbs, dim=0)
-            log_fs = torch.cat(log_fs, dim=0)
-            log_rewards = torch.cat(log_rewards, dim=0)
+            log_pfs = torch.cat(log_pfs, dim=0)[:data_size]
+            log_pbs = torch.cat(log_pbs, dim=0)[:data_size]
+            log_fs = torch.cat(log_fs, dim=0)[:data_size]
+            log_rewards = torch.cat(log_rewards, dim=0)[:data_size]
 
             try:
                 gt_xs, gt_log_rewards = self.energy.cached_sample(data_size)
                 gt_log_pfs, gt_log_pbs = [], []
                 for i in range(n_epochs):
-                    gt_xs_batch = gt_xs[i * self.batch_size : (i + 1) * self.batch_size]
-                    ts = self.eval_discretizer(gt_xs_batch.shape[0], self.eval_T).to(
+                    gt_xs_batch = gt_xs[i * self.eval_batch_size : (i + 1) * self.eval_batch_size]
+                    gt_log_rewards_batch = gt_log_rewards[
+                        i * self.eval_batch_size : (i + 1) * self.eval_batch_size
+                    ]
+                    ts = self.eval_discretizer(self.eval_batch_size, self.eval_T).to(
                         self.gfn_model.device
                     )
-                    gt_log_rewards_batch = gt_log_rewards[
-                        i * self.batch_size : (i + 1) * self.batch_size
-                    ]
                     _, _log_pfs, _log_pbs, _ = self.gfn_model.get_trajectory_bwd(
                         gt_xs_batch, ts, gt_log_rewards_batch
                     )
                     gt_log_pfs.append(_log_pfs)
                     gt_log_pbs.append(_log_pbs)
-                gt_log_pfs = torch.cat(gt_log_pfs, dim=0)
-                gt_log_pbs = torch.cat(gt_log_pbs, dim=0)
+                gt_log_pfs = torch.cat(gt_log_pfs, dim=0)[:data_size]
+                gt_log_pbs = torch.cat(gt_log_pbs, dim=0)[:data_size]
             except NotImplementedError:
                 gt_xs = gt_log_rewards = gt_log_pfs = gt_log_pbs = None
 
@@ -450,7 +474,7 @@ class Trainer:
             assert gt_xs is not None
             metrics_r = {}
             sampled_idx = get_sampling_func(self.resampling_strategy)(  # type: ignore
-                weights, self.batch_size, True
+                weights, data_size, True
             )
             model_trajs_r = model_trajs[sampled_idx]
             sample_xs_r = model_trajs_r[:, -1]
@@ -486,16 +510,18 @@ class Trainer:
         weights: torch.Tensor | None = None,
         sample_xs_r: torch.Tensor | None = None,
         buffer_xs: torch.Tensor | None = None,
+        gt_xs: torch.Tensor | None = None,
     ) -> dict:
-        images = visualize(self.energy, model_trajs[:, -1])
+        xs = model_trajs[:, -1]
+        images = visualize(self.energy, xs)
         if weights is not None:
-            images.update(
-                visualize(self.energy, model_trajs[:, -1], weights=weights, suffix="_weighted")
-            )
+            images.update(visualize(self.energy, xs, weights=weights, suffix="_weighted"))
         if sample_xs_r is not None:
             images.update(visualize(self.energy, sample_xs_r, suffix="_resample"))
         if buffer_xs is not None:
             images.update(visualize(self.energy, buffer_xs, suffix="_buffer"))
+        if gt_xs is not None:
+            images.update(visualize(self.energy, gt_xs, suffix="_gt"))
 
         # Plot intermediate states
         if len(self.plot_t_idx) > 0:

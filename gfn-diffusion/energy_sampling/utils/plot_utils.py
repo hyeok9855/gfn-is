@@ -1,16 +1,21 @@
 from functools import partial
 import itertools
+import typing
 import warnings
 from typing import Callable
 
 import matplotlib.pyplot as plt
-import PIL
+import numpy as np
+import mdtraj as md
 import seaborn as sns
 import torch
 import wandb
+from matplotlib.colors import LogNorm
 from matplotlib.figure import Figure
+from PIL import Image as PILImage
 
 from energies import (
+    ALDP,
     GMM40,
     BaseEnergy,
     Funnel,
@@ -20,7 +25,46 @@ from energies import (
     StudentTMixture,
     TwentyFiveGaussianMixture,
 )
-from utils.particle_system import interatomic_distance
+from energies.aldp import DATA_PATH as ALDP_DATA_PATH
+
+
+def visualize(
+    energy: BaseEnergy,
+    samples: torch.Tensor,
+    weights: torch.Tensor | None = None,
+    suffix: str = "",
+) -> dict:
+
+    _energy_cls = energy.target_energy if isinstance(energy, IntermediateEnergy) else energy
+    if isinstance(_energy_cls, ManyWell):
+        out_dict = viz_manywell(energy, samples, weights)
+    elif isinstance(_energy_cls, Funnel):
+        out_dict = viz_funnel(energy, samples, weights)
+    elif isinstance(_energy_cls, (TwentyFiveGaussianMixture, GMM40)):
+        out_dict = viz_gmm(energy, samples, weights)
+    elif isinstance(_energy_cls, StudentTMixture):
+        out_dict = viz_student_t_mixture(energy, samples, weights)
+    elif isinstance(_energy_cls, LennardJones):
+        if weights is not None:
+            warnings.warn(
+                "Can't visualize weighted samples for Lennard-Jones energy. Ignoring weights..."
+            )
+            return {}
+        out_dict = viz_lennard_jones(energy, samples)
+    elif isinstance(_energy_cls, ALDP):
+        if weights is not None:
+            warnings.warn("Can't visualize weighted samples for ALDP energy. Ignoring weights...")
+            return {}
+        out_dict = viz_aldp(energy, samples)
+    else:
+        warnings.warn(
+            f"Warning: {_energy_cls.__class__.__name__} is not supported for visualization."
+            + " Skipping..."
+        )
+        return {}
+
+    plt.close("all")
+    return {k.replace("visualization", f"visualization{suffix}"): v for k, v in out_dict.items()}
 
 
 def sliced_log_reward(x: torch.Tensor, energy: BaseEnergy, dims: tuple) -> torch.Tensor:
@@ -31,7 +75,7 @@ def sliced_log_reward(x: torch.Tensor, energy: BaseEnergy, dims: tuple) -> torch
 
 def fig_to_image(fig):
     fig.canvas.draw()
-    return PIL.Image.frombytes("RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb())  # type: ignore
+    return PILImage.frombytes("RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
 
 
 def viz_kde2d(
@@ -148,7 +192,70 @@ def viz_2d_slice(
         clamp_min=clamp_min,
     )
 
-    return fig_kde, ax_kde, fig_contour, ax_contour
+    return fig_kde, fig_contour
+
+
+def viz_energy_hist(energy: BaseEnergy, xs: torch.Tensor) -> dict:
+    xs_logr = energy.log_reward(xs, temper=False)
+    gt_xs, gt_xs_logr = energy.cached_sample(xs.shape[0])
+
+    xs, gt_xs = xs.cpu(), gt_xs.cpu()
+    xs_logr, gt_xs_logr = xs_logr.cpu(), gt_xs_logr.cpu()
+
+    min_energy = (-gt_xs_logr).min()
+    max_energy = (-gt_xs_logr).max()
+
+    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+
+    for _logr, color in zip([xs_logr, gt_xs_logr], ["r", "g"]):
+        ax.hist(
+            torch.clamp(-_logr, min=min_energy, max=max_energy),
+            bins=100,
+            alpha=0.5,
+            density=True,
+            histtype="step",
+            color=color,
+            linewidth=4,
+        )
+    ax.set_xlabel("Energy")
+    ax.legend(["generated data", "test data"])
+    ax.grid(True)
+
+    return {"visualization/energy_hist": wandb.Image(fig_to_image(fig))}
+
+
+def viz_interatomic_dist_hist(energy: LennardJones | ALDP, xs: torch.Tensor) -> dict:
+    gt_xs, _ = energy.cached_sample(xs.shape[0])
+
+    xs, gt_xs = xs.cpu(), gt_xs.cpu()
+
+    dist_xs = energy.interatomic_distance(xs).view(-1)
+    dist_gt_xs = energy.interatomic_distance(gt_xs).view(-1)
+
+    bins = 100
+    min_dist = 0
+    max_dist = 6
+
+    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+
+    for _xs, color in zip([dist_xs, dist_gt_xs], ["r", "g"]):
+        ax.hist(
+            torch.clamp(_xs, min=min_dist, max=max_dist),
+            bins=bins,
+            alpha=0.5,
+            density=True,
+            histtype="step",
+            color=color,
+            linewidth=4,
+        )
+    ax.set_xlabel("Interatomic Distances")
+    ax.legend(["generated data", "test data"])
+    ax.grid(True)
+
+    return {"visualization/interatomic_dist_hist": wandb.Image(fig_to_image(fig))}
+
+
+##### Energy-specific visualization #####
 
 
 def viz_manywell(
@@ -157,30 +264,16 @@ def viz_manywell(
     weights: torch.Tensor | None = None,
 ) -> dict:
     lim = energy.plot_bound
-    viz_lst = []
-    viz_lst.extend(viz_2d_slice(energy, (0, 2), samples, weights=weights, lim=lim))
-    viz_lst.extend(viz_2d_slice(energy, (1, 2), samples, weights=weights, lim=lim))
-    # viz_lst.extend(viz_2d_slice(energy, (4, 6), samples, weights=weights, lim=lim))
-    # viz_lst.extend(viz_2d_slice(energy, (5, 6), samples, weights=weights, lim=lim))
-
-    fig_kde_x02, fig_contour_x02, fig_kde_x12, fig_contour_x12 = viz_lst[0:8:2]
-    # fig_kde_x46, fig_contour_x46, fig_kde_x56, fig_contour_x56 = viz_lst[8::2]
-
-    out_dict = {
-        "visualization/contourx02": wandb.Image(fig_to_image(fig_contour_x02)),
-        "visualization/contourx12": wandb.Image(fig_to_image(fig_contour_x12)),
-        "visualization/kdex02": wandb.Image(fig_to_image(fig_kde_x02)),
-        "visualization/kdex12": wandb.Image(fig_to_image(fig_kde_x12)),
-        # "visualization/contourx46": wandb.Image(fig_to_image(fig_contour_x46)),
-        # "visualization/contourx56": wandb.Image(fig_to_image(fig_contour_x56)),
-        # "visualization/kdex46": wandb.Image(fig_to_image(fig_kde_x46)),
-        # "visualization/kdex56": wandb.Image(fig_to_image(fig_kde_x56)),
-    }
-
-    for obj in viz_lst:
-        if isinstance(obj, Figure):
-            plt.close(obj)
-
+    out_dict = {}
+    for idx1, idx2 in [(0, 2), (1, 2)]:
+        fig_kde, fig_contour = viz_2d_slice(energy, (idx1, idx2), samples, weights=weights, lim=lim)
+        out_dict.update(
+            {
+                f"visualization/kde{idx1}{idx2}": wandb.Image(fig_to_image(fig_kde)),
+                f"visualization/contour{idx1}{idx2}": wandb.Image(fig_to_image(fig_contour)),
+            }
+        )
+    out_dict.update(viz_energy_hist(energy, samples))
     return out_dict
 
 
@@ -190,21 +283,15 @@ def viz_funnel(
     weights: torch.Tensor | None = None,
 ) -> dict:
     lim = energy.plot_bound
-    viz_lst = []
-    for i in range(1, 3):
-        viz_lst.extend(viz_2d_slice(energy, (0, i), samples, weights=weights, lim=lim))
-
     out_dict = {}
     for i in range(1, 3):
-        fig_kde, ax_kde, fig_contour, ax_contour = viz_lst[4 * (i - 1) : 4 * i]
+        fig_kde, fig_contour = viz_2d_slice(energy, (0, i), samples, weights=weights, lim=lim)
         out_dict.update(
             {
-                f"visualization/contour0{i}": wandb.Image(fig_to_image(fig_contour)),
                 f"visualization/kde0{i}": wandb.Image(fig_to_image(fig_kde)),
+                f"visualization/contour0{i}": wandb.Image(fig_to_image(fig_contour)),
             }
         )
-        plt.close(fig_kde)
-        plt.close(fig_contour)
 
     return out_dict
 
@@ -213,94 +300,23 @@ def viz_gmm(
     energy: GMM40 | TwentyFiveGaussianMixture,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
-    clamp_min=-1000.0,
 ) -> dict:
     lim = energy.plot_bound
-    viz_lst = []
-    for i in range(1, min(energy.ndim, 4), 2):
-        viz_lst.extend(
-            viz_2d_slice(
-                energy,
-                (i - 1, i),
-                samples,
-                weights=weights,
-                lim=lim,
-                clamp_min=clamp_min,
-                n_contour_levels=100,
-            )
-        )
-
     out_dict = {}
-    for i in range(len(viz_lst) // 4):
-        fig_kde, ax_kde, fig_contour, ax_contour = viz_lst[4 * i : 4 * (i + 1)]
+    for i in range(1, min(energy.ndim, 4), 2):
+        fig_kde, fig_contour = viz_2d_slice(
+            energy, (i - 1, i), samples, weights=weights, lim=lim, n_contour_levels=100
+        )
         out_dict.update(
             {
-                f"visualization/contour{2 * i}{2 * i + 1}": wandb.Image(fig_to_image(fig_contour)),
                 f"visualization/kde{2 * i}{2 * i + 1}": wandb.Image(fig_to_image(fig_kde)),
+                f"visualization/contour{2 * i}{2 * i + 1}": wandb.Image(fig_to_image(fig_contour)),
             }
         )
         plt.close(fig_kde)
         plt.close(fig_contour)
 
     return out_dict
-
-
-def viz_lennard_jones(energy: LennardJones, xs: torch.Tensor) -> dict:
-    xs_logr = energy.log_reward(xs, temper=False)
-    gt_xs, gt_xs_logr = energy.cached_sample(xs.shape[0])
-
-    xs, gt_xs = xs.cpu(), gt_xs.cpu()
-    xs_logr, gt_xs_logr = xs_logr.cpu(), gt_xs_logr.cpu()
-
-    dist_xs = interatomic_distance(xs, energy.n_particles, energy.spatial_dim).view(-1)
-    dist_gt_xs = interatomic_distance(gt_xs, energy.n_particles, energy.spatial_dim).view(-1)
-
-    if energy.n_particles == 13:
-        bins = 100
-        min_dist = 0
-        max_dist = 6
-        min_energy = -60
-        max_energy = 0
-    elif energy.n_particles == 55:
-        bins = 200
-        min_dist = 0
-        max_dist = 6
-        min_energy = -380
-        max_energy = -180
-    else:
-        raise ValueError(f"Unknown number of particles: {energy.n_particles}")
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-
-    for _xs, color in zip([dist_xs, dist_gt_xs], ["r", "g"]):
-        axes[0].hist(
-            torch.clamp(_xs, min=min_dist, max=max_dist),
-            bins=bins,
-            alpha=0.5,
-            density=True,
-            histtype="step",
-            color=color,
-            linewidth=4,
-        )
-    axes[0].set_xlabel("Interatomic Distances")
-    axes[0].legend(["generated data", "test data"])
-    axes[0].grid(True)
-
-    for _logr, color in zip([xs_logr, gt_xs_logr], ["r", "g"]):
-        axes[1].hist(
-            torch.clamp(-_logr, min=min_energy, max=max_energy),
-            bins=100,
-            alpha=0.5,
-            density=True,
-            histtype="step",
-            color=color,
-            linewidth=4,
-        )
-    axes[1].set_xlabel("Energy")
-    axes[1].legend(["generated data", "test data"])
-    axes[1].grid(True)
-
-    return {"visualization/hists": wandb.Image(fig_to_image(fig))}
 
 
 def viz_student_t_mixture(
@@ -343,35 +359,219 @@ def viz_student_t_mixture(
     return {"visualization/contour": wandb.Image(fig_to_image(fig))}
 
 
-def visualize(
-    energy: BaseEnergy,
-    samples: torch.Tensor,
-    weights: torch.Tensor | None = None,
-    suffix: str = "",
-) -> dict:
-    if isinstance(energy, LennardJones):
-        if weights is not None:
-            warnings.warn(
-                "Can't visualize weighted samples for Lennard-Jones energy. Ignoring weights..."
-            )
-            return {}
-        out_dict = viz_lennard_jones(energy, samples)
-    else:
-        _energy = energy.target_energy if isinstance(energy, IntermediateEnergy) else energy
-        if isinstance(_energy, ManyWell):
-            out_dict = viz_manywell(energy, samples, weights)
-        elif isinstance(_energy, Funnel):
-            out_dict = viz_funnel(energy, samples, weights)
-        elif isinstance(_energy, (TwentyFiveGaussianMixture, GMM40)):
-            out_dict = viz_gmm(energy, samples, weights)
-        elif isinstance(_energy, StudentTMixture):
-            out_dict = viz_student_t_mixture(energy, samples, weights)
-        else:
-            warnings.warn(
-                f"Warning: {_energy.__class__.__name__} is not supported for visualization."
-                + " Skipping..."
-            )
-            return {}
+def viz_lennard_jones(energy: LennardJones, xs: torch.Tensor) -> dict:
+    out_dict = {}
+    out_dict.update(viz_interatomic_dist_hist(energy, xs))
+    out_dict.update(viz_energy_hist(energy, xs))
+    return out_dict
 
-    plt.close("all")
-    return {k.replace("visualization", f"visualization{suffix}"): v for k, v in out_dict.items()}
+
+def viz_aldp(energy: ALDP, xs: torch.Tensor) -> dict:
+    out_dict = {}
+    out_dict.update(plot_phi_psi(xs))
+    out_dict.update(draw_mols(xs))
+    out_dict.update(viz_energy_hist(energy, xs))
+    out_dict.update(viz_interatomic_dist_hist(energy, xs))
+    return out_dict
+
+
+##### ALDP #####
+
+ATOM_COLORS = {
+    "carbon": "gray",
+    "nitrogen": "blue",
+    "oxygen": "red",
+    "hydrogen": "black",
+    "sulfur": "yellow",
+    "phosphorus": "orange",
+}
+
+ATOM_SIZES = {
+    "carbon": 100,
+    "nitrogen": 100,
+    "oxygen": 100,
+    "hydrogen": 25,
+    "sulfur": 100,
+    "phosphorus": 100,
+}
+
+
+def plot_phi_psi(xs: torch.Tensor, dpi=300):
+    """
+    Plots a 2D histogram of phi and psi angles.
+
+    Args:
+        xs (torch.Tensor): Input data for dihedral angle computation.
+        dpi (int): Dots per inch for the figure.
+
+    Returns:
+        matplotlib.figure.Figure: The generated figure.
+    """
+
+    assert xs.ndim == 2  # (n_samples, n_atoms * 3)
+    xs = xs.reshape(xs.shape[0], -1, 3)  # (n_samples, n_atoms, 3)
+
+    def compute_dihedral(positions: torch.Tensor) -> torch.Tensor:
+        v = positions[:, :-1] - positions[:, 1:]
+        v0 = -v[:, 0]
+        v1 = v[:, 2]
+        v2 = v[:, 1]
+
+        s0 = torch.sum(v0 * v2, dim=-1, keepdim=True) / torch.sum(v2 * v2, dim=-1, keepdim=True)
+        s1 = torch.sum(v1 * v2, dim=-1, keepdim=True) / torch.sum(v2 * v2, dim=-1, keepdim=True)
+
+        v0 = v0 - s0 * v2
+        v1 = v1 - s1 * v2
+
+        v0 = v0 / torch.norm(v0, dim=-1, keepdim=True)
+        v1 = v1 / torch.norm(v1, dim=-1, keepdim=True)
+        v2 = v2 / torch.norm(v2, dim=-1, keepdim=True)
+
+        x = torch.sum(v0 * v1, dim=-1)
+        v3 = torch.cross(v0, v2, dim=-1)
+        y = torch.sum(v3 * v1, dim=-1)
+        return torch.atan2(y, x)
+
+    fig = plt.figure(figsize=(7, 6), dpi=dpi)
+
+    angle_1 = [6, 8, 14, 16]
+    angle_2 = [1, 6, 8, 14]
+
+    psi = compute_dihedral(xs[:, angle_1, :])
+    phi = compute_dihedral(xs[:, angle_2, :])
+    phi = phi.detach().cpu().numpy()
+    psi = psi.detach().cpu().numpy()
+
+    xedges = np.linspace(-np.pi, np.pi, 51)
+    yedges = np.linspace(-np.pi, np.pi, 51)
+    plt.hist2d(phi, psi, bins=[xedges, yedges], norm=LogNorm(), cmap="viridis")
+    plt.xlim(-np.pi, np.pi)
+    plt.ylim(-np.pi, np.pi)
+    plt.xlabel("$\phi$", fontsize=14)
+    plt.ylabel("$\psi$", fontsize=14)
+    plt.xticks(fontsize=12)
+    plt.yticks(fontsize=12)
+    plt.colorbar(label="Density")
+    plt.tight_layout()
+    return {"visualization/phi_psi": wandb.Image(fig_to_image(fig))}
+
+
+def draw_mols(xs: torch.Tensor, name="aldp"):
+    """
+    Draw a figure containing 3D molecule.
+
+    Args:
+        energy (BaseEnergy): Energy function.
+        sample (Array): Sample generated by model.
+
+    Return:
+        fig, axs: matplotlib figure and axes objec
+    """
+
+    assert xs.shape[0] >= 3
+
+    # Make ten subplots
+    fig, axs = plt.subplots(1, 3, figsize=(30, 10), subplot_kw=dict(projection="3d"))
+
+    for i, ax in enumerate(axs.flatten()):
+        draw_mol(
+            name,
+            ax,
+            xs[i].reshape(-1, 3).detach().cpu().numpy(),
+        )
+    return {"visualization/3D": wandb.Image(fig_to_image(fig))}
+
+
+@typing.no_type_check
+def draw_mol(name: str, ax: plt.Axes, coordinate: np.ndarray) -> plt.Axes:
+    """
+    Visualizes molecular conformation using matplotlib's 3D plot.
+    Returns the generated matplotlib Axes object.
+
+    parameters:
+        coordinates (Array): Molecular atom coordinates. Should be array of shape (n_atoms, 3).
+
+    return:
+        matplotlib.axes.Axes: Axes object containing the visualized molecular plot.
+    """
+
+    # get topology (md.Topology) from pdb file
+    coordinate = np.nan_to_num(coordinate, nan=0.0, posinf=0.0, neginf=0.0)
+
+    topology = md.load(ALDP_DATA_PATH / f"{name}.pdb").topology
+
+    center_of_mass = np.mean(coordinate, axis=0)
+    coordinate = coordinate - center_of_mass
+
+    # Set the box aspect ratio
+    ax.set_aspect("equal")
+
+    # Set the background color to white
+    ax.xaxis.pane.fill = False
+    ax.yaxis.pane.fill = False
+    ax.zaxis.pane.fill = False
+    ax.xaxis.pane.set_edgecolor("w")
+    ax.yaxis.pane.set_edgecolor("w")
+    ax.zaxis.pane.set_edgecolor("w")
+
+    # Draw atoms
+    for i, atom in enumerate(topology.atoms):
+        atom_name = atom.element.name
+        ax.scatter(
+            coordinate[i, 0],
+            coordinate[i, 1],
+            coordinate[i, 2],
+            c=ATOM_COLORS.get(atom_name, "gray"),
+            s=ATOM_SIZES.get(atom_name, 20),
+            label=atom_name,
+            alpha=0.8,
+            edgecolors="black",
+            depthshade=True,
+        )
+
+    # Draw bonds
+    for bond in topology.bonds:
+        atom1, atom2 = bond
+        x = [coordinate[atom1.index, 0], coordinate[atom2.index, 0]]
+        y = [coordinate[atom1.index, 1], coordinate[atom2.index, 1]]
+        z = [coordinate[atom1.index, 2], coordinate[atom2.index, 2]]
+        ax.plot(x, y, z, "k-", linewidth=2.0, alpha=0.6)
+
+    # Set the view angle
+    ax.view_init(elev=20, azim=45)
+
+    # Set the axis labels
+    ax.set_xlabel("X (nm)")
+    ax.set_ylabel("Y (nm)")
+    ax.set_zlabel("Z (nm)")
+
+    # Adjust the axis limits to fit the molecule
+    max_range = (
+        np.array(
+            [
+                coordinate[:, 0].max() - coordinate[:, 0].min(),
+                coordinate[:, 1].max() - coordinate[:, 1].min(),
+                coordinate[:, 2].max() - coordinate[:, 2].min(),
+            ]
+        ).max()
+        / 2.0
+    )
+    mid_x = (coordinate[:, 0].max() + coordinate[:, 0].min()) * 0.5
+    mid_y = (coordinate[:, 1].max() + coordinate[:, 1].min()) * 0.5
+    mid_z = (coordinate[:, 2].max() + coordinate[:, 2].min()) * 0.5
+
+    ax.set_xlim(mid_x - max_range, mid_x + max_range)
+    ax.set_ylim(mid_y - max_range, mid_y + max_range)
+    ax.set_zlim(mid_z - max_range, mid_z + max_range)
+
+    # Draw the legend
+    handles, labels = ax.get_legend_handles_labels()
+    unique_labels = dict(zip(labels, handles))
+    ax.legend(
+        unique_labels.values(),
+        unique_labels.keys(),
+        loc="center left",
+        bbox_to_anchor=(1, 0.5),
+    )
+
+    return ax

@@ -113,10 +113,12 @@ def train(args):
         smoothing_strategy=args.smoothing,
         invtemp=args.invtemp,
         invtemp_anneal=args.invtemp_anneal,
+        eval_batch_size=args.eval_batch_size,
         eval_discretizer=eval_discretizer,
         eval_T=args.eval_T,
         eval_weighting=args.eval_weighting,
         eval_resampling=args.eval_resampling,
+        plot_gt=args.plot_gt,
         plot_t_idx=args.plot_t_idx,
         plot_buffer_t_idx=args.plot_buffer_t_idx,
     )
@@ -180,11 +182,12 @@ if __name__ == "__main__":
             "25gmm",
             "gmm40",
             "student_t_mixture",
-            "funnel",
             "manywell",
+            "funnel",
             "lgcp",
             "lj13",
             "lj55",
+            "aldp",
         ),
     )
     parser.add_argument("--ndim", type=int, default=2)
@@ -219,6 +222,7 @@ if __name__ == "__main__":
     parser.add_argument("--bwd_to_fwd_ratio", type=float, default=1.0)
     parser.add_argument("--clip_grad_norm", type=float, default=1.0)
     parser.add_argument("--batch_size", type=int, default=2000)
+    parser.add_argument("--eval_batch_size", type=int, default=2000)
     parser.add_argument("--epochs", type=int, default=25000)
 
     parser.add_argument("--module", type=str, default="pismlp", choices=("pismlp", "mlp", "egnn"))
@@ -329,11 +333,12 @@ if __name__ == "__main__":
     ### Eval & Plot
     parser.add_argument("--disable_wandb", action="store_true", default=False)
     parser.add_argument("--eval_freq", type=int, default=100)
-    parser.add_argument("--full_eval_freq", type=int, default=2500)
     parser.add_argument("--eval_data_size", type=int, default=2000)
     parser.add_argument("--final_eval_data_size", type=int, default=2000)
+    parser.add_argument("--full_eval_freq", type=int, default=2500)
     parser.add_argument("--no_plot", action="store_false", dest="plot")
     parser.add_argument("--plot_freq", type=int, default=2500)
+    parser.add_argument("--no_plot_gt", action="store_false", dest="plot_gt")
     parser.add_argument("--plot_t_idx", type=int, nargs="+", default=[])
     parser.add_argument("--plot_buffer_t_idx", type=int, nargs="+", default=[])
     ################################################################

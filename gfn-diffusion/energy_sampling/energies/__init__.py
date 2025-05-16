@@ -3,6 +3,8 @@ import argparse
 import torch
 
 from .base import BaseEnergy
+
+from .aldp import ALDP
 from .funnel import Funnel
 from .gmm40 import GMM40
 from .lennard_jones import LJ13, LJ55, LennardJones
@@ -14,7 +16,7 @@ from .twenty_five_gmm import TwentyFiveGaussianMixture
 from .intermediate_energy import IntermediateEnergy
 
 
-def get_energy(args: argparse.Namespace, device: torch.device) -> BaseEnergy:
+def get_energy(args: argparse.Namespace, device: torch.device, seed: int = 0) -> BaseEnergy:
     energy_name: str = args.energy_name
     ndim: int = args.ndim
 
@@ -23,9 +25,9 @@ def get_energy(args: argparse.Namespace, device: torch.device) -> BaseEnergy:
             raise ValueError("25GMM is only supported for 2D")
         energy = TwentyFiveGaussianMixture(device=device)
     elif energy_name == "gmm40":
-        energy = GMM40(device=device, ndim=ndim)
+        energy = GMM40(device=device, ndim=ndim, seed=seed)
     elif energy_name == "student_t_mixture":
-        energy = StudentTMixture(device=device, ndim=ndim)
+        energy = StudentTMixture(device=device, ndim=ndim, seed=seed)
     elif energy_name == "funnel":
         energy = Funnel(device=device, ndim=ndim)
     elif energy_name == "manywell":
@@ -33,9 +35,11 @@ def get_energy(args: argparse.Namespace, device: torch.device) -> BaseEnergy:
     elif energy_name == "lgcp":
         energy = LGCP(device=device)
     elif energy_name == "lj13":
-        energy = LJ13(device=device)
+        energy = LJ13(device=device, seed=args.seed)
     elif energy_name == "lj55":
-        energy = LJ55(device=device)
+        energy = LJ55(device=device, seed=args.seed)
+    elif energy_name == "aldp":
+        energy = ALDP(device=device, seed=args.seed)
     else:
         raise ValueError(f"Unknown energy: {energy_name}")
     return energy
