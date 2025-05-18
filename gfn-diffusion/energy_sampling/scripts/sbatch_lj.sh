@@ -39,19 +39,16 @@ for STARTSEED in 0 1 2 3 4; do  # 0 1 2 3 4
                     for T in 20 50 100; do  # 20 50 100
                         ARGS4="--T $T --eval_T 100"
 
-                        for TRAININGMODE in fwd both; do  # fwd both
-                            ARGS5="--training_mode $TRAININGMODE"
-
-                            # On-policy
-                            if [ "$TRAININGMODE" = "fwd" ]; then
+                        for USEBUFFER in true false; do
+                            if [ "$USEBUFFER" = "false" ]; then
+                                ARGS5="--no_use_buffer"
                                 sbatch scripts/run_seeds.sh "$ARGS1 $ARGS2 $ARGS3 $ARGS4 $ARGS5" $STARTSEED $ENDSEED
-
-                            # Off-policy with buffer
                             else
-                                if [ "$LOSS" = "pis" ]; then
+                                if [ "$LOSS" = "pis" ] || [ "$LOSS" = "mle" ]; then
                                     continue
                                 fi
 
+                                ARGS5="--use_buffer"
                                 for BUFFER_PRIORITIZATION in normalized_iw target loss none; do  # normalized_iw target loss none
                                     BUFFER_SIZE=200000
                                     PREFILL=100

@@ -3,6 +3,7 @@ import torch
 import torch.distributions as D
 
 from energies.base import BaseEnergy
+from utils.misc_utils import temp_seed
 
 
 class Funnel(BaseEnergy):
@@ -10,8 +11,10 @@ class Funnel(BaseEnergy):
     x0 ~ N(0, sigma^2), xi | x0 ~ N(0, exp(x0)), i = 1, ..., 9
     """
 
-    def __init__(self, device: str | torch.device, ndim=10, sigma: float = 3.0) -> None:
-        super().__init__(device=device, ndim=ndim, plot_bound=10.0)
+    def __init__(
+        self, device: str | torch.device, ndim=10, sigma: float = 3.0, seed: int = 0
+    ) -> None:
+        super().__init__(device=device, ndim=ndim, seed=seed, plot_bound=10.0)
         self.dist_dominant = D.Normal(
             torch.tensor([0.0], device=self.device), torch.tensor([sigma], device=self.device)
         )
@@ -25,8 +28,9 @@ class Funnel(BaseEnergy):
     def energy(self, x: torch.Tensor) -> torch.Tensor:
         return -self._funnel_logprob(x)
 
-    def sample(self, batch_size: int) -> torch.Tensor:
-        dominant_x = self.dist_dominant.sample((batch_size,)).to(self.device)  # (B, 1)
+    def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
+        with temp_seed(seed or self.seed):
+            dominant_x = self.dist_dominant.sample((batch_size,)).to(self.device)  # (B, 1)
         x_others = self._dist_other(dominant_x).sample()  # (B, dim-1)
         samples = torch.hstack([dominant_x, x_others])
         samples = samples.to(self.device)

@@ -11,11 +11,11 @@ import seaborn as sns
 import torch
 import wandb
 from matplotlib.colors import LogNorm
-from matplotlib.figure import Figure
 from PIL import Image as PILImage
 
 from energies import (
     ALDP,
+    ALDPFAB,
     GMM40,
     BaseEnergy,
     Funnel,
@@ -26,6 +26,7 @@ from energies import (
     TwentyFiveGaussianMixture,
 )
 from energies.aldp import DATA_PATH as ALDP_DATA_PATH
+from utils.particle_system import interatomic_distance
 
 
 def visualize(
@@ -51,7 +52,7 @@ def visualize(
             )
             return {}
         out_dict = viz_lennard_jones(energy, samples)
-    elif isinstance(_energy_cls, ALDP):
+    elif isinstance(_energy_cls, (ALDP, ALDPFAB)):
         if weights is not None:
             warnings.warn("Can't visualize weighted samples for ALDP energy. Ignoring weights...")
             return {}
@@ -224,13 +225,18 @@ def viz_energy_hist(energy: BaseEnergy, xs: torch.Tensor) -> dict:
     return {"visualization/energy_hist": wandb.Image(fig_to_image(fig))}
 
 
-def viz_interatomic_dist_hist(energy: LennardJones | ALDP, xs: torch.Tensor) -> dict:
+def viz_interatomic_dist_hist(energy: LennardJones | ALDP | ALDPFAB, xs: torch.Tensor) -> dict:
     gt_xs, _ = energy.cached_sample(xs.shape[0])
 
-    xs, gt_xs = xs.cpu(), gt_xs.cpu()
+    if isinstance(energy, ALDPFAB):
+        xs = energy.transform(xs)
+        gt_xs = energy.transform(gt_xs)
 
-    dist_xs = energy.interatomic_distance(xs).view(-1)
-    dist_gt_xs = energy.interatomic_distance(gt_xs).view(-1)
+    xs, gt_xs = xs.cpu(), gt_xs.cpu()
+    n_particles = xs.shape[1] // 3
+
+    dist_xs = interatomic_distance(xs, n_particles, 3, True).view(-1)
+    dist_gt_xs = interatomic_distance(gt_xs, n_particles, 3, True).view(-1)
 
     bins = 100
     min_dist = 0
@@ -366,10 +372,10 @@ def viz_lennard_jones(energy: LennardJones, xs: torch.Tensor) -> dict:
     return out_dict
 
 
-def viz_aldp(energy: ALDP, xs: torch.Tensor) -> dict:
+def viz_aldp(energy: ALDP | ALDPFAB, xs: torch.Tensor) -> dict:
     out_dict = {}
-    out_dict.update(plot_phi_psi(xs))
-    out_dict.update(draw_mols(xs))
+    out_dict.update(plot_phi_psi(energy, xs))
+    out_dict.update(draw_mols(energy, xs))
     out_dict.update(viz_energy_hist(energy, xs))
     out_dict.update(viz_interatomic_dist_hist(energy, xs))
     return out_dict
@@ -396,7 +402,7 @@ ATOM_SIZES = {
 }
 
 
-def plot_phi_psi(xs: torch.Tensor, dpi=300):
+def plot_phi_psi(energy: ALDP | ALDPFAB, xs: torch.Tensor, dpi=300):
     """
     Plots a 2D histogram of phi and psi angles.
 
@@ -407,6 +413,9 @@ def plot_phi_psi(xs: torch.Tensor, dpi=300):
     Returns:
         matplotlib.figure.Figure: The generated figure.
     """
+
+    if isinstance(energy, ALDPFAB):
+        xs = energy.transform(xs)
 
     assert xs.ndim == 2  # (n_samples, n_atoms * 3)
     xs = xs.reshape(xs.shape[0], -1, 3)  # (n_samples, n_atoms, 3)
@@ -456,7 +465,7 @@ def plot_phi_psi(xs: torch.Tensor, dpi=300):
     return {"visualization/phi_psi": wandb.Image(fig_to_image(fig))}
 
 
-def draw_mols(xs: torch.Tensor, name="aldp"):
+def draw_mols(energy: ALDP | ALDPFAB, xs: torch.Tensor, name="aldp"):
     """
     Draw a figure containing 3D molecule.
 
@@ -467,6 +476,9 @@ def draw_mols(xs: torch.Tensor, name="aldp"):
     Return:
         fig, axs: matplotlib figure and axes objec
     """
+
+    if isinstance(energy, ALDPFAB):
+        xs = energy.transform(xs)
 
     assert xs.shape[0] >= 3
 

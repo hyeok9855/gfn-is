@@ -30,7 +30,7 @@ class LennardJones(BaseEnergy):
         energy_factor: float = 1.0,
         seed: int = 0,
     ):
-        super().__init__(device=device, ndim=spatial_dim * n_particles, plot_bound=1.0)
+        super().__init__(device=device, ndim=spatial_dim * n_particles, seed=seed, plot_bound=1.0)
 
         self.spatial_dim = spatial_dim
         self.n_particles = n_particles
@@ -45,7 +45,6 @@ class LennardJones(BaseEnergy):
 
         data = torch.tensor(np.load(data_path))
         self.approx_sample = remove_mean(data, self.n_particles, self.spatial_dim)
-        self.seed = seed
 
     def energy(self, x: torch.Tensor):
         assert x.shape[-1] == self.ndim
@@ -64,14 +63,11 @@ class LennardJones(BaseEnergy):
 
         return lj_energies
 
-    def sample(self, batch_size: int) -> torch.Tensor:
+    def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
         assert self.approx_sample is not None
-        with temp_seed(self.seed):
+        with temp_seed(seed or self.seed):
             perm_idx = torch.randperm(self.approx_sample.shape[0])[:batch_size]
         return self.approx_sample[perm_idx].to(self.device)
-
-    def interatomic_distance(self, x: torch.Tensor) -> torch.Tensor:
-        return interatomic_distance(x, self.n_particles, self.spatial_dim, remove_duplicates=True)
 
 
 class LJ13(LennardJones):

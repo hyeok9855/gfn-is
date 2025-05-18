@@ -9,6 +9,11 @@ seaborn
 tqdm
 POT
 wandb
+mdtraj==1.10.3
 # For ALDP
 ase==3.25.0
 torchani==2.2.4
+# For ALDPFAB
+openmm==8.2.0
+openmmtools==24.2
+boltzgen @ git+https://github.com/VincentStimper/boltzmann-generators.git

@@ -143,10 +143,10 @@ class Cox:
 
 
 class LGCP(BaseEnergy):
-    def __init__(self, device):
+    def __init__(self, device, seed: int = 0):
         raise NotImplementedError
         self.cox = Cox(_CSV_PATH, 40, use_whitened=False, device=device)
-        super().__init__()
+        super().__init__(device=device, ndim=_LGCP_DIM, seed=seed)
         self.device = device
         self.data = torch.ones(_LGCP_DIM, dtype=float).to(
             self.device

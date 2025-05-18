@@ -27,8 +27,6 @@ class Trainer:
         subtb_n_chunks: int,
         sublogvar_K: int,
         n_epochs: int,
-        training_mode: Literal["fwd", "bwd", "both"],
-        bwd_from: Literal["energy", "buffer"],
         bwd_to_fwd_ratio: float,
         buffer: BaseBuffer | None,
         buffer_save_interval: int,
@@ -76,8 +74,6 @@ class Trainer:
 
         # Training parameters and buffer
         self.n_epochs = n_epochs
-        self.training_mode = training_mode
-        self.bwd_from = bwd_from
         if bwd_to_fwd_ratio < 1:
             self.bwd_to_fwd_ratio = -1.0
             self.fwd_to_bwd_ratio = round(1 / bwd_to_fwd_ratio)
@@ -160,19 +156,18 @@ class Trainer:
             # TODO, after implementing GIS-like buffer
             pass
 
-        if self.training_mode == "bwd":
-            loss = self.bwd_train_step()
-        elif self.training_mode == "fwd":
+        if self.loss_type == "mle":
+            loss = self.bwd_train_step(it)
+        elif self.buffer is None:
             loss = self.fwd_train_step(it)
-        else:  # both
-
+        else:  # self.buffer is not None
             if (
                 (self.bwd_to_fwd_ratio > 0 and it % (self.bwd_to_fwd_ratio + 1) == 0)
                 or (self.bwd_to_fwd_ratio < 0 and it % (self.fwd_to_bwd_ratio + 1) != 0)
             ) or it < self.prefill_epochs:
                 loss = self.fwd_train_step(it)
             else:
-                loss = self.bwd_train_step()
+                loss = self.bwd_train_step(it)
 
         if it < self.prefill_epochs:
             return loss.item()
@@ -270,13 +265,19 @@ class Trainer:
 
         return loss
 
-    def bwd_train_step(self) -> torch.Tensor:
+    def bwd_train_step(self, it: int) -> torch.Tensor:
         sub_logvar_params = {}
 
-        if self.bwd_from == "energy":
-            raise NotImplementedError("Training from energy is not used for this project.")
+        if self.loss_type == "mle":
+            gt_xs, gt_log_rewards = self.energy.cached_sample(self.batch_size, seed=it)
+            ts = self.train_discretizer(self.batch_size, self.train_T).to(self.device)
+            _, log_pfs, log_pbs, log_fs = self.gfn_model.get_trajectory_bwd(
+                gt_xs, ts, gt_log_rewards
+            )
+            # mle over trajectories
+            loss = -log_pfs.sum(-1).mean()
 
-        elif self.bwd_from == "buffer":
+        else:  # self.loss_type != "mle"
             assert self.buffer is not None
             if isinstance(self.buffer, TerminalStateBuffer):
                 buf_xs, buf_log_rs, indices = self.buffer.sample(self.batch_size)
@@ -361,19 +362,9 @@ class Trainer:
             data_size, full_eval, final_eval
         )
         if plot:
-            gt_xs = None
-            if self.plot_gt:
-                try:
-                    gt_xs = self.energy.cached_sample(data_size)[0]
-                except NotImplementedError:
-                    warnings.warn(
-                        f"Ground-truth samples are not available for {self.energy.__class__.__name__}."
-                        "Skipping plotting of ground-truth samples."
-                    )
-                    gt_xs = None
-                self.plot_gt = False  # disable plotting gt after first plot
-            images = self.plot_step(model_trajs, weights, sample_xs_r, buffer_xs, gt_xs)
+            images = self.plot_step(model_trajs, weights, sample_xs_r, buffer_xs, self.plot_gt)
             metrics.update(images)
+            self.plot_gt = False  # disable plotting gt after first plot
         return metrics
 
     @torch.no_grad()
@@ -384,9 +375,6 @@ class Trainer:
         final_eval: bool = False,
     ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         self.gfn_model.eval()
-
-        if final_eval:
-            full_eval = True
 
         metrics = {}
 
@@ -510,7 +498,7 @@ class Trainer:
         weights: torch.Tensor | None = None,
         sample_xs_r: torch.Tensor | None = None,
         buffer_xs: torch.Tensor | None = None,
-        gt_xs: torch.Tensor | None = None,
+        plot_gt: bool = False,
     ) -> dict:
         xs = model_trajs[:, -1]
         images = visualize(self.energy, xs)
@@ -520,8 +508,15 @@ class Trainer:
             images.update(visualize(self.energy, sample_xs_r, suffix="_resample"))
         if buffer_xs is not None:
             images.update(visualize(self.energy, buffer_xs, suffix="_buffer"))
-        if gt_xs is not None:
-            images.update(visualize(self.energy, gt_xs, suffix="_gt"))
+        if plot_gt:
+            try:
+                gt_xs, _ = self.energy.cached_sample(model_trajs.shape[0])
+                images.update(visualize(self.energy, gt_xs, suffix="_gt"))
+            except NotImplementedError:
+                warnings.warn(
+                    f"Ground-truth samples are not available for {self.energy.__class__.__name__}."
+                    "Skipping plotting of ground-truth samples."
+                )
 
         # Plot intermediate states
         if len(self.plot_t_idx) > 0:

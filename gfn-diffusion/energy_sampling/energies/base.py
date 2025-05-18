@@ -4,9 +4,12 @@ import torch
 
 
 class BaseEnergy(abc.ABC):
-    def __init__(self, device: str | torch.device, ndim: int, plot_bound: float = 1.0) -> None:
+    def __init__(
+        self, device: str | torch.device, ndim: int, seed: int, plot_bound: float = 1.0
+    ) -> None:
         self.device = device
         self.ndim = ndim
+        self.seed = seed
         self.plot_bound = plot_bound
         self.gt_xs: torch.Tensor | None = None
         self.gt_xs_log_rewards: torch.Tensor | None = None
@@ -40,15 +43,17 @@ class BaseEnergy(abc.ABC):
                 assert lgv is not None
         return lgv.data
 
-    def sample(self, batch_size: int) -> torch.Tensor:
+    def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
         raise NotImplementedError
 
     def gt_logz(self) -> float:
         raise NotImplementedError
 
-    def cached_sample(self, batch_size: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def cached_sample(
+        self, batch_size: int, seed: int | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.gt_xs is None or batch_size != self.gt_xs.size(0):
-            self.gt_xs = self.sample(batch_size)
+            self.gt_xs = self.sample(batch_size, seed)
             self.gt_xs_log_rewards = self.log_reward(self.gt_xs, temper=False)
         assert self.gt_xs_log_rewards is not None
         return self.gt_xs, self.gt_xs_log_rewards

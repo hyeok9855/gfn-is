@@ -8,7 +8,7 @@ from torchani.units import hartree2kjoulemol
 
 from energies.base import BaseEnergy
 from utils.misc_utils import temp_seed
-from utils.particle_system import interatomic_distance, remove_mean
+from utils.particle_system import remove_mean
 
 
 DATA_PATH = Path(__file__).parent / "data" / "aldp"
@@ -23,7 +23,7 @@ class ALDP(BaseEnergy):
         self.n_particles = len(atomic_numbers)
         self.spatial_dim = 3
 
-        super().__init__(device=device, ndim=self.n_particles * self.spatial_dim)
+        super().__init__(device=device, ndim=self.n_particles * self.spatial_dim, seed=seed)
 
         self.model = torchani.models.ANI2x().to(self.device)
         atomic_symbols = [chemical_symbols[z] for z in atomic_numbers]
@@ -42,7 +42,6 @@ class ALDP(BaseEnergy):
         datas = [np.load(DATA_PATH / f"aldp{i}.npy") for i in range(6)]
         data = torch.tensor(np.concatenate(datas, axis=0))
         self.approx_sample = remove_mean(data, self.n_particles, self.spatial_dim)
-        self.seed = seed
 
     def energy(self, x: torch.Tensor, reduce: bool = True) -> torch.Tensor:
         x = x.reshape(-1, self.n_particles, self.spatial_dim)
@@ -54,10 +53,7 @@ class ALDP(BaseEnergy):
         else:
             return energies_kJmol
 
-    def sample(self, batch_size: int) -> torch.Tensor:
-        with temp_seed(self.seed):
+    def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
+        with temp_seed(seed or self.seed):
             perm_idx = torch.randperm(self.approx_sample.shape[0])[:batch_size]
         return self.approx_sample[perm_idx].to(self.device)
-
-    def interatomic_distance(self, x: torch.Tensor) -> torch.Tensor:
-        return interatomic_distance(x, self.n_particles, self.spatial_dim, remove_duplicates=True)

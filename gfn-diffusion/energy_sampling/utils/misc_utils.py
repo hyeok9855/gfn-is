@@ -99,20 +99,15 @@ def get_name(args: argparse.Namespace) -> str:
     if args.use_scheduler:
         name += f"-lrsch"
 
-    name += f"_{args.training_mode}"
-    if args.training_mode != "fwd":
-        name += f"-btf{args.bwd_to_fwd_ratio}"
-        name += f"-{args.bwd_from}"
-        if args.bwd_from == "buffer":
-            name += f"-{args.buffer_type}"
-            buffer_size_str = (
-                f"{args.buffer_size // 1000}K"
-                if args.buffer_size >= 1000
-                else f"{args.buffer_size}"
-            )
-            name += f"-{buffer_size_str}"
-            if args.prioritization != "none":
-                name += f"-{args.prioritization}-{args.buffer_sampling}"
+    if args.use_buffer:
+        name += f"_btf{args.bwd_to_fwd_ratio}"
+        name += f"-buf{args.buffer_type}"
+        buffer_size_str = (
+            f"{args.buffer_size // 1000}K" if args.buffer_size >= 1000 else f"{args.buffer_size}"
+        )
+        name += f"-{buffer_size_str}"
+        if args.prioritization != "none":
+            name += f"-{args.prioritization}-{args.buffer_sampling}"
 
     name += f"_T{args.T}-{args.discretizer}"
     if args.discretizer == "random":

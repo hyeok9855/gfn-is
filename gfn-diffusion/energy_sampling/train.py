@@ -20,7 +20,11 @@ def train(args):
         args.seed += int(os.environ["SLURM_PROCID"])
     set_seed(args.seed)
 
+    if args.precision == "double":
+        torch.set_default_dtype(torch.float64)
+
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
+
     energy = get_energy(args, device)
     exp_name = get_name(args)
 
@@ -64,7 +68,7 @@ def train(args):
     )
 
     buffer = None
-    if args.training_mode != "fwd" and args.bwd_from == "buffer":
+    if args.use_buffer:
         buffer_class = (
             TerminalStateBuffer if args.buffer_type == "terminal" else IntermediateStateBuffer
         )
@@ -93,8 +97,6 @@ def train(args):
         subtb_n_chunks=args.subtb_n_chunks,
         sublogvar_K=args.sublogvar_K,
         n_epochs=args.epochs,
-        training_mode=args.training_mode,
-        bwd_from=args.bwd_from,
         bwd_to_fwd_ratio=args.bwd_to_fwd_ratio,
         buffer=buffer,
         buffer_save_interval=args.buffer_save_interval,
@@ -127,7 +129,8 @@ def train(args):
     # Main training loop #
     ######################
 
-    pbar = trange(args.epochs, dynamic_ncols=True)
+    pbar = trange(args.epochs, desc="[Train]", dynamic_ncols=True)
+    eubo_cache = elbo_cache = ess_cache = float("nan")
     for it in pbar:
         metrics = dict()
 
@@ -136,28 +139,34 @@ def train(args):
             metrics.update(
                 trainer.eval_and_plot(
                     data_size=args.eval_data_size,
-                    full_eval=True if it % args.full_eval_freq == 0 else False,
+                    full_eval=True if (it % args.full_eval_freq == 0 and args.full_eval) else False,
                     plot=args.plot if it % args.plot_freq == 0 else False,
                 )
             )
-            if metrics.get("eval/eubo-elbo") is not None:
-                desc = f"EUBO-ELBO {metrics['eval/eubo-elbo']:.3f} | "
-                desc += f"ESS {metrics['eval/ess']:.3f}"
-            else:
-                desc = f"ELBO {metrics['eval/elbo']:.3f} | "
-                desc += f"ESS {metrics['eval/ess']:.3f}"
-            pbar.set_description(desc)
+            eubo_cache = metrics["eval/eubo"]
+            elbo_cache = metrics["eval/elbo"]
+            ess_cache = metrics["eval/ess"]
 
         ### Train ###
         metrics["train/loss"] = trainer.train_step(it)
-        pbar.set_postfix({"Loss": metrics["train/loss"]})
+        pbar.set_postfix(
+            {
+                "Loss": metrics["train/loss"],
+                "EUBO": eubo_cache,
+                "ELBO": elbo_cache,
+                "ESS": ess_cache,
+            }
+        )
 
         ### Log ###
         wandb.log(metrics, step=it)
 
     ### Final eval and plot ###
     final_metrics = trainer.eval_and_plot(
-        data_size=args.final_eval_data_size, full_eval=True, final_eval=True, plot=args.plot
+        data_size=args.final_eval_data_size,
+        full_eval=True if args.full_eval else False,
+        final_eval=True,
+        plot=args.plot,
     )
     wandb.log(final_metrics, step=args.epochs)
     desc = ""
@@ -188,6 +197,7 @@ if __name__ == "__main__":
             "lj13",
             "lj55",
             "aldp",
+            "aldp_fab",
         ),
     )
     parser.add_argument("--ndim", type=int, default=2)
@@ -217,8 +227,6 @@ if __name__ == "__main__":
     parser.add_argument("--milestones", type=float, nargs="+", default=[0.5, 0.9])
     parser.add_argument("--gamma", type=float, default=(10) ** (-1 / 2))
 
-    parser.add_argument("--training_mode", type=str, default="both", choices=("fwd", "bwd", "both"))
-    parser.add_argument("--bwd_from", type=str, default="buffer", choices=("energy", "buffer"))
     parser.add_argument("--bwd_to_fwd_ratio", type=float, default=1.0)
     parser.add_argument("--clip_grad_norm", type=float, default=1.0)
     parser.add_argument("--batch_size", type=int, default=2000)
@@ -227,6 +235,8 @@ if __name__ == "__main__":
 
     parser.add_argument("--module", type=str, default="pismlp", choices=("pismlp", "mlp", "egnn"))
     parser.add_argument("--use_checkpoint", action="store_true", default=False)
+    parser.add_argument("--precision", type=str, default="float", choices=("float", "double"))
+
     ################################################################
     ### MLP parameters
     parser.add_argument("--hidden_dim", type=int, default=256)
@@ -288,6 +298,7 @@ if __name__ == "__main__":
 
     ################################################################
     ### For replay buffer
+    parser.add_argument("--no_use_buffer", action="store_false", dest="use_buffer")
     parser.add_argument("--buffer_size", type=int, default=-1)  # 100 * batch_size by default
     parser.add_argument(
         "--buffer_type", type=str, default="terminal", choices=("terminal", "intermediate")
@@ -335,6 +346,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval_freq", type=int, default=100)
     parser.add_argument("--eval_data_size", type=int, default=2000)
     parser.add_argument("--final_eval_data_size", type=int, default=2000)
+    parser.add_argument("--no_full_eval", action="store_false", dest="full_eval")
     parser.add_argument("--full_eval_freq", type=int, default=2500)
     parser.add_argument("--no_plot", action="store_false", dest="plot")
     parser.add_argument("--plot_freq", type=int, default=2500)
@@ -388,8 +400,8 @@ if __name__ == "__main__":
     if args.lr_bwd is None:
         args.lr_bwd = args.lr_fwd
 
-    if args.loss_type == "pis":
-        args.training_mode = "fwd"
+    if args.loss_type == "mle" or args.loss_type == "pis":
+        args.use_buffer = False
 
     if args.loss_type in ["db", "subtb"]:
         args.conditional_flow_model = True

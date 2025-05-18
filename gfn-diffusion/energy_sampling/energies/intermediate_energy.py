@@ -6,7 +6,9 @@ from models.gfn import GFN
 
 class IntermediateEnergy(BaseEnergy):
     def __init__(self, target_energy: BaseEnergy, gfn: GFN, t: float) -> None:
-        super().__init__(target_energy.device, target_energy.ndim, target_energy.plot_bound)
+        super().__init__(
+            target_energy.device, target_energy.ndim, target_energy.seed, target_energy.plot_bound
+        )
         self.target_energy = target_energy
         self.gfn = gfn
         self.t = t

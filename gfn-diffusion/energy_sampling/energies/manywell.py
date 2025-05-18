@@ -5,6 +5,7 @@ import torch
 import torch.distributions as D
 
 from energies.base import BaseEnergy
+from utils.misc_utils import temp_seed
 
 
 def rejection_sampling(
@@ -29,8 +30,8 @@ class ManyWell(BaseEnergy):
     log p(x1, x2) = -(x1**4) + 6 * x1**2 + 1 / 2 * x1 - (1 / 2) * (x2**2)
     """
 
-    def __init__(self, device: str | torch.device, ndim=32) -> None:
-        super().__init__(device=device, ndim=ndim, plot_bound=3.0)
+    def __init__(self, device: str | torch.device, ndim=32, seed: int = 0) -> None:
+        super().__init__(device=device, ndim=ndim, seed=seed, plot_bound=3.0)
 
         assert ndim % 2 == 0
         self.n_wells = ndim // 2
@@ -49,10 +50,11 @@ class ManyWell(BaseEnergy):
     def energy(self, x: torch.Tensor) -> torch.Tensor:
         return -self._manywell_unnormed_logp(x)
 
-    def sample(self, batch_size: int) -> torch.Tensor:
-        samples = torch.cat(
-            [self._sample_doublewell(batch_size) for _ in range(self.n_wells)], dim=-1
-        )
+    def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
+        with temp_seed(seed or self.seed):
+            samples = torch.cat(
+                [self._sample_doublewell(batch_size) for _ in range(self.n_wells)], dim=-1
+            )
         samples = samples.to(self.device)
         return samples
 

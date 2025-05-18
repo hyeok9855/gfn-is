@@ -2,12 +2,13 @@ import torch
 import torch.distributions as D
 
 from energies.base import BaseEnergy
+from utils.misc_utils import temp_seed
 
 
 class TwentyFiveGaussianMixture(BaseEnergy):
-    def __init__(self, device: str | torch.device) -> None:
+    def __init__(self, device: str | torch.device, seed: int = 0) -> None:
         ndim = 2
-        super().__init__(device=device, ndim=ndim, plot_bound=13.0)
+        super().__init__(device=device, ndim=ndim, seed=seed, plot_bound=13.0)
 
         self.nmode = 25
         modes = torch.Tensor([(a, b) for a in [-10, -5, 0, 5, 10] for b in [-10, -5, 0, 5, 10]]).to(
@@ -24,10 +25,11 @@ class TwentyFiveGaussianMixture(BaseEnergy):
     def energy(self, x: torch.Tensor) -> torch.Tensor:
         return -self._log_prob(x)
 
-    def sample(self, batch_size: int) -> torch.Tensor:
-        samples = torch.cat(
-            [mvn.sample(torch.Size((batch_size // self.nmode,))) for mvn in self.gmm], dim=0
-        )
+    def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
+        with temp_seed(seed or self.seed):
+            samples = torch.cat(
+                [mvn.sample(torch.Size((batch_size // self.nmode,))) for mvn in self.gmm], dim=0
+            )
         samples = samples.to(self.device)
         return samples
 
