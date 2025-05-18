@@ -2,9 +2,9 @@
 
 # torch  # Install torch following the instructions at https://pytorch.org/
 einops
-numpy
+numpy<2
 ott-jax
-matplotlib
+matplotlib==3.7.0
 seaborn
 tqdm
 POT
@@ -14,6 +14,6 @@ mdtraj==1.10.3
 ase==3.25.0
 torchani==2.2.4
 # For ALDPFAB
-openmm==8.2.0
-openmmtools==24.2
+# openmm==8.2.0  # use conda install -c conda-forge openmm=8.2.0
+# openmmtools==0.24.2  # use conda install -c conda-forge openmmtools=0.24.2
 boltzgen @ git+https://github.com/VincentStimper/boltzmann-generators.git
