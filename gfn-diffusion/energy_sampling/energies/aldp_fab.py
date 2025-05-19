@@ -126,7 +126,9 @@ class ALDPFAB(BaseEnergy):
 
     def scale_ind_circ(self, x: torch.Tensor) -> torch.Tensor:
         x = x.clone()
-        x[:, self.ind_circ] = torch.tanh(x[:, self.ind_circ]) * (math.pi + 0.01)
+        x[:, self.ind_circ] = torch.clamp(
+            torch.tanh(x[:, self.ind_circ]) * (math.pi + 0.01), min=-math.pi, max=math.pi
+        )
         return x
 
     def energy(self, x: torch.Tensor) -> torch.Tensor:
