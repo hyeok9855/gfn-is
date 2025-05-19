@@ -169,7 +169,7 @@ class Trainer:
             else:
                 loss = self.bwd_train_step(it)
 
-        if it < self.prefill_epochs:
+        if it < self.prefill_epochs or loss.isinf() or loss > 1e28:
             return loss.item()
 
         loss.backward()
