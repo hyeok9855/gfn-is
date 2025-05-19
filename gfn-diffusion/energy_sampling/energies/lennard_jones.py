@@ -28,9 +28,16 @@ class LennardJones(BaseEnergy):
         oscillator: bool = True,
         oscillator_scale: float = 1.0,
         energy_factor: float = 1.0,
+        ref_gaussian_var: float = 1.0,
         seed: int = 0,
     ):
-        super().__init__(device=device, ndim=spatial_dim * n_particles, seed=seed, plot_bound=1.0)
+        super().__init__(
+            device=device,
+            ndim=spatial_dim * n_particles,
+            ref_gaussian_var=ref_gaussian_var,
+            seed=seed,
+            plot_bound=1.0,
+        )
 
         self.spatial_dim = spatial_dim
         self.n_particles = n_particles
@@ -71,22 +78,24 @@ class LennardJones(BaseEnergy):
 
 
 class LJ13(LennardJones):
-    def __init__(self, device: str | torch.device, seed: int = 0):
+    def __init__(self, device: str | torch.device, ref_gaussian_var: float = 1.0, seed: int = 0):
         super().__init__(
             spatial_dim=3,
             n_particles=13,
             device=device,
             data_path=DATA_PATH / "LJ13.npy",
+            ref_gaussian_var=ref_gaussian_var,
             seed=seed,
         )
 
 
 class LJ55(LennardJones):
-    def __init__(self, device: str | torch.device, seed: int = 0):
+    def __init__(self, device: str | torch.device, ref_gaussian_var: float = 1.0, seed: int = 0):
         super().__init__(
             spatial_dim=3,
             n_particles=55,
             device=device,
             data_path=DATA_PATH / "LJ55.npy",
+            ref_gaussian_var=ref_gaussian_var,
             seed=seed,
         )

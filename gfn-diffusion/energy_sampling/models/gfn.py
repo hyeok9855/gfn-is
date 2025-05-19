@@ -168,7 +168,9 @@ class GFN(nn.Module):
         states[:, 0] = s
 
         for i in range(T):
-            pf_mean, pf_logvar, flow = self.pred_module.forward(s, ts[:, i], self.energy.log_reward)
+            pf_mean, pf_logvar, flow = self.pred_module.forward(
+                s, ts[:, i], self.energy.grad_log_reward
+            )
 
             if self.pred_module.conditional_flow_model or i == 0:
                 log_fs[:, i] = flow
@@ -218,7 +220,7 @@ class GFN(nn.Module):
                 s_ = torch.zeros_like(s)
 
             pf_mean, pf_logvar, flow = self.pred_module.forward(
-                s_, ts[:, T - i - 1], self.energy.log_reward
+                s_, ts[:, T - i - 1], self.energy.grad_log_reward
             )
 
             if self.pred_module.conditional_flow_model or i == T - 1:
@@ -268,7 +270,7 @@ class GFN(nn.Module):
         if (is_intermediate := t_idx_intermediate != T).any():
             # For non-terminal states, we should predict the flow at the current timestep
             _, _, flow = self.pred_module.forward(
-                s[is_intermediate], curr_t[is_intermediate], self.energy.log_reward
+                s[is_intermediate], curr_t[is_intermediate], self.energy.grad_log_reward
             )
             log_fs[is_intermediate, t_idx_intermediate[is_intermediate]] = flow
             # The terminal states rewards will be assigned later
@@ -303,7 +305,7 @@ class GFN(nn.Module):
 
             # Forward pass with the one-step forward state of t1
             pf_mean, pf_logvars, flow = self.pred_module.forward(
-                states[arange, t1_idx], t1, self.energy.log_reward
+                states[arange, t1_idx], t1, self.energy.grad_log_reward
             )
             log_fs[arange, t1_idx] = flow
 

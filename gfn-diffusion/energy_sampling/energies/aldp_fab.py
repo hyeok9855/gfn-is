@@ -21,32 +21,21 @@ class ALDPFAB(BaseEnergy):
         temperature=300,
         energy_cut=1.0e4,  # 1e8 in FAB
         energy_max=1.0e8,  # 1e20 in FAB
-        n_threads=4,
+        n_threads=6,
         ind_circ_dih=[0, 1, 2, 3, 4, 5, 8, 9, 10, 13, 15, 16],
         shift_dih=False,
         shift_dih_params={"hist_bins": 100},
         default_std={"bond": 0.005, "angle": 0.15, "dih": 0.2},
         env="vacuum",
+        ref_gaussian_var: float = 1.0,
         seed: int = 0,
     ):
-        """
-        Boltzmann distribution of Alanine dipeptide
-        :param data_path: Path to the trajectory file used to initialize the
-            transformation, if None, a trajectory is generated
-        :type data_path: String
-        :param temperature: Temperature of the system
-        :type temperature: Integer
-        :param energy_cut: Value after which the energy is logarithmically scaled
-        :type energy_cut: Float
-        :param energy_max: Maximum energy allowed, higher energies are cut
-        :type energy_max: Float
-        :param n_threads: Number of threads used to evaluate the log
-            probability for batches
-        :type n_threads: Integer
-        :param transform: Which transform to use, can be mixed or internal
-        :type transform: String
-        """
-        super().__init__(device=device, ndim=60, seed=seed)  # 60 is before transform
+        super().__init__(
+            device=device,
+            ndim=60,
+            ref_gaussian_var=ref_gaussian_var,
+            seed=seed,
+        )  # 60 is before transform
 
         # Define molecule parameters
         z_matrix = [
@@ -98,6 +87,7 @@ class ALDPFAB(BaseEnergy):
             shift_dih_params=shift_dih_params,
             default_std=default_std,
         )
+        self.coordinate_transform.to(self.device)
 
         self.p = bg.distributions.TransformedBoltzmannParallel(
             system,
@@ -107,6 +97,7 @@ class ALDPFAB(BaseEnergy):
             transform=self.coordinate_transform,
             n_threads=n_threads,
         )
+        self.p.to(self.device)
 
         ncarts = self.coordinate_transform.transform.len_cart_inds
         permute_inv = self.coordinate_transform.transform.permute_inv.cpu().numpy()
@@ -125,27 +116,16 @@ class ALDPFAB(BaseEnergy):
         self.val_log_rs = torch.tensor(np.load(DATA_PATH / "val_log_rs.npy"), dtype=dtype)
 
     def scale_ind_circ(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.clone()
-        x[:, self.ind_circ] = torch.clamp(
-            torch.tanh(x[:, self.ind_circ]) * (math.pi + 0.01), min=-math.pi, max=math.pi
+        copy_x = x.clone()
+        copy_x[:, self.ind_circ] = torch.clamp(
+            torch.tanh(copy_x[:, self.ind_circ]) * (math.pi + 0.01), min=-math.pi, max=math.pi
         )
-        return x
+        return copy_x
 
     def energy(self, x: torch.Tensor) -> torch.Tensor:
         # x: (batch_size, 60)
         x = self.scale_ind_circ(x)
-        x = x.detach().cpu()  # to cpu
-        return -self.p.log_prob(x).to(self.device)
-
-    def score(self, x: torch.Tensor) -> torch.Tensor:
-        with torch.no_grad():
-            copy_x = x.detach().clone()
-            copy_x.requires_grad = True
-            with torch.enable_grad():
-                self.energy(copy_x).sum().backward()
-                lgv = copy_x.grad
-                assert lgv is not None
-        return lgv.data
+        return -self.p.log_prob(x)
 
     def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
         with temp_seed(seed or self.seed):
@@ -166,6 +146,5 @@ class ALDPFAB(BaseEnergy):
     def transform(self, x: torch.Tensor) -> torch.Tensor:
         # x: (batch_size, 60)
         x = self.scale_ind_circ(x)
-        x = x.detach().cpu()  # to cpu
         assert x.shape[1] == 60
-        return self.coordinate_transform(x)[0].to(self.device)  # (batch_size, 66)
+        return self.coordinate_transform(x)[0]  # (batch_size, 66)

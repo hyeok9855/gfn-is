@@ -122,7 +122,10 @@ class EGNNModule(BaseModule):
         )
 
     def predict_forward(
-        self, s: torch.Tensor, t: torch.Tensor, logr_fn: Callable | None = None
+        self,
+        s: torch.Tensor,
+        t: torch.Tensor,
+        grad_logr_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # t.shape: (bsz,)
         # xs.shape: (bsz, ndim)
@@ -151,7 +154,7 @@ class EGNNModule(BaseModule):
         vel = vel - torch.mean(vel, dim=1, keepdim=True)
         vel = vel.view(bsz, self._n_particles * self._spatial_dim)
 
-        mean, logvar = self.get_gaussian_params(vel, s, t, logr_fn)
+        mean, logvar = self.get_gaussian_params(vel, s, t, grad_logr_fn)
         flow = self.predict_flow()  # TODO: support conditional flow model
         return mean, logvar, flow
 

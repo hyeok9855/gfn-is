@@ -13,9 +13,16 @@ class StudentTMixture(BaseEnergy):
         ndim: int = 2,
         num_components: int = 10,
         degree_of_freedom: int = 2,
+        ref_gaussian_var: float = 1.0,
         seed: int = 0,
     ) -> None:
-        super().__init__(device=device, ndim=ndim, seed=seed, plot_bound=15)
+        super().__init__(
+            device=device,
+            ndim=ndim,
+            ref_gaussian_var=ref_gaussian_var,
+            seed=seed,
+            plot_bound=15,
+        )
 
         try:
             locs = torch.from_numpy(np.load(f"energies/data/mos-{ndim}d_locs.npy"))

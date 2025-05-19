@@ -158,13 +158,16 @@ class MLPModule(BaseModule):
         )
 
     def predict_forward(
-        self, s: torch.Tensor, t: torch.Tensor, logr_fn: Callable | None = None
+        self,
+        s: torch.Tensor,
+        t: torch.Tensor,
+        grad_logr_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         s_emb = self.s_model(s)
         t_emb = self.t_model(t)
         out = self.joint_model(s_emb, t_emb)
 
-        mean, logvar = self.get_gaussian_params(out, s, t, logr_fn, s_emb=s_emb, t_emb=t_emb)
+        mean, logvar = self.get_gaussian_params(out, s, t, grad_logr_fn, s_emb=s_emb, t_emb=t_emb)
         flow = self.predict_flow(s=s, t=t, s_emb=s_emb, t_emb=t_emb)
         return mean, logvar, flow
 

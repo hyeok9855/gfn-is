@@ -143,7 +143,7 @@ class Cox:
 
 
 class LGCP(BaseEnergy):
-    def __init__(self, device, seed: int = 0):
+    def __init__(self, device, ref_gaussian_var: float = 1.0, seed: int = 0):
         raise NotImplementedError
         self.cox = Cox(_CSV_PATH, 40, use_whitened=False, device=device)
         super().__init__(device=device, ndim=_LGCP_DIM, seed=seed)

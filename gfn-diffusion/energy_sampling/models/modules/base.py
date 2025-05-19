@@ -62,7 +62,10 @@ class BaseModule(nn.Module, ABC):
 
     @abstractmethod
     def predict_forward(
-        self, s: torch.Tensor, t: torch.Tensor, logr_fn: Callable | None = None
+        self,
+        s: torch.Tensor,
+        t: torch.Tensor,
+        grad_logr_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:  # mean, logvar, flow
         # Basic structure:
         # 1. Predict `out` with a prediction model (to be implemented by user)
@@ -72,18 +75,21 @@ class BaseModule(nn.Module, ABC):
         raise NotImplementedError
 
     def forward(
-        self, s: torch.Tensor, t: torch.Tensor, logr_fn: Callable | None = None
+        self,
+        s: torch.Tensor,
+        t: torch.Tensor,
+        grad_logr_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:  # mean, logvar, flow
         if self.use_checkpoint and self.training:
             return checkpoint(  # type: ignore
                 self.predict_forward,
                 s,
                 t,
-                logr_fn,
+                grad_logr_fn,
                 use_reentrant=False,
             )
         else:
-            return self.predict_forward(s, t, logr_fn)
+            return self.predict_forward(s, t, grad_logr_fn)
 
     def predict_flow(self, **kwargs) -> torch.Tensor:
         if self.conditional_flow_model:
@@ -127,7 +133,7 @@ class BaseModule(nn.Module, ABC):
         out: torch.Tensor,
         s: torch.Tensor | None = None,
         t: torch.Tensor | None = None,
-        logr_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        grad_logr_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
         **kwargs,  # get_lp_scaling kwargs
     ) -> tuple[torch.Tensor, torch.Tensor]:
         assert out.shape[-1] == self.out_dim
@@ -144,8 +150,8 @@ class BaseModule(nn.Module, ABC):
             logvar = torch.tanh(logvar) * self.log_var_range
 
         if self.lp:
-            assert s is not None and t is not None and logr_fn is not None
-            mean += self.get_lp(s=s, t=t, logr_fn=logr_fn, **kwargs)
+            assert s is not None and t is not None and grad_logr_fn is not None
+            mean += self.get_lp(s=s, t=t, grad_logr_fn=grad_logr_fn, **kwargs)
 
         return mean, logvar
 
@@ -153,31 +159,17 @@ class BaseModule(nn.Module, ABC):
         self,
         s: torch.Tensor,  # (bsz, ndim)
         t: torch.Tensor,  # (bsz,)
-        logr_fn: Callable[[torch.Tensor], torch.Tensor],
+        grad_logr_fn: Callable[[torch.Tensor], torch.Tensor],
         **kwargs,
     ) -> torch.Tensor:
         assert self.lp
-        grad_log_r = self.get_grad_log_r(s=s, logr_fn=logr_fn)
         scale = self.get_lp_scaling(t=t, **kwargs)
-        lp = scale * grad_log_r
+        lp = scale * grad_logr_fn(s)
 
         lp = torch.nan_to_num(lp)
         if self.clipping:
             lp = torch.clip(lp, -self.lgv_clip, self.lgv_clip)
         return lp
-
-    def get_grad_log_r(
-        self,
-        s: torch.Tensor,
-        logr_fn: Callable[[torch.Tensor], torch.Tensor],
-    ) -> torch.Tensor:
-        copy_s = s.detach().clone()
-        copy_s.requires_grad_(True)
-        with torch.enable_grad():
-            # grad_log_r = torch.autograd.grad(logr_fn(copy_s).sum(), copy_s)[0].detach()
-            logr_fn(copy_s).sum().backward()
-            grad_log_r = copy_s.grad.data  # type: ignore
-        return grad_log_r
 
     def get_lp_scaling(self, t: torch.Tensor, **kwargs) -> torch.Tensor:
         raise NotImplementedError

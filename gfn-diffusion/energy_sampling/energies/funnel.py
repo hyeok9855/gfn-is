@@ -12,9 +12,20 @@ class Funnel(BaseEnergy):
     """
 
     def __init__(
-        self, device: str | torch.device, ndim=10, sigma: float = 3.0, seed: int = 0
+        self,
+        device: str | torch.device,
+        ndim=10,
+        sigma: float = 3.0,
+        ref_gaussian_var: float = 1.0,
+        seed: int = 0,
     ) -> None:
-        super().__init__(device=device, ndim=ndim, seed=seed, plot_bound=10.0)
+        super().__init__(
+            device=device,
+            ndim=ndim,
+            ref_gaussian_var=ref_gaussian_var,
+            seed=seed,
+            plot_bound=10.0,
+        )
         self.dist_dominant = D.Normal(
             torch.tensor([0.0], device=self.device), torch.tensor([sigma], device=self.device)
         )
