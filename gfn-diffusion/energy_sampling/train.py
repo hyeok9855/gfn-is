@@ -370,7 +370,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--eval_resampling", action="store_true", default=False)
     parser.add_argument("--eval_weighting", action="store_true", default=False)
-    parser.add_argument("--eval_buffer", action="store_true", default=False)
     parser.add_argument(
         "--resampling_strategy",
         type=str,
