@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 class MALA(BaseMCMC):
     def __init__(
         self,
-        energy: BaseEnergy,
+        energy: "BaseEnergy",
         device: torch.device,
         burn_in: int = 100,
         max_iter_ls: int = 200,
