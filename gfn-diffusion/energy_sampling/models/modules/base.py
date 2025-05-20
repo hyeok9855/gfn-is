@@ -60,6 +60,11 @@ class BaseModule(nn.Module, ABC):
     def get_param_groups(self) -> ParamGroups:
         raise NotImplementedError
 
+    def init_log_Z(self, value: torch.Tensor | float) -> None:
+        assert self.flow_model is not None
+        assert isinstance(self.flow_model, nn.Parameter)
+        self.flow_model.data.copy_(value)
+
     @abstractmethod
     def predict_forward(
         self,
