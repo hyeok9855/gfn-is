@@ -48,55 +48,6 @@ def get_gfn_optimizer(
 ###########################################
 
 
-def get_importance_weights(
-    batch_size: int,
-    ts: torch.Tensor,  # shape: (bs, T)
-    log_fs: torch.Tensor,  # shape: (bs, T + 1)
-    log_pbs: torch.Tensor,  # shape: (bs, T)
-    log_pfs_exp: torch.Tensor,  # shape: (bs, T)
-    device: torch.device,
-    aux_target: str = "target",
-    loss_type: str = "tb",
-    target_ess: float = 0.0,
-    smoothing: str = "temper",
-    losses: torch.Tensor | None = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    # Compute importance weights
-    log_iws_0t = torch.zeros(batch_size, ts.shape[1] - 1).to(device)  # shape: (bs, T)
-    aux_target_measure_0t = torch.zeros_like(log_iws_0t)
-    match aux_target:
-        case "target":  # r(x)p_B(\tau|x)
-            aux_target_measure_0t = log_fs[:, 1:] + log_pbs.cumsum(-1)
-        case "loss":
-            assert loss_type in ["tb", "logvar"] and losses is not None
-            aux_target_measure_0t[:, -1] = losses.log()  # (bs,)
-        case _:
-            raise ValueError(f"Invalid aux_target: {aux_target}")
-    proposal_measure_0t = log_pfs_exp.cumsum(-1)
-    log_iws_0t = (aux_target_measure_0t - proposal_measure_0t).detach()
-
-    # Importance weight smoothing
-    normalized_iws_0t = log_iws_0t.softmax(dim=0)  # (bs, T)
-    if target_ess != 0.0:
-        target_ess = target_ess * batch_size if 0.0 <= target_ess <= 1.0 else target_ess
-        assert 1.0 < target_ess <= batch_size, f"Invalid target ESS: {target_ess}"
-
-        if (ess(normalized_weights=normalized_iws_0t) < target_ess).any():
-            if smoothing == "mix_with_uniform":
-                raise NotImplementedError("TODO: Implement this")
-                # mixing_ratio = solve_mixing_ratio(normalized_iws_0t, target_ess=target_ess)
-                # normalized_iws_0t = (
-                #     1 - mixing_ratio
-                # ) * normalized_iws_0t + mixing_ratio / batch_size
-            else:  # binary search
-                log_iws_0t_smoothed = binary_search_smoothing(
-                    log_iws_0t, target_ess, get_smoothing_func(smoothing)
-                )
-                normalized_iws_0t = log_iws_0t_smoothed.softmax(dim=0)
-
-    return log_iws_0t, normalized_iws_0t
-
-
 def solve_mixing_ratio(normalized_weights: torch.Tensor, target_ess: float) -> float:
     """
     Find the mixing ratio to achieve the target effective sample size (ESS)
@@ -151,39 +102,41 @@ def solve_mixing_ratio(normalized_weights: torch.Tensor, target_ess: float) -> f
 
 
 def ess(
-    log_weights: torch.Tensor | None = None,  # shape: (bs, T)
-    normalized_weights: torch.Tensor | None = None,  # shape: (bs, T)
+    log_weights: torch.Tensor | None = None,  # (bs, T)
+    normalized_weights: torch.Tensor | None = None,  # (bs, T)
 ) -> torch.Tensor:
     if normalized_weights is None:
         assert log_weights is not None
-        normalized_weights = log_weights.softmax(dim=0)  # shape: (bs, T)
-    return 1 / (normalized_weights**2).sum(dim=0)  # shape: (T,)
+        normalized_weights = log_weights.softmax(dim=0)  # (bs, T)
+    return 1 / (normalized_weights**2).sum(dim=0)  # (T,)
 
 
 def binary_search_smoothing(
-    log_weights: torch.Tensor,  # shape: (bs, T)
+    log_weights: torch.Tensor,  # (bs, T)
     target_ess: float,
-    func: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+    smoothing_strategy: str,
     tol=1e-3,
     max_steps=1000,
 ) -> torch.Tensor:
+    func = get_smoothing_func(smoothing_strategy)
+
     search_min, search_max = get_min_max(func, log_weights)
     search_min = torch.tensor(search_min, device=log_weights.device).repeat(1, log_weights.shape[1])
     search_max = torch.tensor(search_max, device=log_weights.device).repeat(1, log_weights.shape[1])
-    mid = (search_min + search_max) / 2  # shape: (1, T)
+    mid = (search_min + search_max) / 2  # (1, T)
     original_order = ess(func(log_weights, search_min)) < ess(func(log_weights, search_max))
 
-    dones = ess(log_weights=log_weights) >= target_ess  # shape: (T,)
-    log_weights_smoothed = log_weights.clone()  # shape: (bs, T)
+    dones = ess(log_weights=log_weights) >= target_ess  # (T,)
+    log_weights_smoothed = log_weights.clone()  # (bs, T)
 
     steps = 0
     while not dones.all():
         steps += 1
-        mid[0, ~dones] = (search_min[0, ~dones] + search_max[0, ~dones]) / 2  # shape: (1, T)
+        mid[0, ~dones] = (search_min[0, ~dones] + search_max[0, ~dones]) / 2  # (1, T)
 
-        new_log_weights = func(log_weights, mid)  # shape: (bs, T)
-        new_ess = ess(log_weights=new_log_weights)  # shape: (T,)
-        new_dones = (~dones) & (abs(new_ess - target_ess) / target_ess < tol)  # shape: (T,)
+        new_log_weights = func(log_weights, mid)  # (bs, T)
+        new_ess = ess(log_weights=new_log_weights)  # (T,)
+        new_dones = (~dones) & (abs(new_ess - target_ess) / target_ess < tol)  # (T,)
         log_weights_smoothed[:, new_dones] = new_log_weights[:, new_dones]
         dones = dones | new_dones
 
@@ -209,15 +162,17 @@ def temper(log_weights: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
     return log_weights / value
 
 
-def get_smoothing_func(smoothing: str) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
-    if smoothing == "clip_below":
-        return clip_below
-    elif smoothing == "clip_above":
-        return clip_above
-    elif smoothing == "temper":
+def get_smoothing_func(
+    smoothing_strategy: str,
+) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
+    if smoothing_strategy == "temper":
         return temper
+    elif smoothing_strategy == "clip_above":
+        return clip_above
+    elif smoothing_strategy == "clip_below":
+        return clip_below
     else:
-        raise ValueError(f"Invalid function: {smoothing}")
+        raise ValueError(f"Invalid smoothing strategy: {smoothing_strategy}")
 
 
 def get_min_max(func: Callable, log_weights: torch.Tensor) -> tuple[float, float]:

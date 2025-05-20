@@ -11,7 +11,7 @@ from utils.eval_utils import density_metrics, distribution_distance_metrics
 from utils.misc_utils import linear_annealing
 from utils.plot_utils import visualize
 from utils.sampling_utils import get_sampling_func
-from utils.train_utils import get_importance_weights
+from utils.train_utils import binary_search_smoothing
 
 
 class Trainer:
@@ -38,7 +38,6 @@ class Trainer:
         resampling: bool,
         resampling_strategy: Literal["multinomial", "stratified", "systematic"],
         alternating: bool,
-        aux_target: Literal["target", "loss"],
         target_ess: float,
         smoothing_strategy: Literal["temper", "clip_above", "clip_below"],
         epsilon: float,
@@ -97,7 +96,6 @@ class Trainer:
         self._alternating_flag = True
 
         # Importance sampling
-        self.aux_target = aux_target
         if (
             (self.buffer is not None and self.buffer.prioritization == "normalized_iw")
             or weighting
@@ -214,27 +212,27 @@ class Trainer:
             ndim=self.energy.ndim,
         )
 
-        normalized_iws_0t = None
+        normalized_iws_0t = log_iws_0t = None
         if (
             (self.buffer is not None and self.buffer.prioritization in ["iw", "normalized_iw"])
             or self.weighting
             or self.resampling
         ):
-            # log_iws_0t is the original log of importance-weights (calculated with aux_target)
-            # normalized_iws_0t is the normalized weights possibly smoothed
-            log_iws_0t, normalized_iws_0t = get_importance_weights(
-                self.batch_size,
-                ts,
-                log_fs,
-                log_pbs,
-                log_pfs_exp,
-                self.device,
-                self.aux_target,
-                self.loss_type,
-                self.target_ess,
-                self.smoothing_strategy,
-                losses,
-            )
+            log_iws_0t = log_fs[:, 1:] + log_pbs.cumsum(-1) - log_pfs_exp.cumsum(-1)
+            if self.target_ess != 0.0:
+                _target_ess = (
+                    self.target_ess * self.batch_size
+                    if 0.0 <= self.target_ess <= 1.0
+                    else self.target_ess
+                )
+                assert 1.0 < _target_ess <= self.batch_size, f"Invalid target ESS: {_target_ess}"
+
+                log_iws_0t_smoothed = binary_search_smoothing(
+                    log_iws_0t, _target_ess, self.smoothing_strategy
+                )
+                normalized_iws_0t = log_iws_0t_smoothed.softmax(dim=0)  # (bs, T)
+            else:
+                normalized_iws_0t = log_iws_0t.softmax(dim=0)  # (bs, T)
 
         # Add data to buffer
         if self.buffer is not None:

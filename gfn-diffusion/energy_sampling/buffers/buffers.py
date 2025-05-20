@@ -79,7 +79,7 @@ class BaseBuffer(ABC):
             dataset.discard(indices)
 
     @abstractmethod
-    def sample(self, batch_size: int, prioritized=True) -> tuple[torch.Tensor, ...]:
+    def sample(self, batch_size: int) -> tuple[torch.Tensor, ...]:
         raise NotImplementedError
 
     @abstractmethod
@@ -106,27 +106,26 @@ class TerminalStateBuffer(BaseBuffer):
             logr_lb=logr_lb,
         )
 
-    def sample(
-        self, batch_size: int, prioritized=True
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def sample(self, batch_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         assert len(self) > 0, "Buffer is empty"
 
         weights = torch.ones(len(self.states_dataset), device=self.device)
-        if prioritized and self.prioritization != "none":
-            match self.prioritization:
-                case "target":
-                    weights = self.log_fs_dataset.data  # log_fs is log_rs, (bs,)
-                    weights = weights.softmax(dim=0)
-                case "loss":
-                    assert self.losses_dataset is not None
-                    weights = self.losses_dataset.data  # (bs,)
-                case "normalized_iw":
-                    assert self.normalized_iws_dataset is not None
-                    weights = self.normalized_iws_dataset.data  # (bs,)
-                case "iw":
-                    raise ValueError("Use GISTerminalStateBuffer for iw-based prioritization")
-                case _:
-                    raise NotImplementedError
+        match self.prioritization:
+            case "none":
+                pass
+            case "target":
+                weights = self.log_fs_dataset.data  # log_fs is log_rs, (bs,)
+                weights = weights.softmax(dim=0)
+            case "loss":
+                assert self.losses_dataset is not None
+                weights = self.losses_dataset.data  # (bs,)
+            case "normalized_iw":
+                assert self.normalized_iws_dataset is not None
+                weights = self.normalized_iws_dataset.data  # (bs,)
+            case "iw":
+                raise ValueError("Use GISTerminalStateBuffer for iw-based prioritization")
+            case _:
+                raise NotImplementedError
 
         replacement = True if self.prioritization == "normalized_iw" else False
         indices = self.sampling_func(weights, batch_size, replacement)
@@ -134,10 +133,8 @@ class TerminalStateBuffer(BaseBuffer):
 
         return states, log_fs, indices
 
-    def sample_terminal(
-        self, batch_size: int, prioritized=True
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        xs, log_rs, _ = self.sample(batch_size, prioritized)
+    def sample_terminal(self, batch_size: int) -> tuple[torch.Tensor, torch.Tensor]:
+        xs, log_rs, _ = self.sample(batch_size)
         return xs, log_rs
 
 
@@ -164,7 +161,7 @@ class IntermediateStateBuffer(BaseBuffer):
         self.ts_dataset = CustomDataset(batch_dim, buffer_size, device)
 
     def sample(
-        self, batch_size: int, prioritized=True
+        self, batch_size: int
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         assert len(self) > 0, "Buffer is empty"
         assert self.ts_dataset is not None
@@ -172,16 +169,17 @@ class IntermediateStateBuffer(BaseBuffer):
         len1, len2 = self.log_fs_dataset.data.shape
 
         weights = torch.ones(len1, len2, device=self.device)
-        if prioritized and self.prioritization != "none":
-            match self.prioritization:
-                case "target":
-                    weights = self.log_fs_dataset.data  # (len1, len2)
-                    weights = weights.softmax(dim=0)
-                case "normalized_iw":  # Already normalized for each timesteps
-                    assert self.normalized_iws_dataset is not None
-                    weights = self.normalized_iws_dataset.data  # (len1, len2)
-                case _:
-                    raise NotImplementedError
+        match self.prioritization:
+            case "none":
+                pass
+            case "target":
+                weights = self.log_fs_dataset.data  # (len1, len2)
+                weights = weights.softmax(dim=0)
+            case "normalized_iw":  # Already normalized for each timesteps
+                assert self.normalized_iws_dataset is not None
+                weights = self.normalized_iws_dataset.data  # (len1, len2)
+            case _:
+                raise NotImplementedError
 
         # TODO: Sample timestep first, and then sample state
         replacement = True if self.prioritization == "normalized_iw" else False
@@ -196,7 +194,7 @@ class IntermediateStateBuffer(BaseBuffer):
         return states, ts, log_fs, indices
 
     def sample_timestep(
-        self, batch_size: int, t_idx: int, prioritized=True
+        self, batch_size: int, t_idx: int
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         assert len(self) > 0, "Buffer is empty"
         assert self.ts_dataset is not None
@@ -207,31 +205,28 @@ class IntermediateStateBuffer(BaseBuffer):
         t_log_fs = self.log_fs_dataset[:, t_idx]
 
         weights = torch.ones(len(t_states), device=self.device)
-        if prioritized and self.prioritization != "none":
-            match self.prioritization:
-                case "target":
-                    weights = t_log_fs
-                    weights = weights.softmax(dim=0)
-                case "normalized_iw":
-                    assert self.normalized_iws_dataset is not None
-                    weights = self.normalized_iws_dataset[:, t_idx]
-                case "iw":
-                    raise ValueError("Use GISIntermediateStateBuffer for iw-based prioritization")
-                case _:
-                    raise NotImplementedError
+        match self.prioritization:
+            case "none":
+                pass
+            case "target":
+                weights = t_log_fs
+                weights = weights.softmax(dim=0)
+            case "normalized_iw":
+                assert self.normalized_iws_dataset is not None
+                weights = self.normalized_iws_dataset[:, t_idx]
+            case "iw":
+                raise ValueError("Use GISIntermediateStateBuffer for iw-based prioritization")
+            case _:
+                raise NotImplementedError
 
         replacement = True if self.prioritization == "normalized_iw" else False
         indices = self.sampling_func(weights, batch_size, replacement)
         xs, ts, log_fs = t_states[indices], t_ts[indices], t_log_fs[indices]
         return xs, ts, log_fs
 
-    def sample_terminal(
-        self, batch_size: int, prioritized=True
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def sample_terminal(self, batch_size: int) -> tuple[torch.Tensor, torch.Tensor]:
         assert self.ts_dataset is not None
-        xs, _, log_rs = self.sample_timestep(
-            batch_size, self.ts_dataset.data.shape[1] - 1, prioritized
-        )
+        xs, _, log_rs = self.sample_timestep(batch_size, self.ts_dataset.data.shape[1] - 1)
         return xs, log_rs
 
 
@@ -262,8 +257,8 @@ class GISTerminalStateBuffer(TerminalStateBuffer):
         # GIS-specific parameters
         assert 0.0 <= target_ess <= 1.0
         self.target_ess = target_ess
-        self.smoothing_func = get_smoothing_func(smoothing_strategy)
-        self.discard_strategy = "fifo"  # TODO: Implement GIS-based buffer discarding
+        self.smoothing_strategy = smoothing_strategy
+        self.discard_strategy = "fifo"  # TODO: Implement GIS-based discard strategy
 
     def add(self, **data_dict: torch.Tensor) -> None:
         batch_idx_tensor = torch.zeros_like(data_dict["log_fs"], dtype=torch.int64) + self.batch_idx
@@ -273,37 +268,33 @@ class GISTerminalStateBuffer(TerminalStateBuffer):
             len(self) + len(data_dict["log_fs"]) > self.buffer_size
             and self.discard_strategy == "gis"
         ):
-            # TODO: Implement GIS-based buffer discarding
+            # TODO: Implement GIS-based discard strategy
             assert len(self.log_fs_dataset) + len(data_dict["log_fs"]) < self.buffer_size
         else:  # discard == "fifo"
             pass  # This is handled in CustomDataset
 
         super().add(**data_dict, batch_idx=batch_idx_tensor)
 
-    def sample(
-        self, batch_size: int, prioritized=True
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def sample(self, batch_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         assert len(self) > 0, "Buffer is empty"
 
         assert self.prioritization == "iw"
         log_iws = self.log_iws_dataset.data  # (bs,)
 
         # apply ESS-based smoothing
-        log_iws = binary_search_smoothing(
+        log_iws_smoothed = binary_search_smoothing(
             log_weights=log_iws.unsqueeze(1),
             target_ess=int(self.target_ess * len(log_iws)),
-            func=self.smoothing_func,
+            smoothing_strategy=self.smoothing_strategy,
         )
-        weights = log_iws.squeeze(1).softmax(dim=0)
+        weights = log_iws_smoothed.squeeze(1).softmax(dim=0)
 
         indices = self.sampling_func(weights, batch_size, True)
         states, log_fs = self.states_dataset[indices], self.log_fs_dataset[indices]
         return states, log_fs, indices
 
-    def sample_terminal(
-        self, batch_size: int, prioritized=True
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        xs, log_rs, _ = self.sample(batch_size, prioritized)
+    def sample_terminal(self, batch_size: int) -> tuple[torch.Tensor, torch.Tensor]:
+        xs, log_rs, _ = self.sample(batch_size)
         return xs, log_rs
 
 

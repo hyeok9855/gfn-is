@@ -125,7 +125,6 @@ def train(args):
         resampling=args.train_resampling,
         resampling_strategy=args.resampling_strategy,
         alternating=args.alternating,
-        aux_target=args.aux_target,
         target_ess=args.target_ess,
         smoothing_strategy=args.smoothing,
         invtemp=args.invtemp,
@@ -193,7 +192,7 @@ def train(args):
         desc += f"{'Sinkhorn':<10}: {final_metrics['final_eval/Sinkhorn']:.3f}\n"
     if final_metrics.get("final_eval/ess") is not None:
         desc += f"{'ESS':<10}: {final_metrics['final_eval/ess']:.3f}\n"
-    print(f"Final results:\n {desc}")
+    print(f"===============\n[Final results]\n{desc}")
 
 
 if __name__ == "__main__":
@@ -372,7 +371,6 @@ if __name__ == "__main__":
 
     ################################################################
     ### Importance sampling related
-    parser.add_argument("--aux_target", type=str, default="target", choices=("target", "loss"))
     parser.add_argument("--train_resampling", action="store_true", default=False)
     parser.add_argument("--train_weighting", action="store_true", default=False)
     parser.add_argument("--alternating", action="store_true", default=False)
