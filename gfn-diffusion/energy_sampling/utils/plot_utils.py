@@ -315,8 +315,8 @@ def viz_gmm(
         )
         out_dict.update(
             {
-                f"visualization/kde{2 * i}{2 * i + 1}": wandb.Image(fig_to_image(fig_kde)),
-                f"visualization/contour{2 * i}{2 * i + 1}": wandb.Image(fig_to_image(fig_contour)),
+                f"visualization/kde{i - 1}{i}": wandb.Image(fig_to_image(fig_kde)),
+                f"visualization/contour{i - 1}{i}": wandb.Image(fig_to_image(fig_contour)),
             }
         )
         plt.close(fig_kde)
