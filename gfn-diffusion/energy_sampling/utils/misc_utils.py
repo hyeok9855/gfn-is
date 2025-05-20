@@ -128,7 +128,6 @@ def get_name(args: argparse.Namespace) -> str:
             name += "_resampling"
         if args.train_weighting:
             name += "_weighting"
-        name += f"-{args.aux_target}"
         if args.alternating:
             name += "-alt"
 

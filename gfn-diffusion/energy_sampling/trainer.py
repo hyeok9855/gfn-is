@@ -74,11 +74,11 @@ class Trainer:
         # Training parameters and buffer
         self.n_epochs = n_epochs
         if bwd_to_fwd_ratio < 1:
-            self.bwd_to_fwd_ratio = -1.0
+            self.bwd_to_fwd_ratio = None
             self.fwd_to_bwd_ratio = round(1 / bwd_to_fwd_ratio)
         else:
-            self.bwd_to_fwd_ratio = bwd_to_fwd_ratio
-            self.fwd_to_bwd_ratio = -1.0
+            self.bwd_to_fwd_ratio = int(bwd_to_fwd_ratio)
+            self.fwd_to_bwd_ratio = None
         self.buffer = buffer
         self.buffer_save_interval = buffer_save_interval
         self.prefill_epochs = prefill_epochs if self.buffer is not None else 0
@@ -124,25 +124,11 @@ class Trainer:
 
     @property
     def weighting(self) -> bool:
-        if self._weighting:
-            if self.alternating:
-                self._alternating_flag = not self._alternating_flag
-                return self._alternating_flag
-            else:
-                return True
-        else:
-            return False
+        return self._weighting and self._alternating_flag
 
     @property
     def resampling(self) -> bool:
-        if self._resampling:
-            if self.alternating:
-                self._alternating_flag = not self._alternating_flag
-                return self._alternating_flag
-            else:
-                return True
-        else:
-            return False
+        return self._resampling and self._alternating_flag
 
     def train_step(self, it: int) -> float:
         self.gfn_model.train()
@@ -167,8 +153,8 @@ class Trainer:
             loss = self.fwd_train_step(it)
         else:  # self.buffer is not None
             if (
-                (self.bwd_to_fwd_ratio > 0 and it % (self.bwd_to_fwd_ratio + 1) == 0)
-                or (self.bwd_to_fwd_ratio < 0 and it % (self.fwd_to_bwd_ratio + 1) != 0)
+                (self.bwd_to_fwd_ratio is not None and it % (self.bwd_to_fwd_ratio + 1) == 0)
+                or (self.fwd_to_bwd_ratio is not None and it % (self.fwd_to_bwd_ratio + 1) != 0)
             ) or it < self.prefill_epochs:
                 loss = self.fwd_train_step(it)
             else:
@@ -218,7 +204,7 @@ class Trainer:
             or self.weighting
             or self.resampling
         ):
-            log_iws_0t = log_fs[:, 1:] + log_pbs.cumsum(-1) - log_pfs_exp.cumsum(-1)
+            log_iws_0t = (log_fs[:, 1:] + log_pbs.cumsum(-1) - log_pfs_exp.cumsum(-1)).detach()
             if self.target_ess != 0.0:
                 _target_ess = (
                     self.target_ess * self.batch_size
@@ -272,6 +258,9 @@ class Trainer:
                 loss = losses[indices].mean()
         else:
             loss = losses.mean()
+
+        if self.alternating:
+            self._alternating_flag = not self._alternating_flag
 
         return loss
 

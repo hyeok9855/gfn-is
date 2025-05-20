@@ -23,7 +23,7 @@ wandb login --relogin ...
 
 ARGS=$1
 START_SEED=${2:-0}
-END_SEED=${3:-4}
+END_SEED=${3:-0}
 
 for SEED in $(seq $START_SEED $END_SEED); do
     if [ "$SEED" = "0" ]; then
