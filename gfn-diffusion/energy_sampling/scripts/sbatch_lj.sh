@@ -48,11 +48,10 @@ for STARTSEED in 0 1 2 3 4; do  # 0 1 2 3 4
                                     continue
                                 fi
 
-                                ARGS5="--use_buffer"
-                                for BUFFER_PRIORITIZATION in normalized_iw target loss none; do  # normalized_iw target loss none
+                                for BUFFER_PRIORITIZATION in normalized_iw iw target loss none; do  # normalized_iw target loss none
                                     BUFFER_SIZE=200000
                                     PREFILL=100
-                                    ARGS6="--buffer_size $BUFFER_SIZE --prefill $PREFILL --prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper --eval_buffer"
+                                    ARGS6="--buffer_size $BUFFER_SIZE --prefill $PREFILL --prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper"
                                     sbatch scripts/run_seeds.sh "$ARGS1 $ARGS2 $ARGS3 $ARGS4 $ARGS5 $ARGS6" $STARTSEED $ENDSEED
                                 done
                             fi

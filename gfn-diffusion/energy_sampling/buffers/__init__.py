@@ -1,1 +1,7 @@
-from .buffers import BaseBuffer, IntermediateStateBuffer, TerminalStateBuffer
+from .buffers import (
+    BaseBuffer,
+    GISIntermediateStateBuffer,
+    GISTerminalStateBuffer,
+    IntermediateStateBuffer,
+    TerminalStateBuffer,
+)

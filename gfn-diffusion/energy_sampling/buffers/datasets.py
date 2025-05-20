@@ -23,6 +23,8 @@ class CustomDataset(Dataset):
         return self.data[idx]
 
     def add(self, new_batch: torch.Tensor) -> None:
+        if self.data.shape[0] == 0:
+            self.data = self.data.to(new_batch.dtype)
         self.data = torch.cat([self.data, new_batch.detach()], dim=0)
         self.trim_if_needed()
 
@@ -36,16 +38,13 @@ class CustomDataset(Dataset):
 
     def update(
         self,
-        idx: torch.Tensor | tuple[int | slice | torch.Tensor, int | slice | torch.Tensor],
+        indices: torch.Tensor | tuple[int | slice | torch.Tensor, int | slice | torch.Tensor],
         new_batch: torch.Tensor,
     ) -> None:
-        if isinstance(idx, tuple):
-            assert self.batch_dim == len(idx)
-        self.data[idx] = new_batch.detach()
+        if isinstance(indices, tuple):
+            assert self.batch_dim == len(indices)
+        self.data[indices] = new_batch.detach()
 
-    def reorder(
-        self, idx: torch.Tensor | tuple[int | slice | torch.Tensor, int | slice | torch.Tensor]
-    ) -> None:
-        if isinstance(idx, tuple):
-            assert self.batch_dim == len(idx)
-        self.data = self.data[idx]
+    def discard(self, indices: torch.Tensor) -> None:
+        assert indices.ndim == 1
+        self.data = self.data[~indices]

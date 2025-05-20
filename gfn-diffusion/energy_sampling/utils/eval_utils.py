@@ -74,7 +74,6 @@ def wasserstein(
         ret = cast(float, pot.emd2(a, b, M, numItermax=10_000_000))
         ret = math.sqrt(ret)  # To make it consistent with previous works
     elif method == "sinkhorn":
-        assert power == 2
         ret = compute_OT_static(
             gt_samples=jnp.array(x0),
             model_samples=jnp.array(x1),
@@ -293,7 +292,7 @@ def distribution_distance_metrics(
 
     w1 = wasserstein(pred_np, true_np, weights=weights_np, power=1)
     w2 = wasserstein(pred_np, true_np, weights=weights_np, power=2)
-    sinkhorn = wasserstein(pred_np, true_np, weights=weights_np, method="sinkhorn", power=2)
+    sinkhorn = wasserstein(pred_np, true_np, weights=weights_np, method="sinkhorn")
     metrics.update({"1-Wasserstein": w1, "2-Wasserstein": w2, "Sinkhorn": sinkhorn})
 
     if weights is not None:

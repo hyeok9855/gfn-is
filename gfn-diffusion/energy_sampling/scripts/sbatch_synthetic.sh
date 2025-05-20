@@ -52,9 +52,8 @@ for ENERGY_NAME in gmm40 manywell; do  # gmm40 manywell
                         if [ "$LOSS" = "pis" ] || [ "$LOSS" = "mle" ]; then
                             continue
                         fi
-                        ARGS5="--use_buffer"
-                        for BUFFER_PRIORITIZATION in normalized_iw target loss none; do  # normalized_iw target loss none
-                            ARGS6="--prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper --eval_buffer"
+                        for BUFFER_PRIORITIZATION in normalized_iw iw target loss none; do  # normalized_iw target loss none
+                            ARGS6="--prioritization $BUFFER_PRIORITIZATION --target_ess 0.05 --smoothing temper"
                             sbatch scripts/run_seeds.sh "$ARGS1 $ARGS2 $ARGS3 $ARGS4 $ARGS5 $ARGS6" $STARTSEED $ENDSEED
                         done
                     fi

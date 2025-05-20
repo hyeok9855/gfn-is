@@ -5,13 +5,19 @@ import torch
 import wandb
 from tqdm import trange
 
-from buffers import IntermediateStateBuffer, TerminalStateBuffer
+from buffers import (
+    GISIntermediateStateBuffer,
+    GISTerminalStateBuffer,
+    IntermediateStateBuffer,
+    TerminalStateBuffer,
+)
 from discretizers import get_discretizer
 from energies import get_energy
 from models import GFN
 from models.modules import get_module
 from trainer import Trainer
 from utils.misc_utils import get_name, set_seed
+from utils.sampling_utils import get_sampling_func
 from utils.train_utils import get_gfn_optimizer
 
 
@@ -69,16 +75,25 @@ def train(args):
 
     buffer = None
     if args.use_buffer:
-        buffer_class = (
-            TerminalStateBuffer if args.buffer_type == "terminal" else IntermediateStateBuffer
-        )
+        if args.prioritization == "iw":
+            buffer_class = (
+                GISTerminalStateBuffer
+                if args.buffer_type == "terminal"
+                else GISIntermediateStateBuffer
+            )
+        else:
+            buffer_class = (
+                TerminalStateBuffer if args.buffer_type == "terminal" else IntermediateStateBuffer
+            )
+
         buffer = buffer_class(
             args.buffer_size,
             device,
             prioritization=args.prioritization,
-            sampling_strategy=args.buffer_sampling,
-            rank_k=args.rank_k,
+            sampling_func=get_sampling_func(args.buffer_sampling, args.rank_k),
             logr_lb=args.logr_lb,
+            smoothing_strategy=args.smoothing,
+            target_ess=args.target_ess,
         )
 
     train_discretizer = get_discretizer(
@@ -308,7 +323,7 @@ if __name__ == "__main__":
         "--prioritization",
         type=str,
         default="none",
-        choices=("none", "target", "loss", "normalized_iw"),
+        choices=("none", "target", "loss", "iw", "normalized_iw"),
     )
     # buffer sampling strategy  # TODO: support percentile-based sampling
     parser.add_argument(

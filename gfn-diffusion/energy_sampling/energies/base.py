@@ -20,6 +20,7 @@ class BaseEnergy(abc.ABC):
         self.gt_xs: torch.Tensor | None = None
         self.gt_xs_log_rewards: torch.Tensor | None = None
         self._invtemp = 1.0
+        self.ref_gaussian_var = ref_gaussian_var
         self.ref_gaussian: D.Normal = D.Normal(
             torch.zeros(ndim, device=device),
             torch.ones(ndim, device=device) * (ref_gaussian_var**0.5),

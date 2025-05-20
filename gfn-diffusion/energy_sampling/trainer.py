@@ -11,7 +11,7 @@ from utils.eval_utils import density_metrics, distribution_distance_metrics
 from utils.misc_utils import linear_annealing
 from utils.plot_utils import visualize
 from utils.sampling_utils import get_sampling_func
-from utils.train_utils import get_normalized_weights
+from utils.train_utils import get_importance_weights
 
 
 class Trainer:
@@ -98,7 +98,14 @@ class Trainer:
 
         # Importance sampling
         self.aux_target = aux_target
-        self.target_ess = target_ess
+        if (
+            (self.buffer is not None and self.buffer.prioritization == "normalized_iw")
+            or weighting
+            or resampling
+        ):
+            self.target_ess = target_ess
+        else:  # otherwise, we don't need smoothing; disable it by setting target_ess to 0.0
+            self.target_ess = 0.0
         self.smoothing_strategy = smoothing_strategy
 
         # Misc
@@ -209,11 +216,13 @@ class Trainer:
 
         normalized_iws_0t = None
         if (
-            (self.buffer is not None and self.buffer.prioritization == "normalized_iw")
+            (self.buffer is not None and self.buffer.prioritization in ["iw", "normalized_iw"])
             or self.weighting
             or self.resampling
         ):
-            normalized_iws_0t = get_normalized_weights(
+            # log_iws_0t is the original log of importance-weights (calculated with aux_target)
+            # normalized_iws_0t is the normalized weights possibly smoothed
+            log_iws_0t, normalized_iws_0t = get_importance_weights(
                 self.batch_size,
                 ts,
                 log_fs,
@@ -233,6 +242,9 @@ class Trainer:
             if self.buffer.prioritization == "loss":
                 assert isinstance(self.buffer, TerminalStateBuffer)
                 data_dict["losses"] = losses.unsqueeze(1)  # (bs, 1)
+            elif self.buffer.prioritization == "iw":
+                assert log_iws_0t is not None
+                data_dict["log_iws"] = log_iws_0t  # (bs, T)
             elif self.buffer.prioritization == "normalized_iw":
                 assert normalized_iws_0t is not None
                 data_dict["normalized_iws"] = normalized_iws_0t  # (bs, T)
