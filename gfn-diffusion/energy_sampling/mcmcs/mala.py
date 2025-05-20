@@ -13,7 +13,6 @@ class MALA(BaseMCMC):
     def __init__(
         self,
         energy: "BaseEnergy",
-        device: torch.device,
         burn_in: int = 100,
         max_iter_ls: int = 200,
         ld_step: float = 0.1,
@@ -21,7 +20,6 @@ class MALA(BaseMCMC):
         target_acceptance_rate: float = 0.574,
     ):
         self.energy = energy
-        self.device = device
         self.burn_in = burn_in
         self.max_iter_ls = max_iter_ls
         self.ld_step = ld_step
@@ -61,11 +59,7 @@ class MALA(BaseMCMC):
             else:
                 ld_step = self.ld_step
 
-            new_x = (
-                x
-                + ld_step * r_grad_original
-                + np.sqrt(2 * ld_step) * torch.randn_like(x, device=self.device)
-            )
+            new_x = x + ld_step * r_grad_original + np.sqrt(2 * ld_step) * torch.randn_like(x)
             log_r_new = self.energy.log_reward(new_x)
             r_grad_new = torch.autograd.grad(log_r_new.sum(), new_x)[0].detach()
 
@@ -78,7 +72,7 @@ class MALA(BaseMCMC):
                 )
 
                 log_accept = (log_r_new - log_r_original) + log_q_bwd - log_q_fwd
-                accept_mask = torch.rand(x.shape[0], device=self.device) < torch.exp(
+                accept_mask = torch.rand(x.shape[0], device=x.device) < torch.exp(
                     torch.clamp(log_accept, max=0)
                 )
                 acceptance_count += accept_mask.sum().item()
