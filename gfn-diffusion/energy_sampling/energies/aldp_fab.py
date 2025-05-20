@@ -19,8 +19,8 @@ class ALDPFAB(BaseEnergy):
         self,
         device: str | torch.device = "cpu",
         temperature=300,
-        energy_cut=1.0e4,  # 1e8 in FAB
-        energy_max=1.0e8,  # 1e20 in FAB
+        energy_cut=1.0e6,  # 1e8 in FAB
+        energy_max=1.0e20,  # 1e20 in FAB
         n_threads=6,
         ind_circ_dih=[0, 1, 2, 3, 4, 5, 8, 9, 10, 13, 15, 16],
         shift_dih=False,
