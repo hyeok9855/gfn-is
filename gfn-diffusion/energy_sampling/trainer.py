@@ -327,7 +327,11 @@ class Trainer:
                 _, log_pfs, log_pbs, log_fs, _ = self.gfn_model.get_trajectory_fwd_and_bwd(
                     buf_states, ts, buf_ts, epsilon=0.0  # TODO: support for epsilon
                 )
-                sub_logvar_params = {"sublogvar_K": self.sublogvar_K, "ts": ts, "curr_t": buf_ts}
+                sub_logvar_params = {
+                    "sublogvar_K": self.sublogvar_K,
+                    "ts": ts,
+                    "curr_t": buf_ts,
+                }
 
             else:
                 raise ValueError(f"Invalid buffer type: {type(self.buffer)}")

@@ -249,6 +249,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--module", type=str, default="pismlp", choices=("pismlp", "mlp", "egnn"))
     parser.add_argument("--use_checkpoint", action="store_true", default=False)
+    parser.add_argument("--init_log_Z", type=float, default=0.0)
     parser.add_argument("--precision", type=str, default="float", choices=("float", "double"))
 
     ################################################################

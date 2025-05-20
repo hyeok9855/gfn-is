@@ -30,6 +30,7 @@ class BaseModule(nn.Module, ABC):
         learn_variance: bool = True,
         log_var_range: float = 4.0,
         use_checkpoint: bool = False,
+        init_log_Z: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -56,14 +57,11 @@ class BaseModule(nn.Module, ABC):
 
         self.use_checkpoint = use_checkpoint
 
+        self.init_log_Z = init_log_Z
+
     @abstractmethod
     def get_param_groups(self) -> ParamGroups:
         raise NotImplementedError
-
-    def init_log_Z(self, value: torch.Tensor | float) -> None:
-        assert self.flow_model is not None
-        assert isinstance(self.flow_model, nn.Parameter)
-        self.flow_model.data.copy_(value)
 
     @abstractmethod
     def predict_forward(
