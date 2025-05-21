@@ -183,6 +183,9 @@ class Trainer:
                 )
             self.buffer.add(**data_dict)
 
+        if loss.isnan():
+            raise ValueError(f"Loss is NaN")
+
         if it < self.prefill_epochs or loss.isinf() or loss > 1e28:
             return loss.item()
 
