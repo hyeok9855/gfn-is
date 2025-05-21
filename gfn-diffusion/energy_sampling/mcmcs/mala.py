@@ -15,14 +15,15 @@ class MALA(BaseMCMC):
         energy: "BaseEnergy",
         burn_in: int = 100,
         max_iter_ls: int = 200,
-        ld_step: float = 0.1,
+        step_size: float = 0.1,
         ld_schedule: bool = True,
         target_acceptance_rate: float = 0.574,
+        **kwargs,
     ):
-        self.energy = energy
+        super().__init__(energy)
         self.burn_in = burn_in
         self.max_iter_ls = max_iter_ls
-        self.ld_step = ld_step
+        self.step_size = step_size
         self.ld_schedule = ld_schedule
         self.target_acceptance_rate = target_acceptance_rate
 
@@ -38,9 +39,6 @@ class MALA(BaseMCMC):
             return ld_step - adjustment_factor * ld_step
 
     def sample(self, x):
-        original_num_threads = torch.get_num_threads()
-        torch.set_num_threads(1)
-
         accepted_samples = []
         accepted_logr = []
         acceptance_rate_lst = []
@@ -52,12 +50,14 @@ class MALA(BaseMCMC):
         for i in trange(self.max_iter_ls):
             x = x.requires_grad_(True)
 
-            log_r = self.energy.log_reward(x)
-            r_grad_original = torch.autograd.grad(log_r.sum(), x)[0].detach()
+            log_rs = self.energy.log_reward(x)
+            r_grad_original = torch.autograd.grad(log_rs.sum(), x)[0].detach()
             if self.ld_schedule:
-                ld_step = self.ld_step if i == 0 else self.adjust_ld_step(ld_step, acceptance_rate)
+                ld_step = (
+                    self.step_size if i == 0 else self.adjust_ld_step(ld_step, acceptance_rate)
+                )
             else:
-                ld_step = self.ld_step
+                ld_step = self.step_size
 
             new_x = x + ld_step * r_grad_original + np.sqrt(2 * ld_step) * torch.randn_like(x)
             log_r_new = self.energy.log_reward(new_x)
@@ -81,8 +81,8 @@ class MALA(BaseMCMC):
                 x = x.detach()
                 # After burn-in process
                 if i > self.burn_in:
-                    accepted_samples.append(new_x[accept_mask].detach().cpu())
-                    accepted_logr.append(log_r_new[accept_mask].detach().cpu())
+                    accepted_samples.append(new_x[accept_mask].detach())
+                    accepted_logr.append(log_r_new[accept_mask].detach())
                 x[accept_mask] = new_x[accept_mask]
                 log_r_original[accept_mask] = log_r_new[accept_mask]
 
@@ -93,8 +93,6 @@ class MALA(BaseMCMC):
                     acceptance_count = 0
                     total_proposals = 0
 
-        sample = torch.cat(accepted_samples, dim=0)
-        log_r = torch.cat(accepted_logr, dim=0)
-
-        torch.set_num_threads(original_num_threads)
-        return sample, log_r
+        xs = torch.cat(accepted_samples, dim=0)
+        log_rs = torch.cat(accepted_logr, dim=0)
+        return xs, log_rs

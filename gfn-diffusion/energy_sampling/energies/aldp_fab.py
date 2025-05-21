@@ -26,7 +26,7 @@ class ALDPFAB(BaseEnergy):
         shift_dih=False,
         shift_dih_params={"hist_bins": 100},
         default_std={"bond": 0.005, "angle": 0.15, "dih": 0.2},
-        env="vacuum",
+        env="implicit",
         ref_gaussian_var: float = 1.0,
         seed: int = 0,
     ):
@@ -59,9 +59,35 @@ class ALDPFAB(BaseEnergy):
             (20, [18, 16, 19]),
             (21, [18, 16, 19]),
         ]
-        cart_indices = [8, 6, 14]
 
-        self.ind_circ_dih = ind_circ_dih
+        mass = [
+            [1.007947, 1.007947, 1.007947],
+            [12.01078, 12.01078, 12.01078],
+            [1.007947, 1.007947, 1.007947],
+            [1.007947, 1.007947, 1.007947],
+            [12.01078, 12.01078, 12.01078],
+            [15.99943, 15.99943, 15.99943],
+            [14.00672, 14.00672, 14.00672],
+            [1.007947, 1.007947, 1.007947],
+            [12.01078, 12.01078, 12.01078],
+            [1.007947, 1.007947, 1.007947],
+            [12.01078, 12.01078, 12.01078],
+            [1.007947, 1.007947, 1.007947],
+            [1.007947, 1.007947, 1.007947],
+            [1.007947, 1.007947, 1.007947],
+            [12.01078, 12.01078, 12.01078],
+            [15.99943, 15.99943, 15.99943],
+            [14.00672, 14.00672, 14.00672],
+            [1.007947, 1.007947, 1.007947],
+            [12.01078, 12.01078, 12.01078],
+            [1.007947, 1.007947, 1.007947],
+            [1.007947, 1.007947, 1.007947],
+            [1.007947, 1.007947, 1.007947],
+        ]
+        self.mass = torch.tensor(mass, device=self.device).unsqueeze(0)
+        self.kBT = 1.380649 * 6.02214076 * 1e-3 * temperature
+
+        cart_indices = [8, 6, 14]
 
         # System setup
         if env == "vacuum":
@@ -122,6 +148,11 @@ class ALDPFAB(BaseEnergy):
         )
         return copy_x
 
+    def inverse_scale_ind_circ(self, x: torch.Tensor) -> torch.Tensor:
+        copy_x = x.clone()
+        copy_x[:, self.ind_circ] = torch.atanh(copy_x[:, self.ind_circ] / (math.pi + 0.01))
+        return copy_x
+
     def energy(self, x: torch.Tensor) -> torch.Tensor:
         # x: (batch_size, 60)
         x = self.scale_ind_circ(x)
@@ -148,3 +179,9 @@ class ALDPFAB(BaseEnergy):
         x = self.scale_ind_circ(x)
         assert x.shape[1] == 60
         return self.coordinate_transform(x)[0]  # (batch_size, 66)
+
+    def inverse(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        assert x.shape[1] == 66
+        x, log_det = self.coordinate_transform.inverse(x)
+        x = self.inverse_scale_ind_circ(x)
+        return x, log_det

@@ -13,6 +13,7 @@ from buffers import (
 )
 from discretizers import get_discretizer
 from energies import get_energy
+from mcmcs import MALA, MD
 from models import GFN
 from models.modules import get_module
 from trainer import Trainer
@@ -96,6 +97,23 @@ def train(args):
             target_ess=args.target_ess,
         )
 
+        if args.mcmc_type == "none":
+            mcmc = None
+        else:
+            mcmc_args = {
+                "energy": energy,
+                "burn_in": args.mcmc_burn_in,
+                "max_iter_ls": args.mcmc_max_iter_ls,
+                "step_size": args.mcmc_step_size,
+                "gamma": args.mcmc_gamma,
+            }
+            if args.mcmc_type == "md":
+                mcmc = MD(**mcmc_args)
+            elif args.mcmc_type == "mala":
+                mcmc = MALA(**mcmc_args)
+            else:
+                raise ValueError(f"Invalid MCMC type: {args.mcmc_type}")
+
     train_discretizer = get_discretizer(
         discretizer=args.discretizer, max_ratio=args.discretizer_max_ratio
     )
@@ -127,6 +145,8 @@ def train(args):
         alternating=args.alternating,
         target_ess=args.target_ess,
         smoothing_strategy=args.smoothing,
+        mcmc_interval=args.mcmc_interval,
+        mcmc_alg=mcmc,
         invtemp=args.invtemp,
         invtemp_anneal=args.invtemp_anneal,
         eval_batch_size=args.eval_batch_size,
@@ -344,6 +364,14 @@ if __name__ == "__main__":
     ################################################################
 
     ################################################################
+    ### For MCMC
+    parser.add_argument("--mcmc_type", type=str, default="none", choices=("none", "md", "mala"))
+    parser.add_argument("--mcmc_burn_in", type=int, default=100)
+    parser.add_argument("--mcmc_max_iter_ls", type=int, default=100)
+    parser.add_argument("--mcmc_step_size", type=float, default=0.0005)
+    parser.add_argument("--mcmc_gamma", type=float, default=0.01)  # for MD
+    ################################################################
+
     ### Exploration with extra noise
     parser.add_argument("--epsilon", type=float, default=0.0)
     parser.add_argument("--no_anneal_epsilon", action="store_false", dest="anneal_epsilon")

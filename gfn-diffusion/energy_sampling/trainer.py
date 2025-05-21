@@ -6,6 +6,7 @@ import torch
 from buffers import BaseBuffer, IntermediateStateBuffer, TerminalStateBuffer
 from energies import BaseEnergy, IntermediateEnergy
 from losses import cal_subtb_coef_matrix, get_loss
+from mcmcs import BaseMCMC
 from models import GFN
 from utils.eval_utils import density_metrics, distribution_distance_metrics
 from utils.misc_utils import linear_annealing
@@ -40,6 +41,8 @@ class Trainer:
         alternating: bool,
         target_ess: float,
         smoothing_strategy: Literal["temper", "clip_above", "clip_below"],
+        mcmc_interval: int,
+        mcmc_alg: BaseMCMC | None,
         epsilon: float,
         anneal_epsilon: bool,
         invtemp: float,
@@ -106,6 +109,10 @@ class Trainer:
             self.target_ess = 0.0
         self.smoothing_strategy = smoothing_strategy
 
+        # MCMC
+        self.mcmc_interval = mcmc_interval
+        self.mcmc_alg = mcmc_alg
+
         # Misc
         self.epsilon = epsilon
         self.anneal_epsilon = anneal_epsilon
@@ -159,6 +166,23 @@ class Trainer:
                 loss = self.fwd_train_step(it)
             else:
                 loss = self.bwd_train_step(it)
+
+        # MCMC buffer augmentation
+        if self.mcmc_alg is not None and (it > 0 and it % self.mcmc_interval == 0):
+            # TODO: support for intermediate states
+            assert isinstance(self.buffer, TerminalStateBuffer)
+            assert self.buffer.prioritization in ["normalized_iw", "none"]
+
+            buf_xs, _ = self.buffer.sample_terminal(self.batch_size * 2)
+            # Augment the buffer with samples from MCMC
+            mcmc_xs, mcmc_log_rs = self.mcmc_alg.sample(buf_xs)
+            normalized_iws = torch.ones_like(mcmc_log_rs, device=self.device) / (
+                self.batch_size * 2
+            )
+            data_dict = {"states": mcmc_xs, "log_fs": mcmc_log_rs}
+            if self.buffer.prioritization == "normalized_iw":
+                data_dict["normalized_iws"] = normalized_iws
+            self.buffer.add(**data_dict)
 
         if it < self.prefill_epochs or loss.isinf() or loss > 1e28:
             return loss.item()
