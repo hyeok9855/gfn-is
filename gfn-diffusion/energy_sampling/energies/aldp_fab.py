@@ -154,7 +154,7 @@ class ALDPFAB(BaseEnergy):
         return copy_x
 
     def inverse_scale_ind_circ(self, x: torch.Tensor) -> torch.Tensor:
-        assert x.shape[1] == 66
+        assert x.shape[1] == 60
         copy_x = x.clone()
         copy_x[:, self.ind_circ] = torch.atanh(copy_x[:, self.ind_circ] / (math.pi + 0.01))
         return copy_x
