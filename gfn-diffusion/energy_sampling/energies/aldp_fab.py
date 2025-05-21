@@ -141,9 +141,15 @@ class ALDPFAB(BaseEnergy):
         datas = [np.load(DATA_PATH / f"val_before_scale{i}.npy") for i in range(5)]
         self.approx_sample = torch.tensor(np.concatenate(datas, axis=0), dtype=dtype)
 
-    def energy_in_original_space(self, x: torch.Tensor) -> torch.Tensor:
-        assert x.shape[1] == 66
-        return self.p.norm_energy(x)
+    def energy(self, x: torch.Tensor) -> torch.Tensor:
+        assert x.shape[1] == 60
+        x = self.scale_ind_circ(x)
+        return -self.p.log_prob(x)
+
+    def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
+        with temp_seed(seed or self.seed):
+            perm_idx = torch.randperm(self.approx_sample.shape[0])[:batch_size]
+        return self.approx_sample[perm_idx].to(self.device)
 
     def scale_ind_circ(self, x: torch.Tensor) -> torch.Tensor:
         assert x.shape[1] == 60
@@ -159,11 +165,7 @@ class ALDPFAB(BaseEnergy):
         copy_x[:, self.ind_circ] = torch.atanh(copy_x[:, self.ind_circ] / (math.pi + 0.01))
         return copy_x
 
-    def energy(self, x: torch.Tensor) -> torch.Tensor:
-        assert x.shape[1] == 60
-        x = self.scale_ind_circ(x)
-        return -self.p.log_prob(x)
-
+    ##### Some methods for MD #####
     def transform(self, x: torch.Tensor) -> torch.Tensor:
         # scale_ind_circ --> (60 -> 66)
         assert x.shape[1] == 60
@@ -177,7 +179,6 @@ class ALDPFAB(BaseEnergy):
         x = self.inverse_scale_ind_circ(x)
         return x, log_det
 
-    def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
-        with temp_seed(seed or self.seed):
-            perm_idx = torch.randperm(self.approx_sample.shape[0])[:batch_size]
-        return self.approx_sample[perm_idx].to(self.device)
+    def energy_in_original_space(self, x: torch.Tensor) -> torch.Tensor:
+        assert x.shape[1] == 66
+        return self.p.norm_energy(x)
