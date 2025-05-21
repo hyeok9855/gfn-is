@@ -169,10 +169,10 @@ class Trainer:
                 loss = self.bwd_train_step(it)
 
         # MCMC buffer augmentation
-        if self.mcmc is not None and (it > 0 and it % self.mcmc_freq == 0):
+        if self.mcmc is not None and (it > 0 and (it - self.prefill_epochs) % self.mcmc_freq == 0):
             # TODO: support for intermediate states
             assert isinstance(self.buffer, TerminalStateBuffer)
-            assert self.buffer.prioritization in ["normalized_iw", "iw", "none"]
+            assert self.buffer.prioritization in ["normalized_iw", "iw", "none", "target"]
 
             buf_xs, _, indices = self.buffer.sample(self.mcmc_batch_size)
 
