@@ -20,8 +20,8 @@ class MD(BaseMCMC):
         step_size: float = 0.0005,
         **kwargs,
     ) -> None:
-        assert isinstance(self.energy, ALDPFAB)
         super().__init__(energy)
+        assert isinstance(self.energy, ALDPFAB)
         self.gamma = gamma
         self.burn_in = burn_in
         self.step_size = step_size

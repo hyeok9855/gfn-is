@@ -173,15 +173,14 @@ class Trainer:
             assert isinstance(self.buffer, TerminalStateBuffer)
             assert self.buffer.prioritization in ["normalized_iw", "none"]
 
-            buf_xs, _ = self.buffer.sample_terminal(self.batch_size * 2)
+            buf_xs, _ = self.buffer.sample_terminal(self.batch_size)
             # Augment the buffer with samples from MCMC
             mcmc_xs, mcmc_log_rs = self.mcmc_alg.sample(buf_xs)
-            normalized_iws = torch.ones_like(mcmc_log_rs, device=self.device) / (
-                self.batch_size * 2
-            )
             data_dict = {"states": mcmc_xs, "log_fs": mcmc_log_rs}
             if self.buffer.prioritization == "normalized_iw":
-                data_dict["normalized_iws"] = normalized_iws
+                data_dict["normalized_iws"] = (
+                    torch.ones_like(mcmc_log_rs, device=self.device) / self.batch_size
+                )
             self.buffer.add(**data_dict)
 
         if it < self.prefill_epochs or loss.isinf() or loss > 1e28:

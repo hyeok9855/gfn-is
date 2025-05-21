@@ -366,10 +366,11 @@ if __name__ == "__main__":
     ################################################################
     ### For MCMC
     parser.add_argument("--mcmc_type", type=str, default="none", choices=("none", "md", "mala"))
-    parser.add_argument("--mcmc_burn_in", type=int, default=100)
+    parser.add_argument("--mcmc_interval", type=int, default=100)
+    parser.add_argument("--mcmc_burn_in", type=int, default=50)
     parser.add_argument("--mcmc_max_iter_ls", type=int, default=100)
     parser.add_argument("--mcmc_step_size", type=float, default=0.0005)
-    parser.add_argument("--mcmc_gamma", type=float, default=0.01)  # for MD
+    parser.add_argument("--mcmc_gamma", type=float, default=1.0)  # for MD
     ################################################################
 
     ### Exploration with extra noise
