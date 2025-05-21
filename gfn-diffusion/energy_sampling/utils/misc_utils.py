@@ -109,6 +109,11 @@ def get_name(args: argparse.Namespace) -> str:
         if args.prioritization != "none":
             name += f"-{args.prioritization}-{args.buffer_sampling}"
 
+        if args.mcmc_type != "none":
+            name += f"_{args.mcmc_type}-{args.mcmc_burn_in}-{args.mcmc_max_iter_ls}-{args.mcmc_step_size}"
+            if args.mcmc_type == "md":
+                name += f"-gamma{args.mcmc_gamma}"
+
     name += f"_T{args.T}-{args.discretizer}"
     if args.discretizer == "random":
         name += f"-maxr{args.discretizer_max_ratio}"
