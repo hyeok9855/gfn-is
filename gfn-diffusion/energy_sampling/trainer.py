@@ -3,7 +3,7 @@ import warnings
 
 import torch
 
-from buffers import BaseBuffer, IntermediateStateBuffer, TerminalStateBuffer
+from buffers import BaseBuffer, GISTerminalStateBuffer, IntermediateStateBuffer, TerminalStateBuffer
 from energies import BaseEnergy, IntermediateEnergy
 from losses import cal_subtb_coef_matrix, get_loss
 from mcmcs import BaseMCMC
@@ -41,8 +41,9 @@ class Trainer:
         alternating: bool,
         target_ess: float,
         smoothing_strategy: Literal["temper", "clip_above", "clip_below"],
-        mcmc_interval: int,
-        mcmc_alg: BaseMCMC | None,
+        mcmc: BaseMCMC | None,
+        mcmc_freq: int,
+        mcmc_batch_size: int,
         epsilon: float,
         anneal_epsilon: bool,
         invtemp: float,
@@ -110,9 +111,9 @@ class Trainer:
         self.smoothing_strategy = smoothing_strategy
 
         # MCMC
-        self.mcmc_interval = mcmc_interval
-        self.mcmc_alg = mcmc_alg
-
+        self.mcmc = mcmc
+        self.mcmc_freq = mcmc_freq
+        self.mcmc_batch_size = mcmc_batch_size
         # Misc
         self.epsilon = epsilon
         self.anneal_epsilon = anneal_epsilon
@@ -168,19 +169,30 @@ class Trainer:
                 loss = self.bwd_train_step(it)
 
         # MCMC buffer augmentation
-        if self.mcmc_alg is not None and (it > 0 and it % self.mcmc_interval == 0):
+        if self.mcmc is not None and (it > 0 and it % self.mcmc_freq == 0):
             # TODO: support for intermediate states
             assert isinstance(self.buffer, TerminalStateBuffer)
-            assert self.buffer.prioritization in ["normalized_iw", "none"]
+            assert self.buffer.prioritization in ["normalized_iw", "iw", "none"]
 
-            buf_xs, _ = self.buffer.sample_terminal(self.batch_size)
+            buf_xs, _, indices = self.buffer.sample(self.mcmc_batch_size)
+
             # Augment the buffer with samples from MCMC
-            mcmc_xs, mcmc_log_rs = self.mcmc_alg.sample(buf_xs)
-            data_dict = {"states": mcmc_xs, "log_fs": mcmc_log_rs}
-            if self.buffer.prioritization == "normalized_iw":
-                data_dict["normalized_iws"] = (
-                    torch.ones_like(mcmc_log_rs, device=self.device) / self.batch_size
-                )
+            mcmc_xs, mcmc_log_rs = self.mcmc.sample(buf_xs)
+
+            data_dict = {
+                "states": mcmc_xs.reshape(-1, self.energy.ndim),
+                "log_fs": mcmc_log_rs.reshape(-1),
+            }
+
+            if isinstance(self.buffer, GISTerminalStateBuffer):
+                log_iws = self.buffer.log_iws_dataset[indices]
+                log_iws = log_iws.unsqueeze(0).repeat(mcmc_log_rs.shape[0], 1)
+                data_dict["log_iws"] = log_iws.reshape(-1)
+            elif self.buffer.normalized_iws_dataset is not None:
+                normalized_iws = self.buffer.normalized_iws_dataset[indices]
+                normalized_iws = normalized_iws.unsqueeze(0).repeat(mcmc_log_rs.shape[0], 1)
+                data_dict["normalized_iws"] = normalized_iws.reshape(-1)
+
             self.buffer.add(**data_dict)
 
         if loss.isnan():
@@ -407,19 +419,19 @@ class Trainer:
 
         metrics = {}
 
+        eval_batch_size = min(self.eval_batch_size, data_size)
+
         with torch.no_grad():
-            divisible = data_size % self.eval_batch_size == 0
-            n_epochs = data_size // self.eval_batch_size + (1 if not divisible else 0)
+            divisible = data_size % eval_batch_size == 0
+            n_epochs = data_size // eval_batch_size + (1 if not divisible else 0)
 
             model_trajs, log_pfs, log_pbs, log_fs, log_rewards = [], [], [], [], []
 
             for i in range(n_epochs):
-                init_state = torch.zeros(self.eval_batch_size, self.energy.ndim).to(
+                init_state = torch.zeros(eval_batch_size, self.energy.ndim).to(
                     self.gfn_model.device
                 )
-                ts = self.eval_discretizer(self.eval_batch_size, self.eval_T).to(
-                    self.gfn_model.device
-                )
+                ts = self.eval_discretizer(eval_batch_size, self.eval_T).to(self.gfn_model.device)
                 _model_trajs, _log_pfs, _log_pbs, _log_fs, _ = self.gfn_model.get_trajectory_fwd(
                     init_state, ts, epsilon=0.0, pis=self.loss_type == "pis"
                 )
@@ -440,11 +452,11 @@ class Trainer:
                 gt_xs, gt_log_rewards = self.energy.cached_sample(data_size)
                 gt_log_pfs, gt_log_pbs = [], []
                 for i in range(n_epochs):
-                    gt_xs_batch = gt_xs[i * self.eval_batch_size : (i + 1) * self.eval_batch_size]
+                    gt_xs_batch = gt_xs[i * eval_batch_size : (i + 1) * eval_batch_size]
                     gt_log_rewards_batch = gt_log_rewards[
-                        i * self.eval_batch_size : (i + 1) * self.eval_batch_size
+                        i * eval_batch_size : (i + 1) * eval_batch_size
                     ]
-                    ts = self.eval_discretizer(self.eval_batch_size, self.eval_T).to(
+                    ts = self.eval_discretizer(eval_batch_size, self.eval_T).to(
                         self.gfn_model.device
                     )
                     _, _log_pfs, _log_pbs, _ = self.gfn_model.get_trajectory_bwd(

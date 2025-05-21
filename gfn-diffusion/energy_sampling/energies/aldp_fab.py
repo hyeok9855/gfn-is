@@ -86,6 +86,7 @@ class ALDPFAB(BaseEnergy):
         ]
         self.mass = torch.tensor(mass, device=self.device).unsqueeze(0)
         self.kBT = 1.380649 * 6.02214076 * 1e-3 * temperature
+        self.beta = 1 / self.kBT
 
         cart_indices = [8, 6, 14]
 

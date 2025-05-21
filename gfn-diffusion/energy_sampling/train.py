@@ -102,10 +102,11 @@ def train(args):
         else:
             mcmc_args = {
                 "energy": energy,
-                "burn_in": args.mcmc_burn_in,
                 "max_iter_ls": args.mcmc_max_iter_ls,
+                "burn_in": args.mcmc_burn_in,
+                "thinning": args.mcmc_thinning,
                 "step_size": args.mcmc_step_size,
-                "gamma": args.mcmc_gamma,
+                "gamma": args.mcmc_gamma,  # For MD
             }
             if args.mcmc_type == "md":
                 mcmc = MD(**mcmc_args)
@@ -145,8 +146,9 @@ def train(args):
         alternating=args.alternating,
         target_ess=args.target_ess,
         smoothing_strategy=args.smoothing,
-        mcmc_interval=args.mcmc_interval,
-        mcmc_alg=mcmc,
+        mcmc=mcmc,
+        mcmc_freq=args.mcmc_freq,
+        mcmc_batch_size=args.mcmc_batch_size,
         invtemp=args.invtemp,
         invtemp_anneal=args.invtemp_anneal,
         eval_batch_size=args.eval_batch_size,
@@ -366,10 +368,12 @@ if __name__ == "__main__":
     ################################################################
     ### For MCMC
     parser.add_argument("--mcmc_type", type=str, default="none", choices=("none", "md", "mala"))
-    parser.add_argument("--mcmc_interval", type=int, default=100)
-    parser.add_argument("--mcmc_burn_in", type=int, default=50)
-    parser.add_argument("--mcmc_max_iter_ls", type=int, default=100)
-    parser.add_argument("--mcmc_step_size", type=float, default=0.0005)
+    parser.add_argument("--mcmc_freq", type=int, default=100)
+    parser.add_argument("--mcmc_batch_size", type=int, default=100)
+    parser.add_argument("--mcmc_max_iter_ls", type=int, default=1000)
+    parser.add_argument("--mcmc_burn_in", type=int, default=100)
+    parser.add_argument("--mcmc_thinning", type=int, default=1)
+    parser.add_argument("--mcmc_step_size", type=float, default=0.001)
     parser.add_argument("--mcmc_gamma", type=float, default=1.0)  # for MD
     ################################################################
 
