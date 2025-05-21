@@ -139,10 +139,14 @@ class ALDPFAB(BaseEnergy):
         self.ind_circ = dih_ind[ind_circ_dih].tolist()
 
         datas = [np.load(DATA_PATH / f"val_before_scale{i}.npy") for i in range(5)]
-        self.val_xs = torch.tensor(np.concatenate(datas, axis=0), dtype=dtype)
-        self.val_log_rs = torch.tensor(np.load(DATA_PATH / "val_log_rs.npy"), dtype=dtype)
+        self.approx_sample = torch.tensor(np.concatenate(datas, axis=0), dtype=dtype)
+
+    def energy_in_original_space(self, x: torch.Tensor) -> torch.Tensor:
+        assert x.shape[1] == 66
+        return self.p.norm_energy(x)
 
     def scale_ind_circ(self, x: torch.Tensor) -> torch.Tensor:
+        assert x.shape[1] == 60
         copy_x = x.clone()
         copy_x[:, self.ind_circ] = torch.clamp(
             torch.tanh(copy_x[:, self.ind_circ]) * (math.pi + 0.01), min=-math.pi, max=math.pi
@@ -150,39 +154,30 @@ class ALDPFAB(BaseEnergy):
         return copy_x
 
     def inverse_scale_ind_circ(self, x: torch.Tensor) -> torch.Tensor:
+        assert x.shape[1] == 66
         copy_x = x.clone()
         copy_x[:, self.ind_circ] = torch.atanh(copy_x[:, self.ind_circ] / (math.pi + 0.01))
         return copy_x
 
     def energy(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (batch_size, 60)
+        assert x.shape[1] == 60
         x = self.scale_ind_circ(x)
         return -self.p.log_prob(x)
 
-    def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
-        with temp_seed(seed or self.seed):
-            perm_idx = torch.randperm(self.val_xs.shape[0])[:batch_size]
-        return self.val_xs[perm_idx].to(self.device)
-
-    def cached_sample(
-        self, batch_size: int, seed: int | None = None
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if self.gt_xs is None or batch_size != self.gt_xs.size(0):
-            with temp_seed(seed or self.seed):
-                perm_idx = torch.randperm(self.val_xs.shape[0])[:batch_size]
-            self.gt_xs = self.val_xs[perm_idx].to(self.device)
-            self.gt_xs_log_rewards = self.val_log_rs[perm_idx].to(self.device)
-        assert self.gt_xs is not None and self.gt_xs_log_rewards is not None
-        return self.gt_xs, self.gt_xs_log_rewards
-
     def transform(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (batch_size, 60)
-        x = self.scale_ind_circ(x)
+        # scale_ind_circ --> (60 -> 66)
         assert x.shape[1] == 60
+        x = self.scale_ind_circ(x)
         return self.coordinate_transform(x)[0]  # (batch_size, 66)
 
     def inverse(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        # (66 -> 60) --> inverse_scale_ind_circ
         assert x.shape[1] == 66
         x, log_det = self.coordinate_transform.inverse(x)
         x = self.inverse_scale_ind_circ(x)
         return x, log_det
+
+    def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
+        with temp_seed(seed or self.seed):
+            perm_idx = torch.randperm(self.approx_sample.shape[0])[:batch_size]
+        return self.approx_sample[perm_idx].to(self.device)
