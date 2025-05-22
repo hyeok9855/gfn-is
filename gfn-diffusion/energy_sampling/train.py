@@ -93,7 +93,7 @@ def train(args):
             prioritization=args.prioritization,
             sampling_func=get_sampling_func(args.buffer_sampling, args.rank_k),
             logr_lb=args.logr_lb,
-            smoothing_strategy=args.smoothing,
+            smoothing_strategy=args.smoothing_strategy,
             target_ess=args.target_ess,
         )
 
@@ -143,7 +143,7 @@ def train(args):
         resampling_strategy=args.resampling_strategy,
         alternating=args.alternating,
         target_ess=args.target_ess,
-        smoothing_strategy=args.smoothing,
+        smoothing_strategy=args.smoothing_strategy,
         mcmc=mcmc,
         mcmc_freq=args.mcmc_freq,
         mcmc_batch_size=args.mcmc_batch_size,
@@ -414,7 +414,7 @@ if __name__ == "__main__":
     parser.add_argument("--alternating", action="store_true", default=False)
     parser.add_argument("--target_ess", type=float, default=0.0)  # 0.0 has no effect
     parser.add_argument(
-        "--smoothing",
+        "--smoothing_strategy",
         type=str,
         default="temper",
         choices=("clip_above", "clip_below", "temper", "mix_with_uniform"),

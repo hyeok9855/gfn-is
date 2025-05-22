@@ -99,6 +99,20 @@ def get_name(args: argparse.Namespace) -> str:
     if args.use_scheduler:
         name += f"-lrsch"
 
+    name += f"_T{args.T}-{args.discretizer}"
+    if args.discretizer == "random":
+        name += f"-maxr{args.discretizer_max_ratio}"
+
+    if args.epsilon > 0.0:
+        name += f"_eps{args.epsilon}"
+        if args.anneal_epsilon:
+            name += f"-annealed"
+
+    if args.invtemp != 1.0:
+        name += f"_invtemp{args.invtemp}"
+        if args.invtemp_anneal:
+            name += "-annealed"
+
     if args.use_buffer:
         name += f"_btf{args.bwd_to_fwd_ratio}"
         name += f"-buf{args.buffer_type}"
@@ -115,20 +129,6 @@ def get_name(args: argparse.Namespace) -> str:
             if args.mcmc_type == "md":
                 name += f"-gamma{args.mcmc_gamma}"
 
-    name += f"_T{args.T}-{args.discretizer}"
-    if args.discretizer == "random":
-        name += f"-maxr{args.discretizer_max_ratio}"
-
-    if args.epsilon > 0.0:
-        name += f"_eps{args.epsilon}"
-        if args.anneal_epsilon:
-            name += f"-annealed"
-
-    if args.invtemp != 1.0:
-        name += f"_invtemp{args.invtemp}"
-        if args.invtemp_anneal:
-            name += "-annealed"
-
     if args.train_resampling or args.train_weighting:
         if args.train_resampling:
             name += "_resampling"
@@ -138,7 +138,7 @@ def get_name(args: argparse.Namespace) -> str:
             name += "-alt"
 
     if args.target_ess != 0.0:
-        name += f"_tgtess{args.target_ess}-{args.smoothing}"
+        name += f"_tgtess{args.target_ess}-{args.smoothing_strategy}"
 
     name += f"_{args.exp_name}" if args.exp_name else ""
 
