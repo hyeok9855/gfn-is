@@ -115,15 +115,17 @@ class Trainer:
         self.mcmc = mcmc
         self.mcmc_freq = mcmc_freq
         self.mcmc_batch_size = mcmc_batch_size
+
         # Misc
         self.epsilon = epsilon
         self.anneal_epsilon = anneal_epsilon
         self.invtemp = invtemp
         self.invtemp_anneal = invtemp_anneal
         self.init_log_Z_with_elbo = init_log_Z_with_elbo and loss_type == "tb"
-        self.init_log_Z_log_iws = None
+        self.init_log_Z_ratios = self.init_log_Z_log_rs = None
         if self.init_log_Z_with_elbo:
-            self.init_log_Z_log_iws = torch.zeros((0,)).to(self.device)
+            self.init_log_Z_ratios = torch.zeros((0,)).to(self.device)
+            self.init_log_Z_log_rs = torch.zeros((0,)).to(self.device)
 
         # Eval and Plot
         self.eval_batch_size = eval_batch_size
@@ -302,12 +304,10 @@ class Trainer:
 
         # Initialize flow with unbiased estimator
         if self.init_log_Z_with_elbo:
-            assert self.init_log_Z_log_iws is not None
-            if log_iws_0t is None:
-                log_iws = (log_fs[:, -1] + log_pbs.sum(-1) - log_pfs_exp.sum(-1)).detach()
-            else:
-                log_iws = log_iws_0t[:, -1]
-            self.init_log_Z_log_iws = torch.cat([self.init_log_Z_log_iws, log_iws], dim=0)
+            assert self.init_log_Z_ratios is not None and self.init_log_Z_log_rs is not None
+            ratios = (log_pbs.sum(-1) - log_pfs_exp.sum(-1)).detach()
+            self.init_log_Z_ratios = torch.cat([self.init_log_Z_ratios, ratios], dim=0)
+            self.init_log_Z_log_rs = torch.cat([self.init_log_Z_log_rs, log_fs[:, -1]], dim=0)
 
             # When using buffer, we wait until the prefill_epochs
             if self.buffer is not None and it == (self.prefill_epochs - 1):
@@ -317,8 +317,10 @@ class Trainer:
                 self.init_log_Z_with_elbo = False
 
             if not self.init_log_Z_with_elbo:
-                self.gfn_model.pred_module.set_log_Z(self.init_log_Z_log_iws.mean().item())
-                del self.init_log_Z_log_iws
+                log_iws = self.init_log_Z_ratios + (self.init_log_Z_log_rs * self.energy.invtemp)
+                self.gfn_model.pred_module.set_log_Z(log_iws.mean().item())
+                del self.init_log_Z_ratios
+                del self.init_log_Z_log_rs
 
         return loss
 
