@@ -276,11 +276,11 @@ def viz_manywell(
             energy, (idx1, idx2), samples, weights=weights, lim=lim, kde=False
         )
         out_dict.update(
-            {
-                f"visualization/kde{idx1}{idx2}": wandb.Image(fig_to_image(fig_kde)),
-                f"visualization/contour{idx1}{idx2}": wandb.Image(fig_to_image(fig_contour)),
-            }
+            {f"visualization/contour{idx1}{idx2}": wandb.Image(fig_to_image(fig_contour))}
         )
+        if fig_kde is not None:
+            out_dict.update({f"visualization/kde{idx1}{idx2}": wandb.Image(fig_to_image(fig_kde))})
+
     out_dict.update(viz_energy_hist(energy, samples))
     return out_dict
 
@@ -296,13 +296,11 @@ def viz_funnel(
         fig_kde, fig_contour = viz_2d_slice(
             energy, (0, i), samples, weights=weights, lim=lim, kde=False
         )
-        out_dict.update(
-            {
-                f"visualization/kde0{i}": wandb.Image(fig_to_image(fig_kde)),
-                f"visualization/contour0{i}": wandb.Image(fig_to_image(fig_contour)),
-            }
-        )
+        out_dict.update({f"visualization/contour0{i}": wandb.Image(fig_to_image(fig_contour))})
+        if fig_kde is not None:
+            out_dict.update({f"visualization/kde0{i}": wandb.Image(fig_to_image(fig_kde))})
 
+    out_dict.update(viz_energy_hist(energy, samples))
     return out_dict
 
 
@@ -318,14 +316,12 @@ def viz_gmm(
             energy, (i - 1, i), samples, weights=weights, lim=lim, n_contour_levels=100, kde=False
         )
         out_dict.update(
-            {
-                f"visualization/kde{i - 1}{i}": wandb.Image(fig_to_image(fig_kde)),
-                f"visualization/contour{i - 1}{i}": wandb.Image(fig_to_image(fig_contour)),
-            }
+            {f"visualization/contour{i - 1}{i}": wandb.Image(fig_to_image(fig_contour))}
         )
-        plt.close(fig_kde)
-        plt.close(fig_contour)
+        if fig_kde is not None:
+            out_dict.update({f"visualization/kde{i - 1}{i}": wandb.Image(fig_to_image(fig_kde))})
 
+    out_dict.update(viz_energy_hist(energy, samples))
     return out_dict
 
 
