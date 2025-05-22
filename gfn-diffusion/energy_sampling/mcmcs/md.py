@@ -1,14 +1,10 @@
 import math
-from typing import TYPE_CHECKING
 
 import torch
 from tqdm import trange
 
-from energies.aldp_fab import ALDPFAB
+from energies import ALDPFAB
 from mcmcs.base import BaseMCMC
-
-if TYPE_CHECKING:
-    from energies import ALDPFAB
 
 
 class MD(BaseMCMC):
