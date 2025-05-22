@@ -20,7 +20,7 @@ class ALDPFAB(BaseEnergy):
         self,
         device: str | torch.device = "cpu",
         temperature=300,
-        energy_cut=1.0e6,  # 1e8 in FAB
+        energy_cut=1.0e5,  # 1e8 in FAB
         energy_max=1.0e20,  # 1e20 in FAB
         n_threads=6,
         ind_circ_dih=[0, 1, 2, 3, 4, 5, 8, 9, 10, 13, 15, 16],
@@ -28,15 +28,9 @@ class ALDPFAB(BaseEnergy):
         shift_dih_params={"hist_bins": 100},
         default_std={"bond": 0.005, "angle": 0.15, "dih": 0.2},
         env="implicit",
-        ref_gaussian_var: float = 1.0,
         seed: int = 0,
     ):
-        super().__init__(
-            device=device,
-            ndim=60,
-            ref_gaussian_var=ref_gaussian_var,
-            seed=seed,
-        )  # 60 is before transform
+        super().__init__(device=device, ndim=60, seed=seed)  # 60 since we use internal coordinates
 
         # Define molecule parameters
         z_matrix = [

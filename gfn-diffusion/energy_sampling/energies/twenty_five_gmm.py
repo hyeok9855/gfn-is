@@ -9,17 +9,10 @@ class TwentyFiveGaussianMixture(BaseEnergy):
     def __init__(
         self,
         device: str | torch.device,
-        ref_gaussian_var: float = 1.0,
         seed: int = 0,
     ) -> None:
         ndim = 2
-        super().__init__(
-            device=device,
-            ndim=ndim,
-            ref_gaussian_var=ref_gaussian_var,
-            seed=seed,
-            plot_bound=13.0,
-        )
+        super().__init__(device=device, ndim=ndim, seed=seed, plot_bound=13.0)
 
         self.nmode = 25
         modes = torch.Tensor([(a, b) for a in [-10, -5, 0, 5, 10] for b in [-10, -5, 0, 5, 10]]).to(

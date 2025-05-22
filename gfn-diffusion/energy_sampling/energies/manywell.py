@@ -34,16 +34,9 @@ class ManyWell(BaseEnergy):
         self,
         device: str | torch.device,
         ndim=32,
-        ref_gaussian_var: float = 1.0,
         seed: int = 0,
     ) -> None:
-        super().__init__(
-            device=device,
-            ndim=ndim,
-            ref_gaussian_var=ref_gaussian_var,
-            seed=seed,
-            plot_bound=3.0,
-        )
+        super().__init__(device=device, ndim=ndim, seed=seed, plot_bound=3.0)
 
         assert ndim % 2 == 0
         self.n_wells = ndim // 2

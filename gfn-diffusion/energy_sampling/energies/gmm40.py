@@ -14,16 +14,9 @@ class GMM40(BaseEnergy):
         num_components: int = 40,
         loc_scaling: float = 40.0,
         scale_scaling: float = 1.0,
-        ref_gaussian_var: float = 1.0,
         seed: int = 0,
     ) -> None:
-        super().__init__(
-            device=device,
-            ndim=ndim,
-            ref_gaussian_var=ref_gaussian_var,
-            seed=seed,
-            plot_bound=loc_scaling * 1.4,
-        )
+        super().__init__(device=device, ndim=ndim, seed=seed, plot_bound=loc_scaling * 1.4)
 
         try:
             locs = torch.from_numpy(np.load(f"energies/data/gmm40-{ndim}d_locs.npy"))

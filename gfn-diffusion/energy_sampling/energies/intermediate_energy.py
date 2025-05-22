@@ -9,7 +9,6 @@ class IntermediateEnergy(BaseEnergy):
         super().__init__(
             device=target_energy.device,
             ndim=target_energy.ndim,
-            ref_gaussian_var=target_energy.ref_gaussian_var,
             seed=target_energy.seed,
             plot_bound=target_energy.plot_bound,
         )

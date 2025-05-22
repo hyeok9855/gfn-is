@@ -149,7 +149,7 @@ def train(args):
         mcmc_batch_size=args.mcmc_batch_size,
         invtemp=args.invtemp,
         invtemp_anneal=args.invtemp_anneal,
-        init_log_Z_with_unbiased_estimator=args.init_log_Z_with_unbiased_estimator,
+        init_log_Z_with_elbo=args.init_log_Z_with_elbo,
         eval_batch_size=args.eval_batch_size,
         eval_discretizer=eval_discretizer,
         eval_T=args.eval_T,
@@ -250,9 +250,7 @@ if __name__ == "__main__":
     parser.add_argument("--subtb_n_chunks", type=int, default=0)
     parser.add_argument("--sublogvar_K", type=int, default=1)
     parser.add_argument(
-        "--no_init_log_Z_with_unbiased_estimator",
-        action="store_false",
-        dest="init_log_Z_with_unbiased_estimator",
+        "--no_init_log_Z_with_elbo", action="store_false", dest="init_log_Z_with_elbo"
     )
 
     parser.add_argument("--lr_fwd", type=float, default=1e-3)

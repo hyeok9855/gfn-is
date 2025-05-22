@@ -9,7 +9,7 @@ from losses import cal_subtb_coef_matrix, get_loss
 from mcmcs import BaseMCMC
 from models import GFN
 from utils.eval_utils import density_metrics, distribution_distance_metrics
-from utils.misc_utils import linear_annealing, logmeanexp
+from utils.misc_utils import linear_annealing
 from utils.plot_utils import visualize
 from utils.sampling_utils import get_sampling_func
 from utils.train_utils import binary_search_smoothing
@@ -48,7 +48,7 @@ class Trainer:
         anneal_epsilon: bool,
         invtemp: float,
         invtemp_anneal: bool,
-        init_log_Z_with_unbiased_estimator: bool,
+        init_log_Z_with_elbo: bool,
         eval_batch_size: int,
         eval_discretizer: Callable[[int, int], torch.Tensor],
         eval_T: int,
@@ -120,11 +120,9 @@ class Trainer:
         self.anneal_epsilon = anneal_epsilon
         self.invtemp = invtemp
         self.invtemp_anneal = invtemp_anneal
-        self.init_log_Z_with_unbiased_estimator = init_log_Z_with_unbiased_estimator and (
-            loss_type == "tb"
-        )
+        self.init_log_Z_with_elbo = init_log_Z_with_elbo and loss_type == "tb"
         self.init_log_Z_log_iws = None
-        if self.init_log_Z_with_unbiased_estimator:
+        if self.init_log_Z_with_elbo:
             self.init_log_Z_log_iws = torch.zeros((0,)).to(self.device)
 
         # Eval and Plot
@@ -150,17 +148,10 @@ class Trainer:
         self.energy.invtemp = (
             self.invtemp
             if not self.invtemp_anneal
-            else linear_annealing(it, int(0.8 * self.n_epochs), self.invtemp, 1.0, descending=False)
+            else linear_annealing(
+                it, int(0.5 * self.n_epochs), self.invtemp, 1.0, descending=False, avoid_zero=True
+            )
         )
-
-        if it < self.prefill_epochs:
-            # Prefill buffer with forward sampling
-            assert self.buffer is not None
-            loss = self.fwd_train_step(it)
-        elif it == self.prefill_epochs:
-            # We initialize the flow_model with unbiased estimator of the log-partition function
-            # TODO, after implementing GIS-like buffer
-            pass
 
         if self.loss_type == "mle":
             loss = self.bwd_train_step(it)
@@ -202,11 +193,13 @@ class Trainer:
 
             self.buffer.add(**data_dict)
 
-        if loss.isnan():
-            raise ValueError(f"Loss is NaN")
-
-        if it < self.prefill_epochs or loss.isinf() or loss > 1e28:
+        if it < self.prefill_epochs:
             return loss.item()
+        elif loss.isinf() or loss > 1e28:
+            print(f"Loss is inf or too large: {loss.item()}; skipping this batch...")
+            return loss.item()
+        elif loss.isnan():
+            raise ValueError(f"Loss is NaN")
 
         loss.backward()
         if self.clip_grad_norm > 0.0:
@@ -308,7 +301,7 @@ class Trainer:
             self._alternating_flag = not self._alternating_flag
 
         # Initialize flow with unbiased estimator
-        if self.init_log_Z_with_unbiased_estimator:
+        if self.init_log_Z_with_elbo:
             assert self.init_log_Z_log_iws is not None
             if log_iws_0t is None:
                 log_iws = (log_fs[:, -1] + log_pbs.sum(-1) - log_pfs_exp.sum(-1)).detach()
@@ -318,13 +311,13 @@ class Trainer:
 
             # When using buffer, we wait until the prefill_epochs
             if self.buffer is not None and it == (self.prefill_epochs - 1):
-                self.init_log_Z_with_unbiased_estimator = False
+                self.init_log_Z_with_elbo = False
             # When not using buffer, we initialize the flow with unbiased estimator
             elif self.buffer is None and it == 0:
-                self.init_log_Z_with_unbiased_estimator = False
+                self.init_log_Z_with_elbo = False
 
-            if not self.init_log_Z_with_unbiased_estimator:
-                self.gfn_model.pred_module.set_log_Z(logmeanexp(self.init_log_Z_log_iws).item())
+            if not self.init_log_Z_with_elbo:
+                self.gfn_model.pred_module.set_log_Z(self.init_log_Z_log_iws.mean().item())
                 del self.init_log_Z_log_iws
 
         return loss

@@ -9,7 +9,6 @@ class BaseEnergy(abc.ABC):
         self,
         device: str | torch.device,
         ndim: int,
-        ref_gaussian_var: float = 1.0,
         seed: int = 0,
         plot_bound: float = 1.0,
     ) -> None:
@@ -20,11 +19,6 @@ class BaseEnergy(abc.ABC):
         self.gt_xs: torch.Tensor | None = None
         self.gt_xs_log_rewards: torch.Tensor | None = None
         self._invtemp = 1.0
-        self.ref_gaussian_var = ref_gaussian_var
-        self.ref_gaussian: D.Normal = D.Normal(
-            torch.zeros(ndim, device=device),
-            torch.ones(ndim, device=device) * (ref_gaussian_var**0.5),
-        )
 
     @property
     def invtemp(self) -> float:
@@ -41,9 +35,7 @@ class BaseEnergy(abc.ABC):
     def log_reward(self, x: torch.Tensor, temper: bool = True) -> torch.Tensor:
         log_r = -self.energy(x)
         if temper:
-            return self.invtemp * log_r + (1 - self.invtemp) * self.ref_gaussian.log_prob(x).sum(
-                dim=-1
-            )
+            return self.invtemp * log_r
         return log_r
 
     def grad_log_reward(self, x: torch.Tensor, temper: bool = True) -> torch.Tensor:

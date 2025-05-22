@@ -15,7 +15,7 @@ DATA_PATH = Path(__file__).parent / "data" / "aldp"
 
 
 class ALDP(BaseEnergy):
-    def __init__(self, device: str | torch.device, ref_gaussian_var: float = 1.0, seed: int = 0):
+    def __init__(self, device: str | torch.device, seed: int = 0):
 
         molecule = read(DATA_PATH / "aldp.pdb")
         atomic_numbers = molecule.get_atomic_numbers()  # type: ignore
@@ -23,12 +23,7 @@ class ALDP(BaseEnergy):
         self.n_particles = len(atomic_numbers)
         self.spatial_dim = 3
 
-        super().__init__(
-            device=device,
-            ndim=self.n_particles * self.spatial_dim,
-            ref_gaussian_var=ref_gaussian_var,
-            seed=seed,
-        )
+        super().__init__(device=device, ndim=self.n_particles * self.spatial_dim, seed=seed)
 
         self.model = torchani.models.ANI2x().to(self.device)
         atomic_symbols = [chemical_symbols[z] for z in atomic_numbers]
