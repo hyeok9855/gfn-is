@@ -97,9 +97,7 @@ def train(args):
             target_ess=args.target_ess,
         )
 
-        if args.mcmc_type == "none":
-            mcmc = None
-        else:
+        if args.mcmc_type != "none":
             mcmc_args = {
                 "energy": energy,
                 "max_iter_ls": args.mcmc_max_iter_ls,

@@ -403,7 +403,9 @@ class Trainer:
             data_size, full_eval, final_eval
         )
         if plot:
-            images = self.plot_step(model_trajs, weights, sample_xs_r, buffer_xs, self.plot_gt)
+            images = self.plot_step(
+                model_trajs, weights, sample_xs_r, buffer_xs, self.plot_gt or final_eval
+            )
             metrics.update(images)
             self.plot_gt = False  # disable plotting gt after first plot
         return metrics
@@ -494,38 +496,37 @@ class Trainer:
 
         metrics = {f"eval/{k}": v for k, v in metrics.items()}
 
-        ### Resample or weighted
+        ### Weighted or resampled
         weights = (log_rewards + log_pbs.sum(-1) - log_pfs.sum(-1)).softmax(0)
+        if self.eval_weighting and full_eval:
+            assert gt_xs is not None
+            metrics_w = distribution_distance_metrics(sample_xs, gt_xs, weights=weights)
+            metrics_w = {f"eval_weighted/{k}": v for k, v in metrics_w.items()}
+            metrics.update(metrics_w)
+
         sample_xs_r = None
-        if self.eval_resampling and full_eval:
+        if self.eval_resampling:
             # We can't use `estimate_partition_function` with resampled trajectories
             # since we don't know the distribution of the resampled trajectories
             assert gt_xs is not None
-            metrics_r = {}
             sampled_idx = get_sampling_func(self.resampling_strategy)(  # type: ignore
                 weights, data_size, True
             )
             model_trajs_r = model_trajs[sampled_idx]
             sample_xs_r = model_trajs_r[:, -1]
-            metrics_r.update(distribution_distance_metrics(sample_xs_r, gt_xs))
-            metrics_r = {f"eval_resampled/{k}": v for k, v in metrics_r.items()}
-            metrics.update(metrics_r)
-
-        if self.eval_weighting and full_eval:
-            assert gt_xs is not None
-            metrics_w = {}
-            metrics_w.update(distribution_distance_metrics(sample_xs, gt_xs, weights=weights))
-            metrics_w = {f"eval_weighted/{k}": v for k, v in metrics_w.items()}
-            metrics.update(metrics_w)
+            if full_eval:
+                metrics_r = distribution_distance_metrics(sample_xs_r, gt_xs)
+                metrics_r = {f"eval_resampled/{k}": v for k, v in metrics_r.items()}
+                metrics.update(metrics_r)
 
         buffer_xs = None
-        if self.buffer is not None and len(self.buffer) > 0 and full_eval:
+        if self.buffer is not None and len(self.buffer) > 0:
             assert gt_xs is not None
             buffer_xs, _ = self.buffer.sample_terminal(data_size)
-            metrics_b = {}
-            metrics_b.update(distribution_distance_metrics(buffer_xs, gt_xs))
-            metrics_b = {f"eval_buffer/{k}": v for k, v in metrics_b.items()}
-            metrics.update(metrics_b)
+            if full_eval:
+                metrics_b = distribution_distance_metrics(buffer_xs, gt_xs)
+                metrics_b = {f"eval_buffer/{k}": v for k, v in metrics_b.items()}
+                metrics.update(metrics_b)
 
         if final_eval:
             metrics = {k.replace("eval", "final_eval"): v for k, v in metrics.items()}
