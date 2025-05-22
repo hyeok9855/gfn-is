@@ -272,7 +272,9 @@ def viz_manywell(
     lim = energy.plot_bound
     out_dict = {}
     for idx1, idx2 in [(0, 2), (1, 2)]:
-        fig_kde, fig_contour = viz_2d_slice(energy, (idx1, idx2), samples, weights=weights, lim=lim)
+        fig_kde, fig_contour = viz_2d_slice(
+            energy, (idx1, idx2), samples, weights=weights, lim=lim, kde=False
+        )
         out_dict.update(
             {
                 f"visualization/kde{idx1}{idx2}": wandb.Image(fig_to_image(fig_kde)),
@@ -291,7 +293,9 @@ def viz_funnel(
     lim = energy.plot_bound
     out_dict = {}
     for i in range(1, 3):
-        fig_kde, fig_contour = viz_2d_slice(energy, (0, i), samples, weights=weights, lim=lim)
+        fig_kde, fig_contour = viz_2d_slice(
+            energy, (0, i), samples, weights=weights, lim=lim, kde=False
+        )
         out_dict.update(
             {
                 f"visualization/kde0{i}": wandb.Image(fig_to_image(fig_kde)),
@@ -311,7 +315,7 @@ def viz_gmm(
     out_dict = {}
     for i in range(1, min(energy.ndim, 4), 2):
         fig_kde, fig_contour = viz_2d_slice(
-            energy, (i - 1, i), samples, weights=weights, lim=lim, n_contour_levels=100
+            energy, (i - 1, i), samples, weights=weights, lim=lim, n_contour_levels=100, kde=False
         )
         out_dict.update(
             {
