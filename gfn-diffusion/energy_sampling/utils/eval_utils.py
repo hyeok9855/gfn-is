@@ -295,32 +295,33 @@ def distribution_distance_metrics(
     sinkhorn = wasserstein(pred_np, true_np, weights=weights_np, method="sinkhorn")
     metrics.update({"1-Wasserstein": w1, "2-Wasserstein": w2, "Sinkhorn": sinkhorn})
 
-    if weights is not None:
-        return metrics
-
-    mmd_linear = linear_mmd2(pred, true).item()
-    mmd_poly = poly_mmd2(pred, true, d=2, alpha=1.0, c=2.0).item()
-    mmd_rbf = mix_rbf_mmd2(pred, true, sigma_list=[0.01, 0.1, 1, 10, 100]).item()
-
-    mean_mse, mean_l2, mean_l1 = vector_distances(torch.mean(pred, dim=0), torch.mean(true, dim=0))
-    median_mse, median_l2, median_l1 = vector_distances(
-        torch.median(pred, dim=0)[0], torch.median(true, dim=0)[0]
-    )
-
-    metrics.update(
-        {
-            "Linear_MMD": mmd_linear,
-            "Poly_MMD": mmd_poly,
-            "RBF_MMD": mmd_rbf,
-            "Mean_MSE": mean_mse,
-            "Mean_L2": mean_l2,
-            "Mean_L1": mean_l1,
-            "Median_MSE": median_mse,
-            "Median_L2": median_l2,
-            "Median_L1": median_l1,
-        }
-    )
     return metrics
+    # if weights is not None:
+    #     return metrics
+
+    # mmd_linear = linear_mmd2(pred, true).item()
+    # mmd_poly = poly_mmd2(pred, true, d=2, alpha=1.0, c=2.0).item()
+    # mmd_rbf = mix_rbf_mmd2(pred, true, sigma_list=[0.01, 0.1, 1, 10, 100]).item()
+
+    # mean_mse, mean_l2, mean_l1 = vector_distances(torch.mean(pred, dim=0), torch.mean(true, dim=0))
+    # median_mse, median_l2, median_l1 = vector_distances(
+    #     torch.median(pred, dim=0)[0], torch.median(true, dim=0)[0]
+    # )
+
+    # metrics.update(
+    #     {
+    #         "Linear_MMD": mmd_linear,
+    #         "Poly_MMD": mmd_poly,
+    #         "RBF_MMD": mmd_rbf,
+    #         "Mean_MSE": mean_mse,
+    #         "Mean_L2": mean_l2,
+    #         "Mean_L1": mean_l1,
+    #         "Median_MSE": median_mse,
+    #         "Median_L2": median_l2,
+    #         "Median_L1": median_l1,
+    #     }
+    # )
+    # return metrics
 
 
 def density_metrics(
