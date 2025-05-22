@@ -19,11 +19,11 @@ class IntermediateEnergy(BaseEnergy):
     def energy(self, states: torch.Tensor) -> torch.Tensor:
         return -self.log_reward(states)
 
-    def log_reward(self, states: torch.Tensor, temper: bool = False) -> torch.Tensor:
+    def log_reward(self, states: torch.Tensor) -> torch.Tensor:
         # states: (bsz, ndim)
 
         if self.t == 1.0:
-            log_fs = self.target_energy.log_reward(states, temper=temper)
+            log_fs = self.target_energy.log_reward(states)
             return log_fs
 
         ts = torch.ones_like(states[:, 0]) * self.t

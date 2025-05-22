@@ -117,9 +117,9 @@ class Trainer:
         self.mcmc_batch_size = mcmc_batch_size
 
         # Misc
-        self.epsilon = epsilon
+        self._epsilon = epsilon
         self.anneal_epsilon = anneal_epsilon
-        self.invtemp = invtemp
+        self._invtemp = invtemp
         self.invtemp_anneal = invtemp_anneal
         self.init_log_Z_with_elbo = init_log_Z_with_elbo and loss_type == "tb"
         self.init_log_Z_ratios = self.init_log_Z_log_rs = None
@@ -145,15 +145,20 @@ class Trainer:
     def resampling(self) -> bool:
         return self._resampling and self._alternating_flag
 
+    def get_invtemp(self, it: int) -> float:
+        if not self.invtemp_anneal:
+            return self._invtemp
+        return linear_annealing(
+            it, int(0.5 * self.n_epochs), self._invtemp, 1.0, descending=False, avoid_zero=True
+        )
+
+    def get_epsilon(self, it: int) -> float:
+        if not self.anneal_epsilon:
+            return self._epsilon
+        return linear_annealing(it, int(0.5 * self.n_epochs), 0.0, self._epsilon, descending=True)
+
     def train_step(self, it: int) -> float:
         self.gfn_model.train()
-        self.energy.invtemp = (
-            self.invtemp
-            if not self.invtemp_anneal
-            else linear_annealing(
-                it, int(0.5 * self.n_epochs), self.invtemp, 1.0, descending=False, avoid_zero=True
-            )
-        )
 
         if self.loss_type == "mle":
             loss = self.bwd_train_step(it)
@@ -216,15 +221,10 @@ class Trainer:
     def fwd_train_step(self, it: int) -> torch.Tensor:
         init_states = torch.zeros(self.batch_size, self.energy.ndim).to(self.device)
         ts = self.train_discretizer(self.batch_size, self.train_T).to(self.device)
-        epsilon = (
-            self.epsilon
-            if not self.anneal_epsilon
-            else linear_annealing(it, int(self.n_epochs * 0.8), 0.0, self.epsilon, descending=True)
-        )
 
         # Forward sampling
         states, log_pfs, log_pbs, log_fs, log_pfs_exp = self.gfn_model.get_trajectory_fwd(
-            init_states, ts, epsilon=epsilon, pis=self.loss_type == "pis"
+            init_states, ts, epsilon=self.get_epsilon(it), pis=self.loss_type == "pis"
         )
 
         # Compute losses
@@ -233,6 +233,7 @@ class Trainer:
             log_pfs,
             log_pbs,
             log_fs,
+            invtemp=self.get_invtemp(it),
             subtb_coef_matrix=self.subtb_coef_matrix,
             subtb_n_chunks=self.subtb_n_chunks,
             ndim=self.energy.ndim,
@@ -317,7 +318,7 @@ class Trainer:
                 self.init_log_Z_with_elbo = False
 
             if not self.init_log_Z_with_elbo:
-                log_iws = self.init_log_Z_ratios + (self.init_log_Z_log_rs * self.energy.invtemp)
+                log_iws = self.init_log_Z_ratios + (self.init_log_Z_log_rs * self.get_invtemp(it))
                 self.gfn_model.pred_module.set_log_Z(log_iws.mean().item())
                 del self.init_log_Z_ratios
                 del self.init_log_Z_log_rs
@@ -401,6 +402,7 @@ class Trainer:
                 log_pfs,
                 log_pbs,
                 log_fs,
+                invtemp=self.get_invtemp(it),
                 subtb_coef_matrix=self.subtb_coef_matrix,
                 subtb_n_chunks=self.subtb_n_chunks,
                 ndim=self.energy.ndim,
@@ -459,7 +461,7 @@ class Trainer:
                 _model_trajs, _log_pfs, _log_pbs, _log_fs, _ = self.gfn_model.get_trajectory_fwd(
                     init_state, ts, epsilon=0.0, pis=self.loss_type == "pis"
                 )
-                _log_rewards = self.energy.log_reward(_model_trajs[:, -1], temper=False)
+                _log_rewards = self.energy.log_reward(_model_trajs[:, -1])
                 model_trajs.append(_model_trajs)
                 log_pfs.append(_log_pfs)
                 log_pbs.append(_log_pbs)

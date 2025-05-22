@@ -82,6 +82,7 @@ def get_loss(
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
     log_fs: torch.Tensor,
+    invtemp: float = 1.0,
     subtb_coef_matrix: torch.Tensor | None = None,
     subtb_n_chunks: int = 0,
     ndim: int | None = None,
@@ -89,6 +90,9 @@ def get_loss(
     ts: torch.Tensor | None = None,
     curr_t: torch.Tensor | None = None,
 ) -> torch.Tensor:
+    # Apply inverse temperature to the log reward
+    log_fs[:, -1] = log_fs[:, -1] * invtemp
+
     if loss_type == "tb":
         losses = tb_loss(log_pfs, log_pbs, log_fs[:, 0], log_fs[:, -1])
     elif loss_type == "db":

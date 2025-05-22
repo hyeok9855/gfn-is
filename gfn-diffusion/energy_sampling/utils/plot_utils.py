@@ -71,7 +71,7 @@ def visualize(
 def sliced_log_reward(x: torch.Tensor, energy: BaseEnergy, dims: tuple) -> torch.Tensor:
     _x = torch.zeros((x.shape[0], energy.ndim))
     _x[:, dims] = x
-    return energy.log_reward(_x.to(energy.device), temper=False).detach().cpu()
+    return energy.log_reward(_x.to(energy.device)).detach().cpu()
 
 
 def fig_to_image(fig):
@@ -197,7 +197,7 @@ def viz_2d_slice(
 
 
 def viz_energy_hist(energy: BaseEnergy, xs: torch.Tensor) -> dict:
-    xs_logr = energy.log_reward(xs, temper=False)
+    xs_logr = energy.log_reward(xs)
     gt_xs, gt_xs_logr = energy.cached_sample(xs.shape[0])
 
     xs, gt_xs = xs.cpu(), gt_xs.cpu()
@@ -334,7 +334,7 @@ def viz_student_t_mixture(
         samples = samples[:, :2]
         logp_func = partial(sliced_log_reward, energy=energy, dims=(0, 1))
     else:
-        logp_func = partial(energy.log_reward, temper=False)
+        logp_func = energy.log_reward
 
     samples = samples.detach().cpu()
     weights = weights.detach().cpu() if weights is not None else None
