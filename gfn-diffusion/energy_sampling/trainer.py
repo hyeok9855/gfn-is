@@ -318,7 +318,9 @@ class Trainer:
                 self.init_log_Z_with_elbo = False
 
             if not self.init_log_Z_with_elbo:
-                log_iws = self.init_log_Z_ratios + (self.init_log_Z_log_rs * self.get_invtemp(it))
+                log_iws = self.init_log_Z_ratios + (
+                    self.init_log_Z_log_rs * self.get_invtemp(it + 1)
+                )
                 self.gfn_model.pred_module.set_log_Z(log_iws.mean().item())
                 del self.init_log_Z_ratios
                 del self.init_log_Z_log_rs

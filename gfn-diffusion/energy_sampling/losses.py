@@ -91,6 +91,7 @@ def get_loss(
     curr_t: torch.Tensor | None = None,
 ) -> torch.Tensor:
     # Apply inverse temperature to the log reward
+    log_fs = log_fs.clone()
     log_fs[:, -1] = log_fs[:, -1] * invtemp
 
     if loss_type == "tb":
