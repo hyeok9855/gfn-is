@@ -14,7 +14,7 @@ class MALA(BaseMCMC):
         self,
         energy: "BaseEnergy",
         burn_in: int = 100,
-        max_iter_ls: int = 200,
+        n_steps: int = 1000,
         step_size: float = 0.1,
         ld_schedule: bool = True,
         target_acceptance_rate: float = 0.574,
@@ -22,7 +22,7 @@ class MALA(BaseMCMC):
     ):
         super().__init__(energy)
         self.burn_in = burn_in
-        self.max_iter_ls = max_iter_ls
+        self.n_steps = n_steps
         self.step_size = step_size
         self.ld_schedule = ld_schedule
         self.target_acceptance_rate = target_acceptance_rate
@@ -47,7 +47,7 @@ class MALA(BaseMCMC):
         acceptance_rate = 0
         total_proposals = 0
 
-        for i in trange(self.max_iter_ls):
+        for i in trange(self.n_steps, desc="[MALA]", dynamic_ncols=True):
             x = x.requires_grad_(True)
 
             log_rs = self.energy.log_reward(x)

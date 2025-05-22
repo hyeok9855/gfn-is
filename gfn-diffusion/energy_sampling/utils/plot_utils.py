@@ -229,8 +229,8 @@ def viz_interatomic_dist_hist(energy: LennardJones | ALDP | ALDPFAB, xs: torch.T
     gt_xs, _ = energy.cached_sample(xs.shape[0])
 
     if isinstance(energy, ALDPFAB):
-        xs = energy.transform(xs)
-        gt_xs = energy.transform(gt_xs)
+        xs, _ = energy.transform(xs)
+        gt_xs, _ = energy.transform(gt_xs)
 
     xs, gt_xs = xs.cpu(), gt_xs.cpu()
     n_particles = xs.shape[1] // 3
@@ -415,7 +415,7 @@ def plot_phi_psi(energy: ALDP | ALDPFAB, xs: torch.Tensor, dpi=300):
     """
 
     if isinstance(energy, ALDPFAB):
-        xs = energy.transform(xs)
+        xs, _ = energy.transform(xs)
 
     assert xs.ndim == 2  # (n_samples, n_atoms * 3)
     xs = xs.reshape(xs.shape[0], -1, 3)  # (n_samples, n_atoms, 3)
@@ -478,7 +478,7 @@ def draw_mols(energy: ALDP | ALDPFAB, xs: torch.Tensor, name="aldp"):
     """
 
     if isinstance(energy, ALDPFAB):
-        xs = energy.transform(xs)
+        xs, _ = energy.transform(xs)
 
     assert xs.shape[0] >= 3
 

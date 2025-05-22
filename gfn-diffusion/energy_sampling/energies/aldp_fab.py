@@ -12,6 +12,7 @@ from utils.misc_utils import temp_seed
 
 
 DATA_PATH = Path(__file__).parent / "data" / "aldp_fab"
+PI_PLUS_EPS = math.pi + 0.01
 
 
 class ALDPFAB(BaseEnergy):
@@ -143,42 +144,42 @@ class ALDPFAB(BaseEnergy):
 
     def energy(self, x: torch.Tensor) -> torch.Tensor:
         assert x.shape[1] == 60
-        x = self.scale_ind_circ(x)
-        return -self.p.log_prob(x)
+        x_fab, log_det = self.scale_ind_circ(x)
+        return -(self.p.log_prob(x_fab) + log_det)
 
     def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
         with temp_seed(seed or self.seed):
             perm_idx = torch.randperm(self.approx_sample.shape[0])[:batch_size]
         return self.approx_sample[perm_idx].to(self.device)
 
-    def scale_ind_circ(self, x: torch.Tensor) -> torch.Tensor:
+    def scale_ind_circ(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         assert x.shape[1] == 60
-        copy_x = x.clone()
-        copy_x[:, self.ind_circ] = torch.clamp(
-            torch.tanh(copy_x[:, self.ind_circ]) * (math.pi + 0.01), min=-math.pi, max=math.pi
-        )
-        return copy_x
+        x_fab = x.clone()
+        x_fab[:, self.ind_circ] = torch.tanh(x_fab[:, self.ind_circ]) * PI_PLUS_EPS
+        log_cosh_x_ind_circ = torch.log(torch.cosh(x[:, self.ind_circ]))
+        log_det = -2 * log_cosh_x_ind_circ + math.log(PI_PLUS_EPS)
+        return x_fab, log_det.sum(1)
 
-    def inverse_scale_ind_circ(self, x: torch.Tensor) -> torch.Tensor:
-        assert x.shape[1] == 60
-        copy_x = x.clone()
-        copy_x[:, self.ind_circ] = torch.atanh(copy_x[:, self.ind_circ] / (math.pi + 0.01))
-        return copy_x
+    def inverse_scale_ind_circ(self, x_fab: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        assert x_fab.shape[1] == 60
+        x = x_fab.clone()
+        x[:, self.ind_circ] = torch.atanh(x[:, self.ind_circ] / PI_PLUS_EPS)
+        log_det = math.log(PI_PLUS_EPS) - torch.log(
+            (PI_PLUS_EPS**2 - x_fab[:, self.ind_circ] ** 2).abs()
+        )
+        return x, log_det.sum(1)
 
     ##### Some methods for MD #####
-    def transform(self, x: torch.Tensor) -> torch.Tensor:
+    def transform(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # scale_ind_circ --> (60 -> 66)
         assert x.shape[1] == 60
-        x = self.scale_ind_circ(x)
-        return self.coordinate_transform(x)[0]  # (batch_size, 66)
+        x_fab, log_det_fab = self.scale_ind_circ(x)
+        x_orig, log_det_orig = self.coordinate_transform(x_fab)
+        return x_orig, log_det_fab + log_det_orig
 
-    def inverse(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def inverse(self, x_orig: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # (66 -> 60) --> inverse_scale_ind_circ
-        assert x.shape[1] == 66
-        x, log_det = self.coordinate_transform.inverse(x)
-        x = self.inverse_scale_ind_circ(x)
-        return x, log_det
-
-    def energy_in_original_space(self, x: torch.Tensor) -> torch.Tensor:
-        assert x.shape[1] == 66
-        return self.p.norm_energy(x)
+        assert x_orig.shape[1] == 66
+        x_fab, log_det_fab = self.coordinate_transform.inverse(x_orig)
+        x, log_det_x = self.inverse_scale_ind_circ(x_fab)
+        return x, log_det_fab + log_det_x

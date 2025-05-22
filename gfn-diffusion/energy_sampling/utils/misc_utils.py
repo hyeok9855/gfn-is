@@ -110,7 +110,8 @@ def get_name(args: argparse.Namespace) -> str:
             name += f"-{args.prioritization}-{args.buffer_sampling}"
 
         if args.mcmc_type != "none":
-            name += f"_{args.mcmc_type}-{args.mcmc_burn_in}-{args.mcmc_max_iter_ls}-{args.mcmc_step_size}"
+            name += f"_{args.mcmc_type}-freq{args.mcmc_freq}"
+            name += f"-n{args.mcmc_n_steps}-b{args.mcmc_burn_in}-s{args.mcmc_step_size}"
             if args.mcmc_type == "md":
                 name += f"-gamma{args.mcmc_gamma}"
 

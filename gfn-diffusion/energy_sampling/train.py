@@ -74,7 +74,7 @@ def train(args):
         gamma=args.gamma,
     )
 
-    buffer = None
+    buffer = mcmc = None
     if args.use_buffer:
         if args.prioritization == "iw":
             buffer_class = (
@@ -100,7 +100,7 @@ def train(args):
         if args.mcmc_type != "none":
             mcmc_args = {
                 "energy": energy,
-                "max_iter_ls": args.mcmc_max_iter_ls,
+                "n_steps": args.mcmc_n_steps,
                 "burn_in": args.mcmc_burn_in,
                 "thinning": args.mcmc_thinning,
                 "step_size": args.mcmc_step_size,
@@ -368,7 +368,7 @@ if __name__ == "__main__":
     parser.add_argument("--mcmc_type", type=str, default="none", choices=("none", "md", "mala"))
     parser.add_argument("--mcmc_freq", type=int, default=100)
     parser.add_argument("--mcmc_batch_size", type=int, default=100)
-    parser.add_argument("--mcmc_max_iter_ls", type=int, default=1000)
+    parser.add_argument("--mcmc_n_steps", type=int, default=1000)
     parser.add_argument("--mcmc_burn_in", type=int, default=100)
     parser.add_argument("--mcmc_thinning", type=int, default=1)
     parser.add_argument("--mcmc_step_size", type=float, default=0.001)

@@ -16,7 +16,7 @@ class MD(BaseMCMC):
         self,
         energy: "ALDPFAB",
         gamma: float = 1.0,
-        max_iter_ls: int = 1000,
+        n_steps: int = 1000,
         burn_in: int = 100,
         thinning: int = 1,
         step_size: float = 0.001,
@@ -26,7 +26,7 @@ class MD(BaseMCMC):
         super().__init__(energy)
         assert isinstance(self.energy, ALDPFAB)
         self.gamma = gamma
-        self.max_iter_ls = max_iter_ls
+        self.n_steps = n_steps
         self.burn_in = burn_in
         self.thinning = thinning
 
@@ -53,7 +53,7 @@ class MD(BaseMCMC):
         log_rs = []
 
         bsz = xs.shape[0]
-        x_position = self.energy.transform(xs)
+        x_position, _ = self.energy.transform(xs)
 
         position = x_position.reshape(bsz, self.n_atoms, 3)
         velocity = torch.zeros_like(position, device=position.device)
@@ -61,7 +61,7 @@ class MD(BaseMCMC):
         energy = self.energy.p.norm_energy(position.reshape(bsz, self.mol_ndim)) / self.beta
         force = -torch.autograd.grad(energy.sum(), position)[0]
 
-        for _ in trange(self.max_iter_ls):
+        for _ in trange(self.n_steps, desc="[MD]", dynamic_ncols=True):
             if self.integrator == "euler":
                 position, velocity, force, log_r = self.step_euler(position, velocity, force)
             else:  # baoab
