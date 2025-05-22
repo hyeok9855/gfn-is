@@ -9,7 +9,7 @@ from losses import cal_subtb_coef_matrix, get_loss
 from mcmcs import BaseMCMC
 from models import GFN
 from utils.eval_utils import density_metrics, distribution_distance_metrics
-from utils.misc_utils import linear_annealing
+from utils.misc_utils import linear_annealing, logmeanexp
 from utils.plot_utils import visualize
 from utils.sampling_utils import get_sampling_func
 from utils.train_utils import binary_search_smoothing
@@ -48,6 +48,7 @@ class Trainer:
         anneal_epsilon: bool,
         invtemp: float,
         invtemp_anneal: bool,
+        init_log_Z_with_unbiased_estimator: bool,
         eval_batch_size: int,
         eval_discretizer: Callable[[int, int], torch.Tensor],
         eval_T: int,
@@ -119,6 +120,12 @@ class Trainer:
         self.anneal_epsilon = anneal_epsilon
         self.invtemp = invtemp
         self.invtemp_anneal = invtemp_anneal
+        self.init_log_Z_with_unbiased_estimator = init_log_Z_with_unbiased_estimator and (
+            loss_type == "tb"
+        )
+        self.init_log_Z_log_iws = None
+        if self.init_log_Z_with_unbiased_estimator:
+            self.init_log_Z_log_iws = torch.zeros((0,)).to(self.device)
 
         # Eval and Plot
         self.eval_batch_size = eval_batch_size
@@ -236,7 +243,7 @@ class Trainer:
             ndim=self.energy.ndim,
         )
 
-        normalized_iws_0t = log_iws_0t = None
+        log_iws_0t = normalized_iws_0t = None
         if (
             (self.buffer is not None and self.buffer.prioritization in ["iw", "normalized_iw"])
             or self.weighting
@@ -299,6 +306,26 @@ class Trainer:
 
         if self.alternating:
             self._alternating_flag = not self._alternating_flag
+
+        # Initialize flow with unbiased estimator
+        if self.init_log_Z_with_unbiased_estimator:
+            assert self.init_log_Z_log_iws is not None
+            if log_iws_0t is None:
+                log_iws = (log_fs[:, -1] + log_pbs.sum(-1) - log_pfs_exp.sum(-1)).detach()
+            else:
+                log_iws = log_iws_0t[:, -1]
+            self.init_log_Z_log_iws = torch.cat([self.init_log_Z_log_iws, log_iws], dim=0)
+
+            # When using buffer, we wait until the prefill_epochs
+            if self.buffer is not None and it == (self.prefill_epochs - 1):
+                self.init_log_Z_with_unbiased_estimator = False
+            # When not using buffer, we initialize the flow with unbiased estimator
+            elif self.buffer is None and it == 0:
+                self.init_log_Z_with_unbiased_estimator = False
+
+            if not self.init_log_Z_with_unbiased_estimator:
+                self.gfn_model.pred_module.set_log_Z(logmeanexp(self.init_log_Z_log_iws).item())
+                del self.init_log_Z_log_iws
 
         return loss
 

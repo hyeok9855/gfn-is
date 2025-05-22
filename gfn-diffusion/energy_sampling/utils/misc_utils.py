@@ -34,7 +34,7 @@ def temp_seed(seed):
         torch.cuda.set_rng_state_all(torch_cuda_states)
 
 
-def logmeanexp(x, dim=0):
+def logmeanexp(x: torch.Tensor, dim: int = 0) -> torch.Tensor:
     return x.logsumexp(dim) - math.log(x.shape[dim])
 
 
