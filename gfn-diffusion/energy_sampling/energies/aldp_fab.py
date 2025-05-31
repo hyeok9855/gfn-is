@@ -12,7 +12,7 @@ from utils.misc_utils import temp_seed
 
 
 DATA_PATH = Path(__file__).parent / "data" / "aldp_fab"
-PI_PLUS_EPS = math.pi + 0.01
+PI_PLUS_EPS = math.pi + 0.0001
 
 
 class ALDPFAB(BaseEnergy):
