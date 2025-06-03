@@ -441,7 +441,7 @@ def plot_phi_psi(energy: ALDP | ALDPFAB, xs: torch.Tensor, dpi=300):
         y = torch.sum(v3 * v1, dim=-1)
         return torch.atan2(y, x)
 
-    fig = plt.figure(figsize=(7, 6), dpi=dpi)
+    fig = plt.figure(figsize=(7, 7), dpi=dpi)
 
     angle_1 = [6, 8, 14, 16]
     angle_2 = [1, 6, 8, 14]
@@ -456,11 +456,13 @@ def plot_phi_psi(energy: ALDP | ALDPFAB, xs: torch.Tensor, dpi=300):
     plt.hist2d(phi, psi, bins=[xedges, yedges], norm=LogNorm(), cmap="viridis")
     plt.xlim(-np.pi, np.pi)
     plt.ylim(-np.pi, np.pi)
-    plt.xlabel("$\phi$", fontsize=14)
-    plt.ylabel("$\psi$", fontsize=14)
-    plt.xticks(fontsize=12)
-    plt.yticks(fontsize=12)
-    plt.colorbar(label="Density")
+    plt.xlabel("$\phi$", fontsize=28)
+    plt.ylabel("$\psi$", fontsize=28)
+    plt.xticks(fontsize=20)
+    plt.yticks(fontsize=20)
+    plt.xticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi], ["-π", "-π/2", "0", "π/2", "π"])
+    plt.yticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi], ["-π", "-π/2", "0", "π/2", "π"])
+    # plt.colorbar(label="Density")
     plt.tight_layout()
     return {"visualization/phi_psi": wandb.Image(fig_to_image(fig))}
 

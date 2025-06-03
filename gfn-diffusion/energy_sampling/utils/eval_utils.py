@@ -335,7 +335,7 @@ def density_metrics(
     gt_log_Z: float | None = None,
 ) -> dict:
     log_weights = log_rewards + log_pbs.sum(-1) - log_pfs.sum(-1)
-    log_Z = logmeanexp(log_weights).item()
+    iw_elbo = logmeanexp(log_weights).item()
     log_Z_learned = log_fs[:, 0].mean().item()
     elbo = log_weights.mean().item()
     if gt_log_rewards is not None:
@@ -345,12 +345,14 @@ def density_metrics(
         eubo = float("nan")
     ess = 1.0 / (log_weights.softmax(0) ** 2).sum().item()
     metrics = {
-        "log_Z": log_Z,
-        "Δ_log_Z": abs(log_Z - gt_log_Z) if gt_log_Z is not None else float("nan"),
         "log_Z_learned": log_Z_learned,
         "elbo": elbo,
         "eubo": eubo,
         "eubo-elbo": eubo - elbo,
-        "ess": ess,
+        "iw_elbo": iw_elbo,
+        "Δ_elbo": (gt_log_Z - elbo) if gt_log_Z is not None else float("nan"),
+        "Δ_eubo": (gt_log_Z - eubo) if gt_log_Z is not None else float("nan"),
+        "Δ_iw_elbo": (gt_log_Z - iw_elbo) if gt_log_Z is not None else float("nan"),
+        "ess(%)": ess / log_pfs.shape[0] * 100,
     }
     return metrics

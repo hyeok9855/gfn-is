@@ -149,7 +149,7 @@ def train(args):
         mcmc_batch_size=args.mcmc_batch_size,
         invtemp=args.invtemp,
         invtemp_anneal=args.invtemp_anneal,
-        init_log_Z_with_elbo=args.init_log_Z_with_elbo,
+        init_log_Z_with_iw_elbo=args.init_log_Z_with_iw_elbo,
         eval_batch_size=args.eval_batch_size,
         eval_discretizer=eval_discretizer,
         eval_T=args.eval_T,
@@ -180,7 +180,7 @@ def train(args):
             )
             eubo_cache = metrics["eval/eubo"]
             elbo_cache = metrics["eval/elbo"]
-            ess_cache = metrics["eval/ess"]
+            ess_cache = metrics["eval/ess(%)"]
 
         ### Train ###
         metrics["train/loss"] = trainer.train_step(it)
@@ -211,8 +211,8 @@ def train(args):
         desc += f"{'ELBO':<10}: {final_metrics['final_eval/elbo']:.3f}\n"
     if final_metrics.get("final_eval/Sinkhorn") is not None:
         desc += f"{'Sinkhorn':<10}: {final_metrics['final_eval/Sinkhorn']:.3f}\n"
-    if final_metrics.get("final_eval/ess") is not None:
-        desc += f"{'ESS':<10}: {final_metrics['final_eval/ess']:.3f}\n"
+    if final_metrics.get("final_eval/ess(%)") is not None:
+        desc += f"{'ESS':<10}: {final_metrics['final_eval/ess(%)']:.3f}\n"
     print(f"===============\n[Final results]\n{desc}")
 
 
@@ -250,7 +250,7 @@ if __name__ == "__main__":
     parser.add_argument("--subtb_n_chunks", type=int, default=0)
     parser.add_argument("--sublogvar_K", type=int, default=1)
     parser.add_argument(
-        "--no_init_log_Z_with_elbo", action="store_false", dest="init_log_Z_with_elbo"
+        "--no_init_log_Z_with_iw_elbo", action="store_false", dest="init_log_Z_with_iw_elbo"
     )
 
     parser.add_argument("--lr_fwd", type=float, default=1e-3)

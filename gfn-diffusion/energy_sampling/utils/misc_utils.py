@@ -44,6 +44,7 @@ def linear_annealing(
     min_val: float,
     max_val: float,
     descending=False,
+    log=False,
     avoid_zero=False,
 ) -> float:
     assert min_val <= max_val
@@ -57,7 +58,9 @@ def linear_annealing(
     if current >= n_rounds:
         return end_val
 
-    multiplier = (current / n_rounds) if not avoid_zero else (current + 1) / (n_rounds + 1)
+    num = current + 1 if avoid_zero else current
+    denom = n_rounds + 1 if avoid_zero else n_rounds
+    multiplier = math.log(num) / math.log(denom) if log else num / denom
     return start_val + (end_val - start_val) * multiplier
 
 

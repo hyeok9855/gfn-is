@@ -4,12 +4,12 @@ import warnings
 import torch
 
 from buffers import BaseBuffer, GISTerminalStateBuffer, IntermediateStateBuffer, TerminalStateBuffer
-from energies import BaseEnergy, IntermediateEnergy
+from energies import ALDPFAB, BaseEnergy, IntermediateEnergy
 from losses import cal_subtb_coef_matrix, get_loss
 from mcmcs import BaseMCMC
 from models import GFN
 from utils.eval_utils import density_metrics, distribution_distance_metrics
-from utils.misc_utils import linear_annealing
+from utils.misc_utils import linear_annealing, logmeanexp
 from utils.plot_utils import visualize
 from utils.sampling_utils import get_sampling_func
 from utils.train_utils import binary_search_smoothing
@@ -48,7 +48,7 @@ class Trainer:
         anneal_epsilon: bool,
         invtemp: float,
         invtemp_anneal: bool,
-        init_log_Z_with_elbo: bool,
+        init_log_Z_with_iw_elbo: bool,
         eval_batch_size: int,
         eval_discretizer: Callable[[int, int], torch.Tensor],
         eval_T: int,
@@ -121,9 +121,9 @@ class Trainer:
         self.anneal_epsilon = anneal_epsilon
         self._invtemp = invtemp
         self.invtemp_anneal = invtemp_anneal
-        self.init_log_Z_with_elbo = init_log_Z_with_elbo and loss_type == "tb"
+        self.init_log_Z_with_iw_elbo = init_log_Z_with_iw_elbo and loss_type == "tb"
         self.init_log_Z_ratios = self.init_log_Z_log_rs = None
-        if self.init_log_Z_with_elbo:
+        if self.init_log_Z_with_iw_elbo:
             self.init_log_Z_ratios = torch.zeros((0,)).to(self.device)
             self.init_log_Z_log_rs = torch.zeros((0,)).to(self.device)
 
@@ -183,20 +183,23 @@ class Trainer:
 
             # Augment the buffer with samples from MCMC
             mcmc_xs, mcmc_log_rs = self.mcmc.sample(buf_xs)
+            indices = indices.unsqueeze(0).repeat(mcmc_xs.shape[0], 1)
 
-            data_dict = {
-                "states": mcmc_xs.reshape(-1, self.energy.ndim),
-                "log_fs": mcmc_log_rs.reshape(-1),
-            }
+            mcmc_xs = mcmc_xs.reshape(-1, self.energy.ndim)
+            mcmc_log_rs = mcmc_log_rs.reshape(-1)
+            indices = indices.reshape(-1)
 
+            if isinstance(self.energy, ALDPFAB):
+                ind_L = self.energy.get_lform_indices(mcmc_xs)
+                mcmc_xs = mcmc_xs[ind_L]
+                mcmc_log_rs = mcmc_log_rs[ind_L]
+                indices = indices[ind_L]
+
+            data_dict = {"states": mcmc_xs, "log_fs": mcmc_log_rs}
             if isinstance(self.buffer, GISTerminalStateBuffer):
-                log_iws = self.buffer.log_iws_dataset[indices]
-                log_iws = log_iws.unsqueeze(0).repeat(mcmc_log_rs.shape[0], 1)
-                data_dict["log_iws"] = log_iws.reshape(-1)
+                data_dict["log_iws"] = self.buffer.log_iws_dataset[indices]
             elif self.buffer.normalized_iws_dataset is not None:
-                normalized_iws = self.buffer.normalized_iws_dataset[indices]
-                normalized_iws = normalized_iws.unsqueeze(0).repeat(mcmc_log_rs.shape[0], 1)
-                data_dict["normalized_iws"] = normalized_iws.reshape(-1)
+                data_dict["normalized_iws"] = self.buffer.normalized_iws_dataset[indices]
 
             self.buffer.add(**data_dict)
 
@@ -304,24 +307,24 @@ class Trainer:
             self._alternating_flag = not self._alternating_flag
 
         # Initialize flow with unbiased estimator
-        if self.init_log_Z_with_elbo:
+        if self.init_log_Z_with_iw_elbo:
             assert self.init_log_Z_ratios is not None and self.init_log_Z_log_rs is not None
             ratios = (log_pbs.sum(-1) - log_pfs_exp.sum(-1)).detach()
             self.init_log_Z_ratios = torch.cat([self.init_log_Z_ratios, ratios], dim=0)
             self.init_log_Z_log_rs = torch.cat([self.init_log_Z_log_rs, log_fs[:, -1]], dim=0)
 
             # When using buffer, we wait until the prefill_epochs
-            if self.buffer is not None and it == (self.prefill_epochs - 1):
-                self.init_log_Z_with_elbo = False
+            if self.buffer is not None and it >= (self.prefill_epochs - 1):
+                self.init_log_Z_with_iw_elbo = False
             # When not using buffer, we initialize the flow with unbiased estimator
             elif self.buffer is None and it == 0:
-                self.init_log_Z_with_elbo = False
+                self.init_log_Z_with_iw_elbo = False
 
-            if not self.init_log_Z_with_elbo:
+            if not self.init_log_Z_with_iw_elbo:
                 log_iws = self.init_log_Z_ratios + (
                     self.init_log_Z_log_rs * self.get_invtemp(it + 1)
                 )
-                self.gfn_model.pred_module.set_log_Z(log_iws.mean().item())
+                self.gfn_model.pred_module.set_log_Z(logmeanexp(log_iws).item())
                 del self.init_log_Z_ratios
                 del self.init_log_Z_log_rs
 

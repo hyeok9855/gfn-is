@@ -29,6 +29,10 @@ class ALDPFAB(BaseEnergy):
         default_std={"bond": 0.005, "angle": 0.15, "dih": 0.2},
         env="implicit",
         seed: int = 0,
+        chirality_ind=[17, 26],
+        chirality_mean_diff=-0.043,
+        chirality_threshold=0.8,
+        chirality_sharpness=100.0,
     ):
         super().__init__(device=device, ndim=60, seed=seed)  # 60 since we use internal coordinates
 
@@ -111,6 +115,8 @@ class ALDPFAB(BaseEnergy):
         )
         self.coordinate_transform.to(self.device)
 
+        self.energy_cut = energy_cut
+
         self.p = bg.distributions.TransformedBoltzmannParallel(
             system,
             temperature,
@@ -133,13 +139,64 @@ class ALDPFAB(BaseEnergy):
         dih_ind = ind[dih_ind]
         self.ind_circ = dih_ind[ind_circ_dih].tolist()
 
+        self.chirality_ind = chirality_ind
+        self.chirality_mean_diff = chirality_mean_diff
+        self.chirality_threshold = chirality_threshold
+        self.chirality_sharpness = chirality_sharpness
+
         datas = [np.load(DATA_PATH / f"val_before_scale{i}.npy") for i in range(5)]
-        self.approx_sample = torch.tensor(np.concatenate(datas, axis=0), dtype=dtype)
+        approx_sample = torch.tensor(np.concatenate(datas, axis=0), dtype=dtype)
+        self.approx_sample = approx_sample[self.get_lform_indices(approx_sample)]
 
     def energy(self, x: torch.Tensor) -> torch.Tensor:
         assert x.shape[1] == 60
         x_fab, log_det = self.scale_ind_circ(x)
-        return -(self.p.log_prob(x_fab) + log_det)
+        energy = -(self.p.log_prob(x_fab) + log_det) + self._compute_chirality_penalty(x)
+        energy[energy.isnan()] = 2 * self.energy_cut
+        return energy
+
+    def get_lform_indices(self, x: torch.Tensor) -> torch.Tensor:
+        # Compute the dihedral angle difference
+        diff_ = torch.column_stack(
+            (
+                x[:, self.chirality_ind[0]] - x[:, self.chirality_ind[1]],
+                x[:, self.chirality_ind[0]] - x[:, self.chirality_ind[1]] + 2 * np.pi,
+                x[:, self.chirality_ind[0]] - x[:, self.chirality_ind[1]] - 2 * np.pi,
+            )
+        )
+
+        # Find the minimal angular difference (handling periodicity)
+        min_diff_ind = torch.min(torch.abs(diff_), dim=1).indices
+        diff = diff_[torch.arange(x.shape[0]), min_diff_ind]
+
+        # Compute deviation from the L-form reference
+        deviation = torch.abs(diff - self.chirality_mean_diff)
+
+        # High energy for non-L-form
+        is_l_form = deviation < self.chirality_threshold
+        return is_l_form
+
+    def _compute_chirality_penalty(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Compute smooth chirality penalty that encourages L-form configurations.
+
+        Args:
+            x: Input tensor of shape (batch_size, 60) in the internal coordinate space
+
+        Returns:
+            Penalty energy for each sample in the batch
+        """
+        is_l_form = self.get_lform_indices(x)
+        penalty = (2 * self.energy_cut) * (1 - is_l_form.float())
+
+        # # Smooth penalty using sigmoid function
+        # # - When deviation < threshold: penalty ≈ 0 (L-form region)
+        # # - When deviation > threshold: penalty increases smoothly (D-form region)
+        # penalty = self.chirality_penalty_strength * torch.sigmoid(
+        #     (deviation - self.chirality_threshold) * self.chirality_sharpness
+        # )
+
+        return penalty
 
     def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
         with temp_seed(seed or self.seed):
