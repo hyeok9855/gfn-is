@@ -29,7 +29,6 @@ class EGNNModule(BaseModule):
         learn_variance: bool = True,
         log_var_range: float = 4.0,
         use_checkpoint: bool = False,
-        init_log_Z: float = 0.0,
         ### EGNN arguments
         time_embedding: bool = False,
         t_emb_dim: int = 128,
@@ -54,7 +53,6 @@ class EGNNModule(BaseModule):
             learn_variance=learn_variance,
             log_var_range=log_var_range,
             use_checkpoint=use_checkpoint,
-            init_log_Z=init_log_Z,
         )
         if conditional_flow_model:  # TODO
             raise NotImplementedError("Conditional flow model is not implemented for EGNN")
@@ -91,7 +89,7 @@ class EGNNModule(BaseModule):
         )
 
         # TODO: support conditional flow model
-        self.flow_model = torch.nn.Parameter(torch.tensor(self.init_log_Z))
+        self.flow_model = torch.nn.Parameter(torch.tensor(0.0))
 
         self._n_particles = n_particles
         self._spatial_dim = spatial_dim

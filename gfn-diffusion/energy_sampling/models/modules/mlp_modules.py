@@ -23,7 +23,6 @@ class MLPModule(BaseModule):
         learn_variance: bool = True,
         log_var_range: float = 4.0,
         use_checkpoint: bool = False,
-        init_log_Z: float = 0.0,
         ### MLP arguments
         harmonics_dim: int = 64,
         t_emb_dim: int = 64,
@@ -52,7 +51,6 @@ class MLPModule(BaseModule):
             learn_variance=learn_variance,
             log_var_range=log_var_range,
             use_checkpoint=use_checkpoint,
-            init_log_Z=init_log_Z,
         )
 
         self.ndim = ndim
@@ -113,7 +111,7 @@ class MLPModule(BaseModule):
                 self.flow_s_emb_dim, self.flow_t_emb_dim, self.hidden_dim, 1, self.flow_layers
             )
         else:
-            self.flow_model = torch.nn.Parameter(torch.tensor(self.init_log_Z))
+            self.flow_model = torch.nn.Parameter(torch.tensor(0.0))
 
         self.lp_scaling_model = None
         if self.lp:

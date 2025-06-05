@@ -149,7 +149,7 @@ def train(args):
         mcmc_batch_size=args.mcmc_batch_size,
         invtemp=args.invtemp,
         invtemp_anneal=args.invtemp_anneal,
-        init_log_Z_with_iw_elbo=args.init_log_Z_with_iw_elbo,
+        init_log_Z=args.init_log_Z,
         eval_batch_size=args.eval_batch_size,
         eval_discretizer=eval_discretizer,
         eval_T=args.eval_T,
@@ -249,9 +249,6 @@ if __name__ == "__main__":
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
     parser.add_argument("--subtb_n_chunks", type=int, default=0)
     parser.add_argument("--sublogvar_K", type=int, default=1)
-    parser.add_argument(
-        "--no_init_log_Z_with_iw_elbo", action="store_false", dest="init_log_Z_with_iw_elbo"
-    )
 
     parser.add_argument("--lr_fwd", type=float, default=1e-3)
     parser.add_argument("--lr_bwd", type=float, default=None)
@@ -263,7 +260,7 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay", type=float, default=1e-7)
     parser.add_argument("--use_scheduler", action="store_true", default=False)
     parser.add_argument("--milestones", type=float, nargs="+", default=[0.5, 0.9])
-    parser.add_argument("--gamma", type=float, default=(10) ** (-1 / 2))
+    parser.add_argument("--gamma", type=float, default=0.3)
 
     parser.add_argument("--bwd_to_fwd_ratio", type=float, default=1.0)
     parser.add_argument("--clip_grad_norm", type=float, default=1.0)
@@ -273,7 +270,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--module", type=str, default="pismlp", choices=("pismlp", "mlp", "egnn"))
     parser.add_argument("--use_checkpoint", action="store_true", default=False)
-    parser.add_argument("--init_log_Z", type=float, default=0.0)
+    parser.add_argument("--init_log_Z", type=str, default="0.0")  # "iw_elbo", "elbo" or float
     parser.add_argument("--precision", type=str, default="float", choices=("float", "double"))
 
     ################################################################
@@ -397,9 +394,9 @@ if __name__ == "__main__":
     parser.add_argument("--eval_data_size", type=int, default=2000)
     parser.add_argument("--final_eval_data_size", type=int, default=2000)
     parser.add_argument("--no_full_eval", action="store_false", dest="full_eval")
-    parser.add_argument("--full_eval_freq", type=int, default=2500)
+    parser.add_argument("--full_eval_freq", type=float, default=0.1)
     parser.add_argument("--no_plot", action="store_false", dest="plot")
-    parser.add_argument("--plot_freq", type=int, default=2500)
+    parser.add_argument("--plot_freq", type=float, default=0.1)
     parser.add_argument("--no_plot_gt", action="store_false", dest="plot_gt")
     parser.add_argument("--plot_t_idx", type=int, nargs="+", default=[])
     parser.add_argument("--plot_buffer_t_idx", type=int, nargs="+", default=[])
@@ -428,6 +425,11 @@ if __name__ == "__main__":
     ################################################################
 
     args = parser.parse_args()
+
+    try:
+        args.init_log_Z = float(args.init_log_Z)
+    except ValueError:
+        assert args.init_log_Z in ["iw_elbo", "elbo"]
 
     args.state_remove_mean = True if args.energy_name in ["lj13", "lj55"] else False
 
@@ -462,6 +464,13 @@ if __name__ == "__main__":
 
     if args.prefill_epochs == -1:
         args.prefill_epochs = min(100, args.buffer_size / args.batch_size // 10)
+
+    if args.full_eval_freq < 1:
+        args.full_eval_freq = args.full_eval_freq * args.epochs
+    if args.plot_freq < 1:
+        args.plot_freq = args.plot_freq * args.epochs
+    args.full_eval_freq = int(args.full_eval_freq)
+    args.plot_freq = int(args.plot_freq)
 
     assert args.plot_freq % args.eval_freq == 0
 

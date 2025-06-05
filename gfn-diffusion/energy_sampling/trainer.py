@@ -48,7 +48,7 @@ class Trainer:
         anneal_epsilon: bool,
         invtemp: float,
         invtemp_anneal: bool,
-        init_log_Z_with_iw_elbo: bool,
+        init_log_Z: Literal["iw_elbo", "iw"] | float,
         eval_batch_size: int,
         eval_discretizer: Callable[[int, int], torch.Tensor],
         eval_T: int,
@@ -121,11 +121,15 @@ class Trainer:
         self.anneal_epsilon = anneal_epsilon
         self._invtemp = invtemp
         self.invtemp_anneal = invtemp_anneal
-        self.init_log_Z_with_iw_elbo = init_log_Z_with_iw_elbo and loss_type == "tb"
-        self.init_log_Z_ratios = self.init_log_Z_log_rs = None
-        if self.init_log_Z_with_iw_elbo:
-            self.init_log_Z_ratios = torch.zeros((0,)).to(self.device)
-            self.init_log_Z_log_rs = torch.zeros((0,)).to(self.device)
+
+        self.init_log_Z = self.init_log_Z_ratios = self.init_log_Z_log_rs = None
+        if loss_type == "tb":
+            if isinstance(init_log_Z, float):
+                self.gfn_model.pred_module.set_log_Z(init_log_Z)
+            else:
+                self.init_log_Z = init_log_Z
+                self.init_log_Z_ratios = torch.zeros((0,)).to(self.device)
+                self.init_log_Z_log_rs = torch.zeros((0,)).to(self.device)
 
         # Eval and Plot
         self.eval_batch_size = eval_batch_size
@@ -306,27 +310,33 @@ class Trainer:
         if self.alternating:
             self._alternating_flag = not self._alternating_flag
 
-        # Initialize flow with unbiased estimator
-        if self.init_log_Z_with_iw_elbo:
+        # Initialize log_Z
+        if self.init_log_Z is not None:
             assert self.init_log_Z_ratios is not None and self.init_log_Z_log_rs is not None
+            assert (
+                isinstance(self.gfn_model.pred_module.flow_model, torch.nn.Parameter)
+                and self.gfn_model.pred_module.flow_model.item() == 0.0
+            )
             ratios = (log_pbs.sum(-1) - log_pfs_exp.sum(-1)).detach()
             self.init_log_Z_ratios = torch.cat([self.init_log_Z_ratios, ratios], dim=0)
             self.init_log_Z_log_rs = torch.cat([self.init_log_Z_log_rs, log_fs[:, -1]], dim=0)
 
-            # When using buffer, we wait until the prefill_epochs
-            if self.buffer is not None and it >= (self.prefill_epochs - 1):
-                self.init_log_Z_with_iw_elbo = False
-            # When not using buffer, we initialize the flow with unbiased estimator
-            elif self.buffer is None and it == 0:
-                self.init_log_Z_with_iw_elbo = False
-
-            if not self.init_log_Z_with_iw_elbo:
+            if (self.buffer is not None and it >= (self.prefill_epochs - 1)) or (
+                self.buffer is None and it == 0
+            ):
                 log_iws = self.init_log_Z_ratios + (
                     self.init_log_Z_log_rs * self.get_invtemp(it + 1)
                 )
-                self.gfn_model.pred_module.set_log_Z(logmeanexp(log_iws).item())
+                if self.init_log_Z == "iw_elbo":
+                    init_log_Z_val = logmeanexp(log_iws).item()
+                elif self.init_log_Z == "elbo":
+                    init_log_Z_val = log_iws.mean().item()
+                else:
+                    raise ValueError(f"Invalid init_log_Z: {self.init_log_Z}")
+                self.gfn_model.pred_module.set_log_Z(init_log_Z_val)
                 del self.init_log_Z_ratios
                 del self.init_log_Z_log_rs
+                self.init_log_Z = None
 
         return loss
 
