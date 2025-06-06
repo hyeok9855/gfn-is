@@ -161,55 +161,58 @@ class Trainer:
             return self._epsilon
         return linear_annealing(it, int(0.5 * self.n_epochs), 0.0, self._epsilon, descending=True)
 
+    def prefill(self) -> None:
+        # Prefill the buffer at the beginning of training
+        assert self.prefill_epochs > 0 and self.buffer is not None
+        with torch.no_grad():
+            for _ in range(self.prefill_epochs):
+                self.fwd_train_step(0)
+
+    def initialize_log_Z(self) -> None:
+        assert self.init_log_Z_ratios is not None and self.init_log_Z_log_rs is not None
+
+        if self.init_log_Z_ratios.shape[0] == 0:
+            # sample one batch to initialize log_Z
+            with torch.no_grad():
+                self.fwd_train_step(0)
+
+        log_iws = self.init_log_Z_ratios + (self.init_log_Z_log_rs * self.get_invtemp(1))
+        if self.init_log_Z == "iw_elbo":
+            init_log_Z_val = logmeanexp(log_iws).item()
+        elif self.init_log_Z == "elbo":
+            init_log_Z_val = log_iws.mean().item()
+        else:
+            raise ValueError(f"Invalid init_log_Z: {self.init_log_Z}")
+        self.gfn_model.pred_module.set_log_Z(init_log_Z_val)
+        del self.init_log_Z_ratios
+        del self.init_log_Z_log_rs
+        self.init_log_Z = None
+
     def train_step(self, it: int) -> float:
         self.gfn_model.train()
+        if it == 0:
+            if self.prefill_epochs > 0:
+                self.prefill()
+            if self.init_log_Z is not None:
+                self.initialize_log_Z()
 
         if self.loss_type == "mle":
             loss = self.bwd_train_step(it)
         elif self.buffer is None:
             loss = self.fwd_train_step(it)
         else:  # self.buffer is not None
-            if (
-                (self.bwd_to_fwd_ratio is not None and it % (self.bwd_to_fwd_ratio + 1) == 0)
-                or (self.fwd_to_bwd_ratio is not None and it % (self.fwd_to_bwd_ratio + 1) != 0)
-            ) or it < self.prefill_epochs:
+            if (self.bwd_to_fwd_ratio is not None and it % (self.bwd_to_fwd_ratio + 1) == 0) or (
+                self.fwd_to_bwd_ratio is not None and it % (self.fwd_to_bwd_ratio + 1) != 0
+            ):
                 loss = self.fwd_train_step(it)
             else:
                 loss = self.bwd_train_step(it)
 
         # MCMC buffer augmentation
-        if self.mcmc is not None and (it > 0 and (it - self.prefill_epochs) % self.mcmc_freq == 0):
-            # TODO: support for intermediate states
-            assert isinstance(self.buffer, TerminalStateBuffer)
-            assert self.buffer.prioritization in ["normalized_iw", "iw", "none", "target"]
+        if self.mcmc is not None and it % self.mcmc_freq == 0:
+            self.perform_mcmc(it)
 
-            buf_xs, _, indices = self.buffer.sample(self.mcmc_batch_size)
-
-            # Augment the buffer with samples from MCMC
-            mcmc_xs, mcmc_log_rs = self.mcmc.sample(buf_xs)
-            indices = indices.unsqueeze(0).repeat(mcmc_xs.shape[0], 1)
-
-            mcmc_xs = mcmc_xs.reshape(-1, self.energy.ndim)
-            mcmc_log_rs = mcmc_log_rs.reshape(-1)
-            indices = indices.reshape(-1)
-
-            if isinstance(self.energy, ALDPFAB):
-                ind_L = self.energy.get_lform_indices(mcmc_xs)
-                mcmc_xs = mcmc_xs[ind_L]
-                mcmc_log_rs = mcmc_log_rs[ind_L]
-                indices = indices[ind_L]
-
-            data_dict = {"states": mcmc_xs, "log_fs": mcmc_log_rs}
-            if isinstance(self.buffer, GISTerminalStateBuffer):
-                data_dict["log_iws"] = self.buffer.log_iws_dataset[indices]
-            elif self.buffer.normalized_iws_dataset is not None:
-                data_dict["normalized_iws"] = self.buffer.normalized_iws_dataset[indices]
-
-            self.buffer.add(**data_dict)
-
-        if it < self.prefill_epochs:
-            return loss.item()
-        elif loss.isinf() or loss > 1e28:
+        if loss.isinf() or loss > 1e28:
             print(f"Loss is inf or too large: {loss.item()}; skipping this batch...")
             return loss.item()
         elif loss.isnan():
@@ -310,8 +313,7 @@ class Trainer:
         if self.alternating:
             self._alternating_flag = not self._alternating_flag
 
-        # Initialize log_Z
-        if self.init_log_Z is not None:
+        if it == 0 and self.init_log_Z is not None:
             assert self.init_log_Z_ratios is not None and self.init_log_Z_log_rs is not None
             assert (
                 isinstance(self.gfn_model.pred_module.flow_model, torch.nn.Parameter)
@@ -320,23 +322,6 @@ class Trainer:
             ratios = (log_pbs.sum(-1) - log_pfs_exp.sum(-1)).detach()
             self.init_log_Z_ratios = torch.cat([self.init_log_Z_ratios, ratios], dim=0)
             self.init_log_Z_log_rs = torch.cat([self.init_log_Z_log_rs, log_fs[:, -1]], dim=0)
-
-            if (self.buffer is not None and it >= (self.prefill_epochs - 1)) or (
-                self.buffer is None and it == 0
-            ):
-                log_iws = self.init_log_Z_ratios + (
-                    self.init_log_Z_log_rs * self.get_invtemp(it + 1)
-                )
-                if self.init_log_Z == "iw_elbo":
-                    init_log_Z_val = logmeanexp(log_iws).item()
-                elif self.init_log_Z == "elbo":
-                    init_log_Z_val = log_iws.mean().item()
-                else:
-                    raise ValueError(f"Invalid init_log_Z: {self.init_log_Z}")
-                self.gfn_model.pred_module.set_log_Z(init_log_Z_val)
-                del self.init_log_Z_ratios
-                del self.init_log_Z_log_rs
-                self.init_log_Z = None
 
         return loss
 
@@ -430,6 +415,62 @@ class Trainer:
             loss = losses.mean()
 
         return loss
+
+    def perform_mcmc(self, it: int) -> None:
+        # TODO: support for intermediate states
+        assert self.mcmc is not None
+        assert isinstance(self.buffer, TerminalStateBuffer) and len(self.buffer) > 0
+
+        buf_xs, _, indices = self.buffer.sample(self.mcmc_batch_size)
+
+        # Augment the buffer with samples from MCMC
+        mcmc_xs, mcmc_log_rs = self.mcmc.sample(buf_xs)
+        indices = indices.unsqueeze(0).repeat(mcmc_xs.shape[0], 1)
+
+        mcmc_xs = mcmc_xs.reshape(-1, self.energy.ndim)
+        mcmc_log_rs = mcmc_log_rs.reshape(-1)
+        indices = indices.reshape(-1)
+
+        if isinstance(self.energy, ALDPFAB):
+            ind_L = self.energy.get_lform_indices(mcmc_xs)
+            mcmc_xs = mcmc_xs[ind_L]
+            mcmc_log_rs = mcmc_log_rs[ind_L]
+            indices = indices[ind_L]
+
+        data_dict = {"states": mcmc_xs, "log_fs": mcmc_log_rs}
+        if isinstance(self.buffer, GISTerminalStateBuffer):
+            data_dict["log_iws"] = self.buffer.log_iws_dataset[indices]
+        elif self.buffer.normalized_iws_dataset is not None:
+            data_dict["normalized_iws"] = self.buffer.normalized_iws_dataset[indices]
+        elif self.buffer.prioritization == "loss":
+            losses = []
+            n_batches = mcmc_xs.shape[0] // self.batch_size + int(
+                mcmc_xs.shape[0] % self.batch_size != 0
+            )
+            with torch.no_grad():
+                for i in range(n_batches):
+                    from_idx = i * self.batch_size
+                    to_idx = min(from_idx + self.batch_size, mcmc_xs.shape[0])
+                    bsz = to_idx - from_idx
+                    ts = self.train_discretizer(bsz, self.train_T).to(self.device)
+                    _, log_pfs, log_pbs, log_fs = self.gfn_model.get_trajectory_bwd(
+                        mcmc_xs[from_idx:to_idx], ts, mcmc_log_rs[from_idx:to_idx]
+                    )
+                    losses.append(
+                        get_loss(
+                            self.loss_type,
+                            log_pfs,
+                            log_pbs,
+                            log_fs,
+                            invtemp=self.get_invtemp(it),
+                            subtb_coef_matrix=self.subtb_coef_matrix,
+                            subtb_n_chunks=self.subtb_n_chunks,
+                            ndim=self.energy.ndim,
+                        )
+                    )
+            data_dict["losses"] = torch.cat(losses, dim=0)
+
+        self.buffer.add(**data_dict)
 
     def eval_and_plot(
         self,
