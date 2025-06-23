@@ -6,8 +6,6 @@ from pathlib import Path
 from ..utils import tensor_to_np
 from ..data import Experience
 
-from line_profiler import profile
-
 
 class BaseTBGFlowNet:
     """Trajectory balance parameterization:
@@ -164,7 +162,6 @@ class BaseTBGFlowNet:
     Exploration & modified policies
     """
 
-    @profile
     def batch_fwd_sample(self, n, epsilon=0.0, uniform=False):
         """Batch samples dataset with n items.
 
@@ -414,7 +411,6 @@ class BaseTBGFlowNet:
             total += state_to_logp[parent]
         return total
 
-    @profile
     def batch_traj_fwd_logp(self, batch):
         """Computes logp(trajectory) under current model.
         Batches over all states in all trajectories in a batch.
@@ -499,7 +495,6 @@ class BaseTBGFlowNet:
     Learning
     """
 
-    @profile
     def batch_loss_trajectory_balance(self, batch):
         """batch: List of [Experience].
 
@@ -531,7 +526,6 @@ class BaseTBGFlowNet:
         mean_loss = torch.mean(losses)
         return mean_loss, adv_reward
 
-    @profile
     def train_tb(self, batch, log=True):
         """Step on trajectory balance loss.
 
@@ -599,7 +593,6 @@ Trajectory/state rolling and accumulating
 """
 
 
-@profile
 def unroll_trajs(trajs):
     # Unroll trajectory into states: (num. trajs) -> (num. states)
     s1s, s2s = [], []
@@ -613,7 +606,6 @@ def unroll_trajs(trajs):
     return s1s, s2s, traj_idx_to_batch_idxs
 
 
-@profile
 def accumulate_by_traj(chain, batch_logp, traj_idx_to_batch_idxs):
     # Sum states by trajectory: (num. states) -> (num. trajs)
     for traj_idx, (start, end) in traj_idx_to_batch_idxs.items():

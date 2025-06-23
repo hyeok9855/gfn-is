@@ -9,7 +9,6 @@ from .basemdp import BaseState, BaseMDP
 
 import enum
 from dataclasses import dataclass
-from line_profiler import profile
 
 
 class SeqPAState(BaseState):

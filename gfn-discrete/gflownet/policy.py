@@ -2,7 +2,6 @@ import torch
 import numpy as np
 from collections import defaultdict
 from itertools import chain
-from line_profiler import profile
 
 from . import utils
 
@@ -284,7 +283,6 @@ class BasePolicySSR:
     logps unique
     """
 
-    @profile
     def logps_unique(self, batch):
         """Differentiable; output logps of unique children/parents.
 
@@ -346,7 +344,6 @@ class BasePolicySSR:
     sample
     """
 
-    @profile
     def sample(self, batch, epsilon=0.0):
         batched = bool(type(batch) is list)
         if not batched:
@@ -374,7 +371,6 @@ class BasePolicySSR:
     Forward
     """
 
-    @profile
     def __forward(self, state, childs_uniq):
         """Single state -> (unique child states, logps) efficiently.
 

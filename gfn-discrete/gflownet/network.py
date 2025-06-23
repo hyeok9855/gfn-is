@@ -5,7 +5,6 @@ import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, GINEConv, global_mean_pool
 
 from . import utils
-from line_profiler import profile
 
 
 """
@@ -25,7 +24,6 @@ class StateFeaturizeWrap(torch.nn.Module):
         self.featurizer = featurizer
         self.net = net
 
-    @profile
     def forward(self, batch):
         """List of States -> torch.tensor"""
         tensor_inp = utils.batch([self.featurizer(state) for state in batch])

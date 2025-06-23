@@ -8,7 +8,6 @@ from tqdm import tqdm
 from collections import OrderedDict
 
 from .data import Experience
-from line_profiler import profile
 
 
 class FixSizeOrderedDict(OrderedDict):
@@ -46,7 +45,6 @@ class Trainer:
     Training
     """
 
-    @profile
     def learn(self, initial_XtoR=None) -> None:
         """Main learning training loop.
         Each learning round:
@@ -308,7 +306,6 @@ class Trainer:
         ]
         return offline_dataset
 
-    @profile
     def evaluate(self, round_num, samples, allXtoR):
         rewards = []
         for exp in samples:
