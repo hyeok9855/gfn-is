@@ -217,20 +217,11 @@ def dynamic_inherit_mdp(base, args):
             r = r * self.scale + 1e-12
             return r
 
-        def real_reward(self, x):
-            assert x.is_leaf, "Error: Tried to compute reward on non-leaf node."
-            return np.maximum(self.oracle.get_fitness([x.content]).item(), self.SCALE_REWARD_MIN)
-
         def is_mode(self, x, r):
             # if self.mode_metric == "threshold":
             #   return r >= self.mode_r_threshold
             # else:
             return x.content in self.modes
-
-        def unnormalize(self, r):
-            r = r / self.scale
-            r = r ** (1 / self.REWARD_EXP)
-            return r
 
         """
         Interpretation & visualization

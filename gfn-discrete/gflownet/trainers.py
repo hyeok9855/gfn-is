@@ -52,7 +52,6 @@ class Trainer:
             sample a new dataset using exploration policy.
           Each offline batch:
             resample batch from full historical dataset
-        Monitor exploration - judge modes with monitor_explore callable.
 
         To learn on fixed dataset only: Set 0 online batches per round,
         and provide initial dataset.
@@ -74,7 +73,11 @@ class Trainer:
         print(f"Starting Training. Each round: num_online={num_online}, num_offline={num_offline}")
         total_samples = []
         accepted_samples = []
-        for round_num in tqdm(range(self.args.num_active_learning_rounds)):
+        for round_num in tqdm(
+            range(self.args.num_active_learning_rounds),
+            desc="Training",
+            dynamic_ncols=True,
+        ):
             # Online training - skip first if initial dataset was provided
             if not initial_XtoR or round_num > 0:
                 for _ in range(num_online):
@@ -159,7 +162,6 @@ class Trainer:
                         for _ in range(self.args.offline_num_steps_per_batch):
                             self.model.train(offline_dataset)
                 else:
-                    # offline_xs = self.select_offline_xs(allXtoR, offline_bsize)
                     if self.args.per:
                         offline_xs = self.select_offline_xs_per(
                             allXtoR_buffer, allXtoL_buffer, offline_bsize

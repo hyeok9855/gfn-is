@@ -22,23 +22,20 @@ class QM9stringMDP(molstrmdp.MolStrMDP):
     def __init__(self, args):
         super().__init__(args)
         self.args = args
-
-        # mode_info_file = args.mode_info_file
+        prefix = f"datasets/qm9str"
 
         # Read from file
         print(f"Loading data ...")
-        with open(args.x_to_r_file, "rb") as f:
+        with open(f"{prefix}/block_qm9str_v1_s5.pkl", "rb") as f:
             self.oracle = pickle.load(f)
 
         # scale rewards
         all_rewards = np.array(list(self.oracle.values()))
-        scaled_rewards, self.unscale_fn = scale_rewards(
+        scaled_rewards = scale_rewards(
             all_rewards, args.beta, args.scale_reward_min, args.scale_reward_max
         )
+        assert min(scaled_rewards) > 0
         self.scaled_oracle = {x: y for x, y in zip(self.oracle.keys(), scaled_rewards)}
-        assert min(self.scaled_oracle.values()) > 0
-
-        prefix = f"datasets/qm9str"
 
         # define modes as top % of xhashes and diversity metrics
         if args.mode_metric == "threshold":
@@ -113,9 +110,6 @@ class QM9stringMDP(molstrmdp.MolStrMDP):
 
     def is_mode(self, x, r):
         return x.content in self.modes
-
-    def unnormalize(self, r):
-        return self.unscale_fn(r)
 
     # Diversity
     def dist_states(self, state1, state2):

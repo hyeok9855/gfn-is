@@ -59,11 +59,6 @@ saved_models_dir: 'saved_models'
 save_every_x_active_rounds: 500
 eval_every_x_active_rounds: 50
 
-# monitor
-monitor_num_samples: 128
-monitor_fast_every: 10
-monitor_slow_every: 200
-
 # reward
 scale_reward_min: 0.001
 scale_reward_max: 10
@@ -72,7 +67,6 @@ beta: 40
 # experiment-specific
 mdp_style: 'pa' # ['pa', 'autoregressive']
 mode_info_file: datasets/rna/
-monitor_info_file: datasets/rna/
 mode_metric: hammingball
 mode_percentile: 0.0001
 mode_hammingball_dist: 1

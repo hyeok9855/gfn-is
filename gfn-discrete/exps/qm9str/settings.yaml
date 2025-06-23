@@ -57,11 +57,6 @@ saved_models_dir: 'saved_models/qm9str/'
 save_every_x_active_rounds: 500
 eval_every_x_active_rounds: 100
 
-# monitor
-monitor_num_samples: 128
-monitor_fast_every: 10
-monitor_slow_every: 200
-
 # reward
 scale_reward_min: 0.001
 scale_reward_max: 100
@@ -69,7 +64,6 @@ beta: 20
 
 # experiment-specific settings
 blocks_file: datasets/qm9str/block_qm9str_v1.json
-x_to_r_file: datasets/qm9str/block_qm9str_v1_s5.pkl
 mode_info_file: datasets/qm9str/mode_info.pkl
 mode_metric: threshold
 mode_percentile: 0.005

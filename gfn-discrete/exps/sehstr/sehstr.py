@@ -10,7 +10,8 @@ import torch
 
 from gflownet.MDPs import molstrmdp
 from gflownet.GFNs import models
-from datasets.sehstr import gbr_proxy
+
+# from datasets.sehstr import gbr_proxy
 from gflownet.utils import scale_rewards
 from gflownet.trainers import Trainer
 
@@ -23,30 +24,20 @@ class SEHstringMDP(molstrmdp.MolStrMDP):
     def __init__(self, args):
         super().__init__(args)
         self.args = args
+        prefix = f"datasets/sehstr"
 
-        # mode_info_file = args.mode_info_file
-        self.proxy_model = gbr_proxy.sEH_GBR_Proxy(args)
+        # self.proxy_model = gbr_proxy.sEH_GBR_Proxy(args)
 
-        with open("datasets/sehstr/block_18_stop6.pkl", "rb") as f:
+        with open(f"{prefix}/block_18_stop6.pkl", "rb") as f:
             self.oracle = pickle.load(f)
-
-        # for x in tqdm(self.oracle):
-        #     x_feat = self.proxy_model.featurize(x)
-        #     self.oracle[x] = self.proxy_model.model.predict(x_feat)
-
-        # import pdb
-
-        # pdb.set_trace()
 
         # scale rewards
         all_rewards = np.array(list(self.oracle.values()))
-        scaled_rewards, self.unscale_fn = scale_rewards(
+        scaled_rewards = scale_rewards(
             all_rewards, args.beta, args.scale_reward_min, args.scale_reward_max
         )
+        assert min(scaled_rewards) > 0
         self.scaled_oracle = {x: y for x, y in zip(self.oracle.keys(), scaled_rewards)}
-        assert min(self.scaled_oracle.values()) > 0
-
-        prefix = f"datasets/sehstr"
 
         # define modes as top % of xhashes and diversity metrics
         if args.mode_metric == "threshold":
@@ -133,9 +124,6 @@ class SEHstringMDP(molstrmdp.MolStrMDP):
             return r >= self.mode_r_threshold
         else:
             return x.content in self.modes
-
-    def unnormalize(self, r):
-        return self.unscale_fn(r)
 
     # Diversity
     def dist_states(self, state1, state2):
