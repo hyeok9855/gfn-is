@@ -1,0 +1,205 @@
+"""
+seh as string
+"""
+
+import os
+import pickle, functools
+import numpy as np
+from tqdm import tqdm
+import torch
+
+from gflownet.MDPs import molstrmdp
+from gflownet.GFNs import models
+from datasets.sehstr import gbr_proxy
+from gflownet.utils import scale_rewards
+from gflownet.trainers import Trainer
+
+
+from rdkit.Chem.rdMolDescriptors import GetMorganFingerprintAsBitVect
+from rdkit.DataStructs import FingerprintSimilarity
+
+
+class SEHstringMDP(molstrmdp.MolStrMDP):
+    def __init__(self, args):
+        super().__init__(args)
+        self.args = args
+
+        # mode_info_file = args.mode_info_file
+        self.proxy_model = gbr_proxy.sEH_GBR_Proxy(args)
+
+        with open("datasets/sehstr/block_18_stop6.pkl", "rb") as f:
+            self.oracle = pickle.load(f)
+
+        # for x in tqdm(self.oracle):
+        #     x_feat = self.proxy_model.featurize(x)
+        #     self.oracle[x] = self.proxy_model.model.predict(x_feat)
+
+        # import pdb
+
+        # pdb.set_trace()
+
+        # scale rewards
+        all_rewards = np.array(list(self.oracle.values()))
+        scaled_rewards, self.unscale_fn = scale_rewards(
+            all_rewards, args.beta, args.scale_reward_min, args.scale_reward_max
+        )
+        self.scaled_oracle = {x: y for x, y in zip(self.oracle.keys(), scaled_rewards)}
+        assert min(self.scaled_oracle.values()) > 0
+
+        prefix = f"datasets/sehstr"
+
+        # define modes as top % of xhashes and diversity metrics
+        if args.mode_metric == "threshold":
+            filename = f"{prefix}/modes_percentile_{args.mode_percentile}.pkl"
+            if os.path.exists(filename):
+                with open(filename, "rb") as f:
+                    self.modes = pickle.load(f)
+            else:
+                mode_percentile = args.mode_percentile
+                self.mode_r_threshold = np.percentile(scaled_rewards, 100 * (1 - mode_percentile))
+                num_modes = int(len(self.scaled_oracle) * mode_percentile)
+                sorted_xs = sorted(self.scaled_oracle, key=self.scaled_oracle.get)
+                self.modes = set(sorted_xs[-num_modes:])
+                with open(filename, "wb") as f:
+                    pickle.dump(self.modes, f)
+        elif args.mode_metric == "tanimoto":
+            filename = f"{prefix}/modes_tanimoto_div{args.mode_div_threshold}_percentile_{args.mode_percentile}.pkl"
+            if os.path.exists(filename):
+                with open(filename, "rb") as f:
+                    self.modes = pickle.load(f)
+            else:
+                mode_percentile = args.mode_percentile
+                self.mode_r_threshold = np.percentile(scaled_rewards, 100 * (1 - mode_percentile))
+                self.mode_div_threshold = args.mode_div_threshold
+
+                print(
+                    f"Computing modes using tanimoto similarity with threshold {self.mode_div_threshold}..."
+                )
+                self.modes = set()
+                for x, y in tqdm(self.scaled_oracle.items()):
+                    y = self.scaled_oracle[x]
+                    if y >= self.mode_r_threshold:
+                        if len(self.modes) == 0:
+                            self.modes.add(x)
+                        else:
+                            flag = False
+                            for mode in self.modes:
+                                diversity_score = self.dist_states(x, mode)
+                                if diversity_score <= self.mode_div_threshold:
+                                    flag = True
+                                    break
+                            if not flag:
+                                self.modes.add(x)
+                with open(filename, "wb") as f:
+                    pickle.dump(self.modes, f)
+
+        print(f"Mode metric: {args.mode_metric}\tFound num modes: {len(self.modes)}")
+
+        # compute true expected reward and logz
+        log_rewards = np.log(scaled_rewards)
+        self.logZ = torch.logsumexp(torch.from_numpy(log_rewards), dim=0).item()
+        log_rewards_square = torch.logsumexp(torch.from_numpy(log_rewards * 2), dim=0).item()
+        self.expected_reward = np.exp(log_rewards_square - self.logZ)
+
+        print(
+            f"Beta: {args.beta}\tExpected reward: {self.expected_reward:.2f}\tLogZ: {self.logZ:.2f}"
+        )
+
+        true_samples_filename = f"{prefix}/samples_beta{args.beta}.pkl"
+        if os.path.exists(true_samples_filename):
+            with open(true_samples_filename, "rb") as f:
+                true_samples_info = pickle.load(f)
+            self.true_samples = true_samples_info["true_samples"]
+        else:
+            # generate samples from true distribution
+            all_samples = list(self.oracle.keys())
+            true_dist = np.exp(log_rewards - self.logZ)
+            true_samples_idx = np.random.choice(
+                len(self.oracle), size=args.eval_num_samples, p=true_dist
+            )
+            self.true_samples = [self.state(all_samples[i], is_leaf=True) for i in true_samples_idx]
+
+            with open(true_samples_filename, "wb") as f:
+                pickle.dump({"true_samples": self.true_samples}, f)
+
+    # Core
+    @functools.lru_cache(maxsize=None)
+    def reward(self, x):
+        assert x.is_leaf, "Error: Tried to compute reward on non-leaf node."
+        return self.scaled_oracle[x.content]
+
+    def is_mode(self, x, r):
+        if self.args.mode_metric == "threshold":
+            return r >= self.mode_r_threshold
+        else:
+            return x.content in self.modes
+
+    def unnormalize(self, r):
+        return self.unscale_fn(r)
+
+    # Diversity
+    def dist_states(self, state1, state2):
+        """Tanimoto similarity on morgan fingerprints"""
+        fp1 = self.get_morgan_fp(state1)
+        fp2 = self.get_morgan_fp(state2)
+        return 1 - FingerprintSimilarity(fp1, fp2)
+
+    @functools.lru_cache(maxsize=None)
+    def get_morgan_fp(self, state):
+        mol = self.state_to_mol(state)
+        fp = GetMorganFingerprintAsBitVect(mol, 2, nBits=1024)
+        return fp
+
+
+def main(args):
+    print("Running experiment sehstr ...")
+    if args.model == "gafn":
+        mdp = SEHstringMDP(args)
+        actor = molstrmdp.MolStrActor(args, mdp)
+        rnd_target = molstrmdp.MolStrActor(args, mdp)
+        rnd_predict = molstrmdp.MolStrActor(args, mdp)
+        model = models.make_model(args, mdp, actor, rnd_target=rnd_target, rnd_predict=rnd_predict)
+        trainer = Trainer(args, model, mdp)
+    elif args.model == "teacher":
+        mdp_student = SEHstringMDP(args)
+        mdp_teacher = SEHstringMDP(args)
+
+        actor_student = molstrmdp.MolStrActor(args, mdp_student)
+        actor_teacher = molstrmdp.MolStrActor(args, mdp_teacher)
+
+        model_teacher, model_student = models.make_teacher_student_model(
+            args, mdp_student, mdp_teacher, actor_student, actor_teacher
+        )
+        trainer = Trainer(args, model_student, mdp_student, teacher=model_teacher)
+    else:
+        mdp = SEHstringMDP(args)
+        actor = molstrmdp.MolStrActor(args, mdp)
+        model = models.make_model(args, mdp, actor)
+        trainer = Trainer(args, model, mdp)
+
+    trainer.learn()
+    return
+
+
+def number_of_modes(args):
+    print("Running evaluation sehstr ...")
+    mdp = SEHstringMDP(args)
+
+    # load model checkpoint
+    ckpt_path = args.saved_models_dir + args.run_name
+    with open(ckpt_path + "/" + f"final_sample.pkl", "rb") as f:
+        generated_samples = pickle.load(f)
+
+    unique_modes = set()
+    batch_size = args.num_samples_per_online_batch
+    number_of_modes = np.zeros((len(generated_samples) // batch_size,))
+    with tqdm(total=len(generated_samples)) as pbar:
+        for i in range(0, len(generated_samples), batch_size):
+            for exp in generated_samples[i : i + batch_size]:
+                if mdp.is_mode(exp.x, exp.r) and exp.x.content not in unique_modes:
+                    unique_modes.add(exp.x.content)
+                    number_of_modes[i // batch_size] += 1
+            pbar.update(batch_size)
+            pbar.set_postfix(number_of_modes=np.sum(number_of_modes))
+    print(np.sum(number_of_modes))
+    np.savez_compressed(ckpt_path + "/" + f"number_of_modes.npz", modes=number_of_modes)

@@ -1,0 +1,23 @@
+# Python 3.10
+# Note: Python 3.11 is incompatible with scikit-learn==1.0.2
+
+attrdict==2.0.1
+numpy<2
+wandb==0.19.0
+urllib3
+scipy
+tqdm
+polyleven==0.9
+scikit-learn==1.0.2
+pandas
+matplotlib
+rdkit==2025.3.3
+flexs==0.2.8  # For RNA
+viennarna==2.7.0  # For RNA
+tensorflow-probability==0.22.1
+tensorflow==2.15.1
+typing-extensions==4.12.2
+
+# torch  # Install torch following the instructions at https://pytorch.org/
+# torch_geometric
+# torch_scatter -f https://data.pyg.org/whl/torch-2.?.?+cu???.html
