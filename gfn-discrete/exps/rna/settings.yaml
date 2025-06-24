@@ -41,7 +41,7 @@ num_active_learning_rounds: 2000
 num_samples_per_online_batch: 32
 num_samples_per_offline_batch: 32
 
-num_steps_per_batch: 1
+online_num_steps_per_batch: 1
 offline_num_steps_per_batch: 1
 num_online_batches_per_round: 1
 num_offline_batches_per_round: 1

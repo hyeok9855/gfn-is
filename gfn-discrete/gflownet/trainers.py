@@ -111,17 +111,18 @@ class Trainer:
                     pass
                 elif self.args.model == "ppo":
                     # As ppo is on-policy algorithm, we double online training steps
-                    for _ in range(self.args.num_steps_per_batch * 2):
+                    for _ in range(self.args.online_num_steps_per_batch * 2):
                         self.model.train(explore_data)
                 elif self.args.model in ["tb", "teacher"]:
-                    for _ in range(self.args.num_steps_per_batch):
+                    for _ in range(self.args.online_num_steps_per_batch):
                         log_iw = self.model.train(explore_data)
-
                         # Train teacher model with teacher reward
+                        normalized_iw = log_iw.softmax(dim=0)
+                        tb_delta = log_iw - self.model.logZ
+                        tb_loss = tb_delta**2
+                        teacher_reward = torch.where(tb_delta > 0, 20 * tb_loss, tb_loss)
+
                         if self.args.model == "teacher":
-                            tb_delta = log_iw - self.model.logZ
-                            tb_loss = tb_delta**2
-                            teacher_reward = torch.where(tb_delta > 0, 20 * tb_loss, tb_loss)
                             assert isinstance(self.teacher, TeacherGFN)
                             self.teacher.train(
                                 explore_data, torch.log(teacher_reward).detach(), round_num
@@ -142,13 +143,13 @@ class Trainer:
                             case "reward":
                                 prioritized_buffer[exp.x] = exp.r
                             case "loss":
-                                prioritized_buffer[exp.x] = 1.0  # FIXME
+                                prioritized_buffer[exp.x] = tb_loss[i].item()  # type: ignore
                             case "teacher_reward":
-                                prioritized_buffer[exp.x] = 1.0  # FIXME
+                                prioritized_buffer[exp.x] = teacher_reward[i].item()  # type: ignore
                             case "iw":
-                                prioritized_buffer[exp.x] = 1.0  # FIXME
+                                prioritized_buffer[exp.x] = log_iw[i].item()  # type: ignore
                             case "normalized_iw":
-                                prioritized_buffer[exp.x] = 1.0  # FIXME
+                                prioritized_buffer[exp.x] = normalized_iw[i].item()  # type: ignore
                             case _:
                                 raise ValueError(
                                     f"Unknown offline select: {self.args.offline_select}"
