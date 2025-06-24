@@ -120,7 +120,9 @@ class Trainer:
                         normalized_iw = log_iw.softmax(dim=0)
                         tb_delta = log_iw - self.model.logZ
                         tb_loss = tb_delta**2
-                        teacher_reward = torch.where(tb_delta > 0, 20 * tb_loss, tb_loss)
+                        teacher_reward = torch.log(
+                            torch.where(tb_delta > 0, 20 * tb_loss, tb_loss) + 1.001
+                        )  # Note: this definition of teacher reward is different from the one in the paper
 
                         if self.args.model == "teacher":
                             assert isinstance(self.teacher, TeacherGFN)
@@ -182,18 +184,19 @@ class Trainer:
                         if self.args.model == "teacher":
                             tb_delta = log_iw - self.model.logZ
                             tb_loss = tb_delta**2
-                            teacher_reward = torch.where(tb_delta > 0, 20 * tb_loss, tb_loss)
-                            assert isinstance(self.teacher, TeacherGFN)
-                            self.teacher.train(
+                            teacher_reward = torch.log(
+                                torch.where(tb_delta > 0, 20 * tb_loss, tb_loss) + 1.001
+                            )  # Note: this definition of teacher reward is different from the one in the paper
+                            self.teacher.train(  # type: ignore
                                 offline_dataset, torch.log(teacher_reward).detach(), round_num
                             )
 
                 if self.args.offline_select in ["loss", "teacher_reward"]:
                     for i, exp in enumerate(offline_dataset):
                         if self.args.offline_select == "loss":
-                            prioritized_buffer[exp.x] = None  # FIXME with new buffer
+                            prioritized_buffer[exp.x] = tb_loss[i].item()  # type: ignore
                         elif self.args.offline_select == "teacher_reward":
-                            prioritized_buffer[exp.x] = None  # FIXME with new buffer
+                            prioritized_buffer[exp.x] = teacher_reward[i].item()  # type: ignore
 
             if round_num and (
                 round_num % self.args.eval_every_x_active_rounds == 0
