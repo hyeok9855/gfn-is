@@ -27,8 +27,7 @@ class TeacherGFlowNet:
         self.policy_fwd = actor.policy_fwd
         self.policy_back = actor.policy_back
 
-        self.logZ = torch.nn.Parameter(torch.tensor([5.0], device=self.args.device))
-        self.logZ_lower = 0
+        self.logZ = torch.nn.Parameter(torch.tensor([0.0], device=self.args.device))
 
         self.nets = [self.policy_fwd, self.policy_back]
         for net in self.nets:
@@ -50,22 +49,6 @@ class TeacherGFlowNet:
 
         self.optimizers = [self.optimizer_fwdZ]
         pass
-
-    """
-    logZ
-    """
-
-    def init_logz(self, val):
-        print(f"Initializing Z to {val}. Using this as floor for clamping ...")
-        self.logZ.data = torch.tensor([val], device=self.args.device, requires_grad=True)
-        assert self.logZ.is_leaf
-        self.logZ_lower = val
-        return
-
-    def clamp_logZ(self):
-        """Clamp logZ to min value. Default assumes logZ > 0 (Z > 1)."""
-        self.logZ.data = torch.clamp(self.logZ, min=self.logZ_lower)
-        return
 
     """
     Forward and backward policy
@@ -473,7 +456,7 @@ class TeacherGFlowNet:
         return init_temp + anneal_rate * (final_temp - init_temp)
         # return self.args.teacher_beta
 
-    def batch_traj_back_logp(self, batch, adv_logreward, round_num):
+    def batch_traj_bwd_logp(self, batch, adv_logreward, round_num):
         """Computes logp(trajectory) under current model.
         Batches over all states in all trajectories in a batch.
 
@@ -498,7 +481,7 @@ class TeacherGFlowNet:
         # back_chain is [bsize]
         return back_chain
 
-    def batch_traj_back_logp_unroll(self, batch):
+    def batch_traj_bwd_logp_unroll(self, batch):
         trajs = [exp.traj for exp in batch]
         fwd_states, back_states, unroll_idxs = unroll_trajs(trajs)
 
@@ -530,7 +513,7 @@ class TeacherGFlowNet:
         all states in all trajs in batch, then collates.
         """
         fwd_chain = self.batch_traj_fwd_logp(batch)
-        back_chain = self.batch_traj_back_logp(batch, adv_logreward, round_num)
+        back_chain = self.batch_traj_bwd_logp(batch, adv_logreward, round_num)
 
         # obtain target: mix back_chain with logp_guide
         targets = []
@@ -571,7 +554,6 @@ class TeacherGFlowNet:
             torch.nn.utils.clip_grad_norm_(param_set, self.args.clip_grad_norm)
         for opt in self.optimizers:
             opt.step()
-        self.clamp_logZ()
 
         if log:
             batch_loss = tensor_to_np(batch_loss)

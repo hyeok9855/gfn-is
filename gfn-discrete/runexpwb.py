@@ -61,10 +61,8 @@ if __name__ == "__main__":
     if args.model == "subtb":
         run_name += f"{args.lamda}"
 
-    if args.offline_select == "prt":
+    if args.num_offline_batches_per_round > 0:
         run_name += "_" + args.offline_select
-    if args.per:
-        run_name += "_" + "per"
 
     run_name += "_" + f"epsilon{args.explore_epsilon}"
 

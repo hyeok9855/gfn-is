@@ -3,6 +3,7 @@ import torch
 from torch_scatter import scatter_sum
 import wandb
 
+from ..data import Experience
 from .basegfn import BaseTBGFlowNet, tensor_to_np
 from .advantage_actor_critic import A2C
 from .gafn import AugGFlowNet
@@ -123,7 +124,6 @@ class SubTBGFN(BaseTBGFlowNet):
             torch.nn.utils.clip_grad_norm_(param_set, self.args.clip_grad_norm)
         for opt in self.optimizers:
             opt.step()
-        self.clamp_logZ()
 
         if log:
             batch_loss = tensor_to_np(batch_loss)
@@ -137,7 +137,7 @@ class SubTBGFN(BaseTBGFlowNet):
         all states in all trajs in batch, then collates.
         """
         log_F_s, log_pf_actions = self.batch_traj_fwd_logp_unroll(batch)
-        log_F_next_s, log_pb_actions = self.batch_traj_back_logp_unroll(batch)
+        log_F_next_s, log_pb_actions = self.batch_traj_bwd_logp_unroll(batch)
 
         log_F_s[:, 0] = self.logZ.repeat(len(batch))
         for i, exp in enumerate(batch):
@@ -205,7 +205,7 @@ class DBGFN(BaseTBGFlowNet):
         all states in all trajs in batch, then collates.
         """
         log_F_s, log_pf_actions = self.batch_traj_fwd_logp_unroll(batch)
-        log_F_next_s, log_pb_actions = self.batch_traj_back_logp_unroll(batch)
+        log_F_next_s, log_pb_actions = self.batch_traj_bwd_logp_unroll(batch)
 
         for i, exp in enumerate(batch):
             log_F_next_s[i, -1] = exp.logr.clone().detach()
@@ -227,7 +227,7 @@ class MaxEntGFN(BaseTBGFlowNet):
         super().__init__(args, mdp, actor)
         print("Model: MaxEntGFN")
 
-    def train(self, batch):
+    def train(self, batch: list[Experience]) -> torch.Tensor:
         return self.train_tb(batch)
 
     def back_logps_unique(self, batch):
@@ -313,7 +313,7 @@ class SubstructureGFN(BaseTBGFlowNet):
         Uses 1 pass for fwd and back net.
         """
         fwd_chain = self.batch_traj_fwd_logp(batch)
-        back_chain = self.batch_traj_back_logp(batch)
+        back_chain = self.batch_traj_bwd_logp(batch)
 
         # 1. Obtain back policy loss
         logp_guide = torch.stack([exp.logp_guide for exp in batch])
@@ -355,7 +355,7 @@ class SubstructureGFN(BaseTBGFlowNet):
             # torch.nn.utils.clip_grad_norm_(param_set, self.args.clip_grad_norm, error_if_nonfinite=True)
             torch.nn.utils.clip_grad_norm_(param_set, self.args.clip_grad_norm)
         self.optimizer_fwdZ.step()
-        self.clamp_logZ()
+
         if log:
             loss_tb = tensor_to_np(loss_tb)
             print(f"Fwd training:", loss_tb)

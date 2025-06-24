@@ -28,8 +28,8 @@ Run the following commands:
 python runexpwb.py --setting qm9str --model teacher
 
 # With PRT
-python runexpwb.py --setting qm9str --model teacher --offline_select prt
+python runexpwb.py --setting qm9str --model teacher --offline_select reward
 
 # With PER
-python runexpwb.py --setting qm9str --model teacher --per True
+python runexpwb.py --setting qm9str --model teacher --offline_select teacher_reward
 ~~~

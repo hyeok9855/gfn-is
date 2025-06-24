@@ -27,8 +27,7 @@ class BaseTBGFlowNet:
         self.policy_fwd = actor.policy_fwd
         self.policy_back = actor.policy_back
 
-        self.logZ = torch.nn.Parameter(torch.tensor([5.0], device=self.args.device))
-        self.logZ_lower = 0
+        self.logZ = torch.nn.Parameter(torch.tensor([0.0], device=self.args.device))
 
         self.nets = [self.policy_fwd, self.policy_back]
         for net in self.nets:
@@ -47,22 +46,6 @@ class BaseTBGFlowNet:
         )
         self.optimizers = [self.optimizer_fwdZ, self.optimizer_back]
         pass
-
-    """
-    logZ
-    """
-
-    def init_logz(self, val):
-        print(f"Initializing Z to {val}. Using this as floor for clamping ...")
-        self.logZ.data = torch.tensor([val], device=self.args.device, requires_grad=True)
-        assert self.logZ.is_leaf
-        self.logZ_lower = val
-        return
-
-    def clamp_logZ(self):
-        """Clamp logZ to min value. Default assumes logZ > 0 (Z > 1)."""
-        self.logZ.data = torch.clamp(self.logZ, min=self.logZ_lower)
-        return
 
     """
     Forward and backward policy
@@ -355,7 +338,7 @@ class BaseTBGFlowNet:
         Effective batch size decreases when some trajectories hit root early.
 
         Input xs: List of [State], or State
-        Return trajs: List of List[State], or List[State]
+        Return trajs: List of list[State], or list[State]
         """
         batched = bool(type(xs) is list)
         if not batched:
@@ -411,7 +394,7 @@ class BaseTBGFlowNet:
             total += state_to_logp[parent]
         return total
 
-    def batch_traj_fwd_logp(self, batch):
+    def batch_traj_fwd_logp(self, batch: list[Experience]) -> torch.Tensor:
         """Computes logp(trajectory) under current model.
         Batches over all states in all trajectories in a batch.
 
@@ -425,12 +408,35 @@ class BaseTBGFlowNet:
         states_to_logps = self.fwd_logps_unique(fwd_states)
         fwd_logp_chosen = [s2lp[c] for s2lp, c in zip(states_to_logps, back_states)]
 
-        fwd_chain = self.logZ.repeat(len(batch))
-        fwd_chain = accumulate_by_traj(fwd_chain, fwd_logp_chosen, unroll_idxs)
-        # fwd chain is [bsize]
-        return fwd_chain
+        fwd_logp = torch.zeros(len(batch), dtype=torch.float32, device=self.args.device)
+        fwd_logp = accumulate_by_traj(fwd_logp, fwd_logp_chosen, unroll_idxs)
+        # fwd_logp is [bsize] tensor
+        return fwd_logp
 
-    def batch_traj_fwd_logp_unroll(self, batch):
+    def batch_traj_bwd_logp(self, batch: list[Experience]) -> torch.Tensor:
+        """Computes logp(trajectory) under current model.
+        Batches over all states in all trajectories in a batch.
+
+        Batch: List of [trajectory]
+
+        Returns: Tensor of batch_size, logp
+        """
+        trajs = [exp.traj for exp in batch]
+        fwd_states, back_states, unroll_idxs = unroll_trajs(trajs)
+
+        states_to_logps = self.back_logps_unique(back_states)
+        back_logp_chosen = [s2lp[p] for s2lp, p in zip(states_to_logps, fwd_states)]
+
+        back_logp = torch.zeros(len(batch), dtype=torch.float32, device=self.args.device)
+        back_logp = accumulate_by_traj(back_logp, back_logp_chosen, unroll_idxs)
+        # back_logp is [bsize] tensor
+        return back_logp
+
+    """
+    Methods for DB and SubTB
+    """
+
+    def batch_traj_fwd_logp_unroll(self, batch: list[Experience]):
         trajs = [exp.traj for exp in batch]
         fwd_states, back_states, unroll_idxs = unroll_trajs(trajs)
 
@@ -451,26 +457,7 @@ class BaseTBGFlowNet:
 
         return log_F_s, log_pf_actions
 
-    def batch_traj_back_logp(self, batch):
-        """Computes logp(trajectory) under current model.
-        Batches over all states in all trajectories in a batch.
-
-        Batch: List of [trajectory]
-
-        Returns: Tensor of batch_size, logp
-        """
-        trajs = [exp.traj for exp in batch]
-        fwd_states, back_states, unroll_idxs = unroll_trajs(trajs)
-
-        states_to_logps = self.back_logps_unique(back_states)
-        back_logp_chosen = [s2lp[p] for s2lp, p in zip(states_to_logps, fwd_states)]
-
-        back_chain = torch.stack([exp.logr for exp in batch])
-        back_chain = accumulate_by_traj(back_chain, back_logp_chosen, unroll_idxs)
-        # back_chain is [bsize]
-        return back_chain
-
-    def batch_traj_back_logp_unroll(self, batch):
+    def batch_traj_bwd_logp_unroll(self, batch: list[Experience]):
         trajs = [exp.traj for exp in batch]
         fwd_states, back_states, unroll_idxs = unroll_trajs(trajs)
 
@@ -495,38 +482,7 @@ class BaseTBGFlowNet:
     Learning
     """
 
-    def batch_loss_trajectory_balance(self, batch):
-        """batch: List of [Experience].
-
-        Calls fwd_logps_unique and back_logps_unique (gpu) in parallel on
-        all states in all trajs in batch, then collates.
-        """
-        fwd_chain = self.batch_traj_fwd_logp(batch)
-        back_chain = self.batch_traj_back_logp(batch)
-
-        # obtain target: mix back_chain with logp_guide
-        targets = []
-        for i, exp in enumerate(batch):
-            if exp.logp_guide is not None:
-                w = self.args.target_mix_backpolicy_weight
-                log_rx = exp.logr.clone().detach().requires_grad_(True)
-                target = w * back_chain[i] + (1 - w) * (exp.logp_guide + log_rx)
-            else:
-                target = back_chain[i]
-            targets.append(target)
-        targets = torch.stack(targets)
-
-        losses = torch.square(fwd_chain - targets)
-        losses = torch.clamp(losses, max=5000)
-
-        tb_error = torch.where(fwd_chain < targets, 20 * losses, losses)
-
-        adv_reward = torch.log(tb_error + 1.001)
-        # adv_reward = torch.log(adv_reward)
-        mean_loss = torch.mean(losses)
-        return mean_loss, adv_reward
-
-    def train_tb(self, batch, log=True):
+    def train_tb(self, batch: list[Experience], log=True) -> torch.Tensor:
         """Step on trajectory balance loss.
 
         Parameters
@@ -535,25 +491,30 @@ class BaseTBGFlowNet:
 
         Batching is handled in trainers.py.
         """
-        batch_loss, adv_reward = self.batch_loss_trajectory_balance(batch)
+        fwd_logp = self.batch_traj_fwd_logp(batch)
+        back_logp = self.batch_traj_bwd_logp(batch)
+        log_r = torch.stack([exp.logr for exp in batch])
+
+        log_iw = log_r + back_logp - fwd_logp  # shape [bsize]
+        losses = (log_iw - self.logZ) ** 2
+        mean_loss = losses.mean()
 
         for opt in self.optimizers:
             opt.zero_grad()
 
-        batch_loss.backward()
+        mean_loss.backward()
 
         for param_set in self.clip_grad_norm_params:
             # torch.nn.utils.clip_grad_norm_(param_set, self.args.clip_grad_norm, error_if_nonfinite=True)
             torch.nn.utils.clip_grad_norm_(param_set, self.args.clip_grad_norm)
+
         for opt in self.optimizers:
             opt.step()
-        self.clamp_logZ()
 
         if log:
-            batch_loss = tensor_to_np(batch_loss)
-            wandb.log({"Regular TB loss": batch_loss})
-            wandb.log({"Regular TB reward": tensor_to_np(adv_reward).mean()})  # type: ignore
-        return adv_reward
+            wandb.log({"Regular TB loss": tensor_to_np(mean_loss, reduce_singleton=True)})
+
+        return log_iw
 
     """ 
     IO & misc
@@ -606,7 +567,11 @@ def unroll_trajs(trajs):
     return s1s, s2s, traj_idx_to_batch_idxs
 
 
-def accumulate_by_traj(chain, batch_logp, traj_idx_to_batch_idxs):
+def accumulate_by_traj(
+    chain: torch.Tensor,
+    batch_logp: list[torch.Tensor],
+    traj_idx_to_batch_idxs: dict[int, tuple[int, int]],
+) -> torch.Tensor:
     # Sum states by trajectory: (num. states) -> (num. trajs)
     for traj_idx, (start, end) in traj_idx_to_batch_idxs.items():
         chain[traj_idx] = chain[traj_idx] + sum(batch_logp[start:end])

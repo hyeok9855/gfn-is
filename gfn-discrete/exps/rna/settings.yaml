@@ -22,9 +22,7 @@ entropy_coef: 0.01
 sql_alpha: 0.01
 model: 'tb' # choices=['sub', 'maxent', 'random', 'tb', 'db', 'subtb']
 lamda: 0.9
-guide: 'substructure' # choices=['substructure', 'uniform']
-init_logz: True 
-offline_select: 'prt'
+offline_select: 'random'  # choices=['reward', 'loss', 'teacher_reward', 'iw', 'normalized_iw','random']
 
 sa_or_ssr: 'ssr'
 
@@ -47,8 +45,6 @@ num_steps_per_batch: 1
 offline_num_steps_per_batch: 1
 num_online_batches_per_round: 1
 num_offline_batches_per_round: 1
-
-target_mix_backpolicy_weight: 0.25
 
 # policy
 explore_epsilon: 0.01

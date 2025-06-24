@@ -2,11 +2,13 @@ import math
 import random
 import pickle
 import numpy as np
+from scipy import stats
 import torch
 import wandb
 from tqdm import tqdm
 from collections import OrderedDict
 
+from .GFNs.models import TeacherGFN
 from .data import Experience
 
 
@@ -28,24 +30,13 @@ class Trainer:
         self.model = model
         self.mdp = mdp
         self.teacher = teacher
-
-    def handle_init_dataset(self, initial_XtoR):
-        if initial_XtoR:
-            print(
-                f"Using initial dataset of size {len(initial_XtoR)}. \
-              Skipping first online round ..."
-            )
-            if self.args.init_logz:
-                self.model.init_logz(np.log(sum(initial_XtoR.values())))
-        else:
-            print(f"No initial dataset used")
         return
 
     """
     Training
     """
 
-    def learn(self, initial_XtoR=None) -> None:
+    def learn(self) -> None:
         """Main learning training loop.
         Each learning round:
           Each online batch:
@@ -58,11 +49,8 @@ class Trainer:
 
         dataset = List of [Experience]
         """
-        allXtoR = initial_XtoR if initial_XtoR else dict()
-        allXtoL = dict()
-        allXtoR_buffer = FixSizeOrderedDict(max=self.args.replay_buffer_size)
-        allXtoL_buffer = FixSizeOrderedDict(max=self.args.replay_buffer_size)
-        self.handle_init_dataset(initial_XtoR)
+        allXtoR = dict()
+        prioritized_buffer = FixSizeOrderedDict(max=self.args.replay_buffer_size)
 
         num_online = self.args.num_online_batches_per_round
         num_offline = self.args.num_offline_batches_per_round
@@ -79,72 +67,94 @@ class Trainer:
             dynamic_ncols=True,
         ):
             # Online training - skip first if initial dataset was provided
-            if not initial_XtoR or round_num > 0:
-                for _ in range(num_online):
-                    if self.args.ls:
-                        with torch.no_grad():
-                            explore_data = self.model.batch_fwd_sample_ls(
-                                online_bsize,
-                                epsilon=self.args.explore_epsilon,
-                                k=self.args.k,
-                                i=self.args.i,
-                                deterministic=self.args.deterministic,
-                            )
-                    elif self.args.model == "mars":
-                        with torch.no_grad():
-                            if len(total_samples) == 0:
-                                explore_data = self.model.batch_fwd_sample(
-                                    online_bsize, epsilon=self.args.explore_epsilon
-                                )
-                            else:
-                                explore_data, accepted_data = self.model.batch_fwd_sample(
-                                    online_bsize,
-                                    epsilon=self.args.explore_epsilon,
-                                    explore_data=explore_data,
-                                )
-                                accepted_samples.extend(accepted_data)
-                    elif self.args.model == "teacher":
-                        assert self.teacher is not None
-                        with torch.no_grad():
-                            if round_num % 3 == 0 or round_num % 3 == 1:
-                                model_or_teacher = self.model
-                            else:
-                                model_or_teacher = self.teacher
-                            explore_data = model_or_teacher.batch_fwd_sample(
-                                online_bsize, epsilon=self.args.explore_epsilon
-                            )
-                    else:
-                        with torch.no_grad():
+            for _ in range(num_online):
+                if self.args.ls:
+                    with torch.no_grad():
+                        explore_data = self.model.batch_fwd_sample_ls(
+                            online_bsize,
+                            epsilon=self.args.explore_epsilon,
+                            k=self.args.k,
+                            i=self.args.i,
+                            deterministic=self.args.deterministic,
+                        )
+                elif self.args.model == "mars":
+                    with torch.no_grad():
+                        if len(total_samples) == 0:
                             explore_data = self.model.batch_fwd_sample(
                                 online_bsize, epsilon=self.args.explore_epsilon
                             )
+                        else:
+                            explore_data, accepted_data = self.model.batch_fwd_sample(
+                                online_bsize,
+                                epsilon=self.args.explore_epsilon,
+                                explore_data=explore_data,
+                            )
+                            accepted_samples.extend(accepted_data)
+                elif self.args.model == "teacher":
+                    assert self.teacher is not None
+                    with torch.no_grad():
+                        if round_num % 3 == 0 or round_num % 3 == 1:
+                            model_or_teacher = self.model
+                        else:
+                            model_or_teacher = self.teacher
+                        explore_data = model_or_teacher.batch_fwd_sample(
+                            online_bsize, epsilon=self.args.explore_epsilon
+                        )
+                else:
+                    with torch.no_grad():
+                        explore_data = self.model.batch_fwd_sample(
+                            online_bsize, epsilon=self.args.explore_epsilon
+                        )
 
-                    # Train on online dataset
-                    if self.args.model in ["a2c", "sql", "mars"]:
-                        pass
-                    elif self.args.model == "ppo":
-                        # As ppo is on-policy algorithm, we double online training steps
-                        for _ in range(self.args.num_steps_per_batch * 2):
-                            self.model.train(explore_data)
-                    else:
-                        for _ in range(self.args.num_steps_per_batch):
-                            adv_reward = self.model.train(explore_data)
-                            if self.args.model == "teacher":
-                                assert self.teacher is not None
-                                self.teacher.train(
-                                    explore_data, torch.log(adv_reward).detach(), round_num
+                # Train on online dataset
+                if self.args.model in ["a2c", "sql", "mars"]:
+                    pass
+                elif self.args.model == "ppo":
+                    # As ppo is on-policy algorithm, we double online training steps
+                    for _ in range(self.args.num_steps_per_batch * 2):
+                        self.model.train(explore_data)
+                elif self.args.model in ["tb", "teacher"]:
+                    for _ in range(self.args.num_steps_per_batch):
+                        log_iw = self.model.train(explore_data)
+
+                        # Train teacher model with teacher reward
+                        if self.args.model == "teacher":
+                            tb_delta = log_iw - self.model.logZ
+                            tb_loss = tb_delta**2
+                            teacher_reward = torch.where(tb_delta > 0, 20 * tb_loss, tb_loss)
+                            assert isinstance(self.teacher, TeacherGFN)
+                            self.teacher.train(
+                                explore_data, torch.log(teacher_reward).detach(), round_num
+                            )
+                else:
+                    raise ValueError(f"Unknown model: {self.args.model}")
+
+                # Save to full dataset & prioritized buffer
+                for i, exp in enumerate(explore_data):
+                    if exp.x not in allXtoR:
+                        allXtoR[exp.x] = exp.r
+
+                    # We use prioritized buffer for only tb and teacher models
+                    if self.args.model in ["tb", "teacher"]:
+                        match self.args.offline_select:
+                            case "random":
+                                prioritized_buffer[exp.x] = None
+                            case "reward":
+                                prioritized_buffer[exp.x] = exp.r
+                            case "loss":
+                                prioritized_buffer[exp.x] = 1.0  # FIXME
+                            case "teacher_reward":
+                                prioritized_buffer[exp.x] = 1.0  # FIXME
+                            case "iw":
+                                prioritized_buffer[exp.x] = 1.0  # FIXME
+                            case "normalized_iw":
+                                prioritized_buffer[exp.x] = 1.0  # FIXME
+                            case _:
+                                raise ValueError(
+                                    f"Unknown offline select: {self.args.offline_select}"
                                 )
 
-                    # Save to full dataset
-                    for i, exp in enumerate(explore_data):
-                        if exp.x not in allXtoR:
-                            allXtoR[exp.x] = exp.r
-                            allXtoR_buffer[exp.x] = exp.r
-                        if self.args.per:
-                            allXtoL[exp.x] = adv_reward[i].item()
-                            allXtoL_buffer[exp.x] = adv_reward[i].item()
-
-                    total_samples.extend(explore_data)
+                total_samples.extend(explore_data)
 
             # Offline training
             for _ in range(num_offline):
@@ -162,26 +172,27 @@ class Trainer:
                         for _ in range(self.args.offline_num_steps_per_batch):
                             self.model.train(offline_dataset)
                 else:
-                    if self.args.per:
-                        offline_xs = self.select_offline_xs_per(
-                            allXtoR_buffer, allXtoL_buffer, offline_bsize
-                        )
-                        offline_dataset = self.offline_PB_traj_sample(offline_xs, allXtoR)
-                    else:
-                        offline_xs = self.select_offline_xs(allXtoR_buffer, offline_bsize)
-                        offline_dataset = self.offline_PB_traj_sample(offline_xs, allXtoR)
+                    offline_xs = self.select_offline_xs(prioritized_buffer, offline_bsize)
+                    offline_dataset = self.offline_PB_traj_sample(offline_xs, allXtoR)
                     for _ in range(self.args.offline_num_steps_per_batch):
-                        adv_reward = self.model.train(offline_dataset)
+                        log_iw = self.model.train(offline_dataset)
+
+                        # Train teacher model with teacher reward
                         if self.args.model == "teacher":
-                            assert self.teacher is not None
+                            tb_delta = log_iw - self.model.logZ
+                            tb_loss = tb_delta**2
+                            teacher_reward = torch.where(tb_delta > 0, 20 * tb_loss, tb_loss)
+                            assert isinstance(self.teacher, TeacherGFN)
                             self.teacher.train(
-                                offline_dataset, torch.log(adv_reward).detach(), round_num
+                                offline_dataset, torch.log(teacher_reward).detach(), round_num
                             )
 
-                if self.args.per:
+                if self.args.offline_select in ["loss", "teacher_reward"]:
                     for i, exp in enumerate(offline_dataset):
-                        allXtoL[exp.x] = adv_reward[i].item()
-                        allXtoL_buffer[exp.x] = adv_reward[i].item()
+                        if self.args.offline_select == "loss":
+                            prioritized_buffer[exp.x] = None  # FIXME with new buffer
+                        elif self.args.offline_select == "teacher_reward":
+                            prioritized_buffer[exp.x] = None  # FIXME with new buffer
 
             if round_num and (
                 round_num % self.args.eval_every_x_active_rounds == 0
@@ -227,62 +238,26 @@ class Trainer:
     Offline training
     """
 
-    def select_offline_xs(self, allXtoR, batch_size):
-        try:
-            select = self.args.offline_select
-        except AttributeError:
-            select = "prt"
+    def select_offline_xs(self, buffer: FixSizeOrderedDict, batch_size: int):
+        if self.args.offline_select == "random":
+            return random.choices(list(buffer.keys()), k=batch_size)
+        else:
+            return self.__biased_sample_xs(buffer, batch_size)
 
-        if select == "prt":
-            return self.__biased_sample_xs(allXtoR, batch_size)
-        elif select == "random":
-            return self.__random_sample_xs(allXtoR, batch_size)
-
-    def select_offline_xs_per(self, allXtoR, allXtoL, batch_size):
-        try:
-            select = self.args.offline_select
-        except AttributeError:
-            select = "prt"
-
-        if select == "prt":
-            return self.__biased_sample_xs_per(allXtoR, allXtoL, batch_size)
-        elif select == "random":
-            return self.__random_sample_xs(allXtoR, batch_size)
-
-    def __biased_sample_xs(self, allXtoR, batch_size):
+    def __biased_sample_xs(self, buffer: FixSizeOrderedDict, batch_size: int):
         """Select xs for offline training. Returns List of [State].
-        Draws 50% from top 10% of rewards, and 50% from bottom 90%.
+        Draws 50% from top 10% of priority, and 50% from bottom 90%.
         """
-        if len(allXtoR) < 10:
+        if len(buffer) < 10:
             return []
-        rewards = np.array(list(allXtoR.values()))
-        threshold = np.percentile(rewards, 90)
-        top_xs = [x for x, r in allXtoR.items() if r >= threshold]
-        bottom_xs = [x for x, r in allXtoR.items() if r <= threshold]
+        priority = np.array(list(buffer.values()))
+        threshold = np.percentile(priority, 90)
+        top_xs = [x for x, p in buffer.items() if p >= threshold]
+        bottom_xs = [x for x, p in buffer.items() if p <= threshold]
         sampled_xs = random.choices(top_xs, k=batch_size // 2) + random.choices(
             bottom_xs, k=batch_size // 2
         )
         return sampled_xs
-
-    def __biased_sample_xs_per(self, allXtoR, allXtoL, batch_size):
-        """Select xs for offline training. Returns List of [State].
-        Draws 50% from top 10% of rewards, and 50% from bottom 90%.
-        """
-        if len(allXtoR) < 10:
-            return []
-        rewards = np.array(list(allXtoL.values()))
-        threshold = np.percentile(rewards, 90)
-        top_xs = [x for x, r in allXtoL.items() if r >= threshold]
-        bottom_xs = [x for x, r in allXtoL.items() if r <= threshold]
-
-        sampled_xs = random.choices(top_xs, k=batch_size // 2) + random.choices(
-            bottom_xs, k=batch_size // 2
-        )
-        return sampled_xs
-
-    def __random_sample_xs(self, allXtoR, batch_size):
-        """Select xs for offline training. Returns List of [State]."""
-        return random.choices(list(allXtoR.keys()), k=batch_size)
 
     def offline_PB_traj_sample(self, offline_xs, allXtoR):
         """Sample trajectories for x using P_B, for offline training with TB.
@@ -309,44 +284,41 @@ class Trainer:
         return offline_dataset
 
     def evaluate(self, round_num, samples, allXtoR):
-        rewards = []
-        for exp in samples:
-            rewards.append(self.mdp.reward(exp.x))
-        rewards = np.array(rewards)
-        rewards = np.maximum(rewards, self.args.scale_reward_min)
+        log_r = torch.stack([exp.logr for exp in samples])
 
         # Metric 1. Gap Between True Expected Reward and Estimated Expected Reward
-        estimated_expected_reward = np.mean(rewards)
+        estimated_expected_reward = log_r.exp().mean().item()
         estimated_expected_reward_gap = np.abs(estimated_expected_reward - self.mdp.expected_reward)
 
         # Metric 2. Gap Between True LogZ and Estimated LogZ / elbo and eubo
-        fwd_chain = self.model.batch_traj_fwd_logp(samples) - self.model.logZ
+        fwd_logp = self.model.batch_traj_fwd_logp(samples)
         if self.args.model == "gafn":
-            back_chain = self.model.batch_traj_back_logp(samples, evaluate=True)
+            back_logp = self.model.batch_traj_bwd_logp(samples, evaluate=True)
         else:
-            back_chain = self.model.batch_traj_back_logp(samples)
-        iw_elbo = torch.logsumexp(back_chain - fwd_chain, 0).item() - math.log(len(samples))
-        elbo = (back_chain - fwd_chain).mean().item()
+            back_logp = self.model.batch_traj_bwd_logp(samples)
+        iw_elbo = torch.logsumexp(log_r + back_logp - fwd_logp, 0).item() - math.log(len(samples))
+        elbo = (log_r + back_logp - fwd_logp).mean().item()
 
-        fwd_chain_true_all = []
+        fwd_logp_true_all = []
         eubo = []
-        bsz = 128
+        bsz = self.args.num_samples_per_online_batch * 10  # Can use bigger batch size for testing
         for i in range(0, len(self.mdp.true_samples), bsz):
             true_samples = self.offline_PB_traj_sample(self.mdp.true_samples[i : i + bsz], None)
-            fwd_chain_true = self.model.batch_traj_fwd_logp(true_samples) - self.model.logZ
+            true_log_r = torch.stack([exp.logr for exp in true_samples])
+            fwd_logp_true = self.model.batch_traj_fwd_logp(true_samples)
             if self.args.model == "gafn":
-                back_chain_true = self.model.batch_traj_back_logp(true_samples, evaluate=True)
+                back_logp_true = self.model.batch_traj_bwd_logp(true_samples, evaluate=True)
             else:
-                back_chain_true = self.model.batch_traj_back_logp(true_samples)
-            fwd_chain_true_all.append(fwd_chain_true)
-            eubo.append(back_chain_true - fwd_chain_true)
+                back_logp_true = self.model.batch_traj_bwd_logp(true_samples)
+            fwd_logp_true_all.append(fwd_logp_true)
+            eubo.append(true_log_r + back_logp_true - fwd_logp_true)
         eubo = torch.cat(eubo).mean().item()
 
-        # # Metric 3. Pearson Correlation Coefficient
-        # pearson_corr = stats.pearsonr(
-        #     torch.cat(fwd_chain_true_all).cpu().detach().numpy(),
-        #     np.log(np.array([self.mdp.reward(x) for x in self.mdp.true_samples])),
-        # )[0]
+        # Metric 3. Pearson Correlation Coefficient
+        pearson_corr = stats.pearsonr(
+            torch.cat(fwd_logp_true_all).cpu().detach().numpy(),
+            np.log(np.array([self.mdp.reward(x) for x in self.mdp.true_samples])),
+        )[0]
 
         # Metric 4. Number of modes
         onpolicy_xs = set([exp.x for exp in samples])
@@ -367,7 +339,7 @@ class Trainer:
             "iw_elbo": iw_elbo,
             "elbo": elbo,
             "eubo": eubo,
-            # "pearson_corr": pearson_corr,
+            "pearson_corr": pearson_corr,
             "onpolicy_num_modes": onpolicy_num_modes,
             "all_num_modes": all_num_modes,
         }
