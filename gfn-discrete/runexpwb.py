@@ -47,16 +47,6 @@ if __name__ == "__main__":
     args = parse_args()
     set_seed(args.seed)
 
-    if args.setting == "rna":
-        args.saved_models_dir = f"{args.saved_models_dir}/L{args.rna_length}_RNA{args.rna_task}/"
-        wandb.init(
-            project=f"{args.wandb_project}-L{args.rna_length}-{args.rna_task}",
-            config=vars(args),
-            mode=args.wandb_mode,
-        )
-    else:
-        wandb.init(project=args.wandb_project, config=vars(args), mode=args.wandb_mode)
-
     run_name = args.model
     if args.model == "subtb":
         run_name += f"{args.lamda}"
@@ -83,6 +73,18 @@ if __name__ == "__main__":
 
     args.run_name = run_name.upper()
     print(f"Save model into {args.run_name}")
+
+    if args.setting == "rna":
+        args.saved_models_dir = f"{args.saved_models_dir}/L{args.rna_length}_RNA{args.rna_task}/"
+        args.wandb_project = f"{args.wandb_project}-L{args.rna_length}-{args.rna_task}"
+
+    wandb.init(
+        project=args.wandb_project,
+        config=vars(args),
+        mode=args.wandb_mode,
+        name=run_name,
+        tags=[f"seed{args.seed}"],
+    )
 
     args.device = args.device if torch.cuda.is_available() else "cpu"
 

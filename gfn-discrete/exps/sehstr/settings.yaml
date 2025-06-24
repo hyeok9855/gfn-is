@@ -4,11 +4,13 @@ device: 'cuda'
 
 # wandb
 wandb_mode: 'online'   # 'online', 'disabled'
-wandb_project: 'seh-teacher'
+wandb_project: 'sehstr'
 
 
 # model learning
-lr_z: 1.0e-2
+model: 'tb' # choices=['sub', 'maxent', 'random', 'tb', 'db', 'subtb']
+sa_or_ssr: 'ssr'
+lr_z: 1.0e-1
 lr_policy: 1.0e-4
 lr_critic: 1.0e-4
 lr_logF: 1.0e-4
@@ -18,11 +20,10 @@ clip_grad_norm: 10.0
 clip_param: 0.2
 entropy_coef: 0.01
 sql_alpha: 0.01
-model: 'tb' # choices=['sub', 'maxent', 'random', 'tb', 'db', 'subtb']
 lamda: 0.9
-offline_select: 'random'  # choices=['reward', 'loss', 'teacher_reward', 'iw', 'normalized_iw','random']
 
-sa_or_ssr: 'ssr'
+# Prioritized Buffer
+offline_select: 'random'  # choices=['reward', 'loss', 'teacher_reward', 'iw', 'normalized_iw','random']
 
 # model architecture
 # inp_dim is specified by mdp
