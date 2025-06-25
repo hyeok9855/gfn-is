@@ -48,21 +48,28 @@ class AugGFlowNet:
             self.flow_net.parameters(),
         ]
 
-        self.optimizer_back = torch.optim.Adam(
+        self.optimizer_bwd = torch.optim.Adam(
             [{"params": self.policy_back.parameters(), "lr": args.lr_policy}]
         )
-        self.optimizer_fwdZ = torch.optim.Adam(
+        self.optimizer_fwd = torch.optim.Adam(
             [
                 {"params": self.policy_fwd.parameters(), "lr": args.lr_policy},
-                {"params": self.logZ, "lr": args.lr_z},
                 {"params": self.flow_net.parameters(), "lr": args.lr_z},
             ]
+        )
+        self.optimizer_logZ = torch.optim.SGD(
+            [{"params": self.logZ, "lr": args.lr_z, "momentum": 0.8}]
         )
         self.optimizer_rnd = torch.optim.Adam(
             [{"params": self.rnd_target.parameters(), "lr": args.lr_policy}]
         )
 
-        self.optimizers = [self.optimizer_fwdZ, self.optimizer_back, self.optimizer_rnd]
+        self.optimizers = [
+            self.optimizer_fwd,
+            self.optimizer_bwd,
+            self.optimizer_rnd,
+            self.optimizer_logZ,
+        ]
 
         self.online_loss_step = 0
         self.offline_loss_step = 0

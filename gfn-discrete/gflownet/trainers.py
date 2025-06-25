@@ -5,7 +5,7 @@ import numpy as np
 from scipy import stats
 import torch
 import wandb
-from tqdm import tqdm
+from tqdm import trange
 from collections import OrderedDict
 
 from .GFNs.models import TeacherGFN
@@ -61,11 +61,9 @@ class Trainer:
         print(f"Starting Training. Each round: num_online={num_online}, num_offline={num_offline}")
         total_samples = []
         accepted_samples = []
-        for round_num in tqdm(
-            range(self.args.num_active_learning_rounds),
-            desc="Training",
-            dynamic_ncols=True,
-        ):
+        pbar = trange(self.args.num_active_learning_rounds, dynamic_ncols=True)
+        for round_num in pbar:
+            pbar.set_description("Training")
             # Online training - skip first if initial dataset was provided
             for _ in range(num_online):
                 if self.args.ls:
@@ -202,7 +200,7 @@ class Trainer:
                 round_num % self.args.eval_every_x_active_rounds == 0
                 or round_num == self.args.num_active_learning_rounds - 1
             ):
-                print(f"Evaluating round {round_num+1} ...")
+                pbar.set_description("Evaluating")
                 self.model.policy_fwd.eval()
                 self.model.policy_back.eval()
                 with torch.no_grad():
@@ -211,6 +209,13 @@ class Trainer:
                 self.model.policy_fwd.train()
                 self.model.policy_back.train()
                 wandb.log(results)
+                pbar_dict = {
+                    k.replace("_", "").upper(): v
+                    for k, v in results.items()
+                    if k in ["elbo", "eubo", "all_num_modes"]
+                }
+                pbar_dict["logZ"] = self.model.logZ.item()
+                pbar.set_postfix(pbar_dict)
 
             if round_num and (
                 round_num % self.args.save_every_x_active_rounds == 0
@@ -348,9 +353,4 @@ class Trainer:
             "all_num_modes": all_num_modes,
         }
 
-        for k, v in results.items():
-            if isinstance(v, float):
-                print(f"{k}: {v:.4f}")
-            else:
-                print(f"{k}: {v}")
         return results

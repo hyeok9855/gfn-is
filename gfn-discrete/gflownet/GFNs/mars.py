@@ -28,13 +28,13 @@ class MARS:
 
         self.clip_grad_norm_params = [self.policy_fwd.parameters(), self.policy_back.parameters()]
 
-        self.optimizer_back = torch.optim.Adam(
+        self.optimizer_bwd = torch.optim.Adam(
             [{"params": self.policy_back.parameters(), "lr": args.lr_policy}]
         )
         self.optimizer_fwd = torch.optim.Adam(
             [{"params": self.policy_fwd.parameters(), "lr": args.lr_policy}]
         )
-        self.optimizers = [self.optimizer_fwd, self.optimizer_back]
+        self.optimizers = [self.optimizer_fwd, self.optimizer_bwd]
         self.k = math.ceil(mdp.forced_stop_len // 2)
         pass
 

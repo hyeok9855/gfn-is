@@ -337,24 +337,26 @@ class SubstructureGFN(BaseTBGFlowNet):
         loss_tb = torch.mean(tb_losses)
 
         # 1. Update back policy on back loss
-        self.optimizer_back.zero_grad()
+        self.optimizer_bwd.zero_grad()
         loss_step1 = mean_back_loss
         loss_step1.backward()
         for param_set in self.clip_grad_norm_params:
             # torch.nn.utils.clip_grad_norm_(param_set, self.args.clip_grad_norm, error_if_nonfinite=True)
             torch.nn.utils.clip_grad_norm_(param_set, self.args.clip_grad_norm)
-        self.optimizer_back.step()
+        self.optimizer_bwd.step()
         if log:
             loss_step1 = tensor_to_np(loss_step1)
             print(f"Back training:", loss_step1)
 
         # 2. Update fwd policy on TB loss
-        self.optimizer_fwdZ.zero_grad()
+        self.optimizer_fwd.zero_grad()
+        self.optimizer_logZ.zero_grad()
         loss_tb.backward()
         for param_set in self.clip_grad_norm_params:
             # torch.nn.utils.clip_grad_norm_(param_set, self.args.clip_grad_norm, error_if_nonfinite=True)
             torch.nn.utils.clip_grad_norm_(param_set, self.args.clip_grad_norm)
-        self.optimizer_fwdZ.step()
+        self.optimizer_fwd.step()
+        self.optimizer_logZ.step()
 
         if log:
             loss_tb = tensor_to_np(loss_tb)

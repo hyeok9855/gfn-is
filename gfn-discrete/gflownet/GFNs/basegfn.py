@@ -35,16 +35,16 @@ class BaseTBGFlowNet:
 
         self.clip_grad_norm_params = [self.policy_fwd.parameters(), self.policy_back.parameters()]
 
-        self.optimizer_back = torch.optim.Adam(
+        self.optimizer_bwd = torch.optim.Adam(
             [{"params": self.policy_back.parameters(), "lr": args.lr_policy}]
         )
-        self.optimizer_fwdZ = torch.optim.Adam(
-            [
-                {"params": self.policy_fwd.parameters(), "lr": args.lr_policy},
-                {"params": self.logZ, "lr": args.lr_z},
-            ]
+        self.optimizer_fwd = torch.optim.Adam(
+            [{"params": self.policy_fwd.parameters(), "lr": args.lr_policy}]
         )
-        self.optimizers = [self.optimizer_fwdZ, self.optimizer_back]
+        self.optimizer_logZ = torch.optim.SGD(
+            [{"params": self.logZ, "lr": args.lr_z, "momentum": 0.8}]
+        )
+        self.optimizers = [self.optimizer_fwd, self.optimizer_bwd, self.optimizer_logZ]
         pass
 
     """
