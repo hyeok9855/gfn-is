@@ -444,7 +444,6 @@ class AugGFlowNet:
     """
 
     def save_params(self, file):
-        print("Saving checkpoint model ...")
         Path("/".join(file.split("/")[:-1])).mkdir(parents=True, exist_ok=True)
         torch.save(
             {

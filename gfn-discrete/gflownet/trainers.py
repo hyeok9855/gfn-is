@@ -11,6 +11,7 @@ from tqdm import trange
 from gflownet.GFNs.models import TeacherGFN
 from gflownet.data import Experience
 from gflownet.buffer import TerminalStateBuffer
+from gflownet.utils.iw_utils import binary_search_smoothing
 from gflownet.utils.sampling_utils import get_sampling_func
 from gflownet.MDPs.basemdp import BaseState
 
@@ -112,8 +113,6 @@ class Trainer:
                 elif self.args.model in ["tb", "teacher"]:
                     for _ in range(self.args.online_num_steps_per_batch):
                         log_iw = self.model.train(explore_data)
-                        # Train teacher model with teacher reward
-                        normalized_iw = log_iw.softmax(dim=0)
                         tb_delta = log_iw - self.model.logZ
                         tb_loss = tb_delta**2
 
@@ -136,9 +135,16 @@ class Trainer:
                         case "iw":
                             data_dict["log_iws"] = log_iw
                         case "normalized_iw":
+                            if self.args.target_ess > 0:
+                                log_iw_smoothed = binary_search_smoothing(
+                                    log_weights=log_iw.unsqueeze(1),
+                                    target_ess=int(self.args.target_ess * len(log_iw)),
+                                    smoothing_strategy=self.args.smoothing_strategy,
+                                )
+                                normalized_iw = log_iw_smoothed.squeeze(1).softmax(dim=0)
+                            else:
+                                normalized_iw = log_iw.softmax(dim=0)
                             data_dict["normalized_iws"] = normalized_iw
-                        case _:
-                            raise ValueError(f"Unknown offline select: {self.args.prioritization}")
                     prioritized_buffer.add(**data_dict)
                 else:
                     raise ValueError(f"Unknown model: {self.args.model}")

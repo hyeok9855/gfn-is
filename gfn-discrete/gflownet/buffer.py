@@ -75,11 +75,11 @@ class BaseBuffer(ABC):
         batch_dim: int,
         buffer_size: int,
         device: torch.device,
-        prioritization: Literal["none", "target", "loss", "iw", "normalized_iw"],
+        prioritization: Literal["none", "reward", "loss", "iw", "normalized_iw"],
         sampling_func: Callable[[torch.Tensor, int, bool], torch.Tensor],
         logr_lb: float | None = None,
     ) -> None:
-        assert prioritization in ["none", "target", "loss", "iw", "normalized_iw"]
+        assert prioritization in ["none", "reward", "loss", "iw", "normalized_iw"]
         if prioritization == "normalized_iw":
             assert sampling_func is not None
 
@@ -96,9 +96,7 @@ class BaseBuffer(ABC):
         )
         self.log_iws_dataset = CustomDataset(1, buffer_size) if prioritization == "iw" else None
         self.normalized_iws_dataset = (
-            CustomDataset(batch_dim, buffer_size)
-            if prioritization == "normalized_iw"
-            else None
+            CustomDataset(batch_dim, buffer_size) if prioritization == "normalized_iw" else None
         )
 
     @property
@@ -156,7 +154,7 @@ class TerminalStateBuffer(BaseBuffer):
         self,
         buffer_size: int,
         device: torch.device,
-        prioritization: Literal["none", "target", "loss", "iw", "normalized_iw"],
+        prioritization: Literal["none", "reward", "loss", "iw", "normalized_iw"],
         sampling_func: Callable[[torch.Tensor, int, bool], torch.Tensor],
         logr_lb: float | None = None,
         target_ess: float = 0.05,
@@ -177,7 +175,6 @@ class TerminalStateBuffer(BaseBuffer):
         self.target_ess = target_ess
         self.smoothing_strategy = smoothing_strategy
 
-
     def sample(self, batch_size: int) -> tuple[torch.Tensor | np.ndarray, torch.Tensor, np.ndarray]:
         assert len(self) > 0, "Buffer is empty"
 
@@ -185,7 +182,7 @@ class TerminalStateBuffer(BaseBuffer):
         match self.prioritization:
             case "none":
                 pass
-            case "target":
+            case "reward":
                 weights = cast(torch.Tensor, self.log_fs_dataset.data)  # log_fs is log_rs, (bs,)
                 weights = weights.softmax(dim=0)
             case "loss":

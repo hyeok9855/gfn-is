@@ -21,6 +21,9 @@ entropy_coef: 0.01
 sql_alpha: 0.01
 lamda: 0.9
 
+# IW training
+iw_training: False
+
 # Prioritized Buffer
 prioritization: 'random'  # choices=['reward', 'loss', 'iw', 'normalized_iw','random']
 buffer_sampling: 'systematic'  # choices=['multinomial', 'stratified', 'systematic', 'rank']
@@ -39,7 +42,7 @@ sa_hid_dim: 128
 sa_n_layers: 2
 
 # trainer
-num_active_learning_rounds: 2000
+num_active_learning_rounds: 1000
 num_samples_per_online_batch: 100
 num_samples_per_offline_batch: 100
 

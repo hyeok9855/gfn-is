@@ -3,6 +3,7 @@ import torch
 import wandb
 from pathlib import Path
 
+from gflownet.utils.iw_utils import binary_search_smoothing
 from gflownet.utils.misc_utils import tensor_to_np
 from gflownet.data import Experience
 
@@ -497,7 +498,18 @@ class BaseTBGFlowNet:
 
         log_iw = log_r + back_logp - fwd_logp  # shape [bsize]
         losses = (log_iw - self.logZ) ** 2
-        mean_loss = losses.mean()
+        if self.args.iw_training:
+            # Smoothing log_iw
+            log_iw_smoothed = binary_search_smoothing(
+                log_weights=log_iw.unsqueeze(1),
+                target_ess=int(self.args.target_ess * len(log_iw)),
+                smoothing_strategy=self.args.smoothing_strategy,
+            )
+            normalized_iw = log_iw_smoothed.squeeze(1).softmax(dim=0)
+            losses = losses * normalized_iw
+            mean_loss = losses.sum()
+        else:
+            mean_loss = losses.mean()
 
         for opt in self.optimizers:
             opt.zero_grad()
@@ -521,7 +533,6 @@ class BaseTBGFlowNet:
     """
 
     def save_params(self, file):
-        print("Saving checkpoint model ...")
         Path("/".join(file.split("/")[:-1])).mkdir(parents=True, exist_ok=True)
         torch.save(
             {
