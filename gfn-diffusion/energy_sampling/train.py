@@ -259,10 +259,10 @@ if __name__ == "__main__":
     parser.add_argument("--use_weight_decay", action="store_true", default=False)
     parser.add_argument("--weight_decay", type=float, default=1e-7)
     parser.add_argument("--use_scheduler", action="store_true", default=False)
-    parser.add_argument("--milestones", type=float, nargs="+", default=[0.5, 0.9])
-    parser.add_argument("--gamma", type=float, default=0.3)
+    parser.add_argument("--milestones", type=float, nargs="+", default=[0.5, 0.8])
+    parser.add_argument("--gamma", type=float, default=0.2)
 
-    parser.add_argument("--bwd_to_fwd_ratio", type=float, default=1.0)
+    parser.add_argument("--bwd_to_fwd_ratio", type=float, default=2.0)
     parser.add_argument("--clip_grad_norm", type=float, default=1.0)
     parser.add_argument("--batch_size", type=int, default=2000)
     parser.add_argument("--eval_batch_size", type=int, default=2000)
