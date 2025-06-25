@@ -26,6 +26,6 @@ START_SEED=${2:-0}
 END_SEED=${3:-0}
 
 for SEED in $(seq $START_SEED $END_SEED); do
-    python runexpwb.py $ARGS --seed $SEED
+    python runexpwb.py $ARGS --seed $SEED &
 done
 wait

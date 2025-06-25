@@ -5,7 +5,7 @@ device: 'cuda'
 # wandb
 wandb_mode: 'online'   # 'online', 'disabled'
 wandb_project: 'sehstr'
-
+exp_name: ''
 
 # model learning
 model: 'tb' # choices=['sub', 'maxent', 'random', 'tb', 'db', 'subtb']
@@ -22,8 +22,12 @@ entropy_coef: 0.01
 sql_alpha: 0.01
 lamda: 0.9
 
+# IW training
+iw_training: False
+alternate: False
+
 # Prioritized Buffer
-prioritization: 'random'  # choices=['reward', 'loss', 'iw', 'normalized_iw','random']
+prioritization: 'none'  # choices=['reward', 'loss', 'iw', 'normalized_iw','none']
 buffer_sampling: 'systematic'  # choices=['multinomial', 'stratified', 'systematic', 'rank']
 rank_k: 0.01
 target_ess: 0.05
@@ -50,7 +54,7 @@ num_online_batches_per_round: 1
 num_offline_batches_per_round: 2
 
 # policy
-explore_epsilon: 0.05
+explore_epsilon: 0.0
 
 # experiment
 replicate: 0

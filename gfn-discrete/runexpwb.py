@@ -53,7 +53,11 @@ if __name__ == "__main__":
     if args.num_offline_batches_per_round > 0:
         run_name += "_" + args.prioritization
 
-    run_name += "_" + f"epsilon{args.explore_epsilon}"
+    if args.explore_epsilon > 0:
+        run_name += "_" + f"epsilon{args.explore_epsilon}"
+
+    if args.iw_training:
+        run_name += "_" + "iw-training"
 
     if args.sa_or_ssr == "ssr":
         run_name += "_" + args.sa_or_ssr
@@ -66,11 +70,12 @@ if __name__ == "__main__":
         run_name += "_" + f"i{args.i}"
 
     run_name += "_" + f"beta{args.beta}"
-    run_name += "_" + f"seed{args.seed}"
     run_name += "_" + f"buffer_size{args.replay_buffer_size}"
-    run_name += "_" + f"alpha{args.alpha}"
 
-    args.run_name = run_name.upper()
+    if args.exp_name:
+        run_name = f"[{args.exp_name}]" + run_name
+
+    args.run_name = run_name
     print(f"Save model into {args.run_name}")
 
     if args.setting == "rna":

@@ -107,8 +107,7 @@ class Trainer:
                 if self.args.model in ["a2c", "sql", "mars"]:
                     pass
                 elif self.args.model == "ppo":
-                    # As ppo is on-policy algorithm, we double online training steps
-                    for _ in range(self.args.online_num_steps_per_batch * 2):
+                    for _ in range(self.args.online_num_steps_per_batch):
                         self.model.train(explore_data)
                 elif self.args.model in ["tb", "teacher"]:
                     for _ in range(self.args.online_num_steps_per_batch):

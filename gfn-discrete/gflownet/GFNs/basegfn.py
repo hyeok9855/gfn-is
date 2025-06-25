@@ -46,7 +46,8 @@ class BaseTBGFlowNet:
             [{"params": self.logZ, "lr": args.lr_z, "momentum": 0.8}]
         )
         self.optimizers = [self.optimizer_fwd, self.optimizer_bwd, self.optimizer_logZ]
-        pass
+
+        self.flag = True
 
     """
     Forward and backward policy
@@ -498,10 +499,10 @@ class BaseTBGFlowNet:
 
         log_iw = log_r + back_logp - fwd_logp  # shape [bsize]
         losses = (log_iw - self.logZ) ** 2
-        if self.args.iw_training:
+        if self.args.iw_training and self.flag:
             # Smoothing log_iw
             log_iw_smoothed = binary_search_smoothing(
-                log_weights=log_iw.unsqueeze(1),
+                log_weights=log_iw.detach().unsqueeze(1),
                 target_ess=int(self.args.target_ess * len(log_iw)),
                 smoothing_strategy=self.args.smoothing_strategy,
             )
@@ -510,6 +511,9 @@ class BaseTBGFlowNet:
             mean_loss = losses.sum()
         else:
             mean_loss = losses.mean()
+
+        if self.args.alternate:
+            self.flag = not self.flag
 
         for opt in self.optimizers:
             opt.zero_grad()
