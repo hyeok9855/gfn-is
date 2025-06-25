@@ -5,22 +5,22 @@ from typing import Callable, Literal
 import torch
 
 
-def multinomial(weights, N, replacement=True) -> torch.Tensor:
+def multinomial(weights: torch.Tensor, N: int, replacement: bool = True) -> torch.Tensor:
     """Return sampled indices from multinomial distribution.
 
     Args:
-        weights: (bs,)
+        weights: torch.Tensor of shape (bs,)
         N: int
         replacement: bool
     """
     return torch.multinomial(weights, N, replacement=replacement)
 
 
-def stratified(weights, N, replacement=True) -> torch.Tensor:
+def stratified(weights: torch.Tensor, N: int, replacement: bool = True) -> torch.Tensor:
     """Return sampled indices using stratified (re)sampling technique.
 
     Args:
-        weights: (bs,)
+        weights: torch.Tensor of shape (bs,)
         N: int
     """
     if not replacement:
@@ -42,11 +42,11 @@ def stratified(weights, N, replacement=True) -> torch.Tensor:
     return u
 
 
-def systematic(weights, N, replacement=True) -> torch.Tensor:
+def systematic(weights: torch.Tensor, N: int, replacement: bool = True) -> torch.Tensor:
     """Return sampled indices using systematic (re)sampling technique.
 
     Args:
-        weights: (bs,)
+        weights: torch.Tensor of shape (bs,)
         N: int
     """
     if not replacement:
@@ -68,11 +68,13 @@ def systematic(weights, N, replacement=True) -> torch.Tensor:
     return u
 
 
-def rank(weights, N, replacement=True, rank_k=0.01) -> torch.Tensor:
+def rank(
+    weights: torch.Tensor, N: int, replacement: bool = True, rank_k: float = 0.01
+) -> torch.Tensor:
     """Return sampled indices using rank-based (re)sampling technique.
 
     Args:
-        weights: (bs,)
+        weights: torch.Tensor of shape (bs,)
         N: int
         replacement: bool
         rank_k: float

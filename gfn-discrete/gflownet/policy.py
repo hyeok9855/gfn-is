@@ -3,7 +3,7 @@ import numpy as np
 from collections import defaultdict
 from itertools import chain
 
-from . import utils
+from gflownet.utils.misc_utils import tensor_to_np
 
 
 """
@@ -214,7 +214,7 @@ class BasePolicySA:
             if np.random.random() < epsilon:
                 sample = np.random.choice(childs_uniq)
             else:
-                ps = utils.tensor_to_np(ps_uniq, reduce_singleton=False)
+                ps = tensor_to_np(ps_uniq, reduce_singleton=False)
                 sample = np.random.choice(childs_uniq, p=ps)
             batch_samples.append(sample)
 
@@ -361,7 +361,7 @@ class BasePolicySSR:
             if np.random.random() < epsilon:
                 sample = np.random.choice(childs_uniq)
             else:
-                ps = utils.tensor_to_np(ps_uniq, reduce_singleton=False)
+                ps = tensor_to_np(ps_uniq, reduce_singleton=False)
                 sample = np.random.choice(childs_uniq, p=ps)
             batch_samples.append(sample)
 

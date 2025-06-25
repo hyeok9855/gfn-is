@@ -3,9 +3,9 @@ import functools
 
 import torch
 
-from .. import network
-from ..actor import Actor
-from .basemdp import BaseState, BaseMDP
+from gflownet.network import make_mlp, StateFeaturizeWrap
+from gflownet.actor import Actor
+from gflownet.MDPs.basemdp import BaseState, BaseMDP
 
 import enum
 from dataclasses import dataclass
@@ -262,25 +262,25 @@ class SeqARActor(Actor):
     def net_forward_sa(self):
         hid_dim = self.args.sa_hid_dim
         n_layers = self.args.sa_n_layers
-        net = network.make_mlp([self.ft_dim] + [hid_dim] * n_layers + [len(self.mdp.fwd_actions)])
-        return network.StateFeaturizeWrap(net, self.featurize)
+        net = make_mlp([self.ft_dim] + [hid_dim] * n_layers + [len(self.mdp.fwd_actions)])
+        return StateFeaturizeWrap(net, self.featurize)
 
     def net_backward_sa(self):
         hid_dim = self.args.sa_hid_dim
         n_layers = self.args.sa_n_layers
-        net = network.make_mlp([self.ft_dim] + [hid_dim] * n_layers + [len(self.mdp.back_actions)])
-        return network.StateFeaturizeWrap(net, self.featurize)
+        net = make_mlp([self.ft_dim] + [hid_dim] * n_layers + [len(self.mdp.back_actions)])
+        return StateFeaturizeWrap(net, self.featurize)
 
     def net_encoder_ssr(self):
         hid_dim = self.args.ssr_encoder_hid_dim
         n_layers = self.args.ssr_encoder_n_layers
         ssr_embed_dim = self.args.ssr_embed_dim
-        net = network.make_mlp([self.ft_dim] + [hid_dim] * n_layers + [ssr_embed_dim])
-        return network.StateFeaturizeWrap(net, self.featurize)
+        net = make_mlp([self.ft_dim] + [hid_dim] * n_layers + [ssr_embed_dim])
+        return StateFeaturizeWrap(net, self.featurize)
 
     def net_scorer_ssr(self):
         """[encoding1, encoding2] -> scalar"""
         hid_dim = self.args.ssr_scorer_hid_dim
         n_layers = self.args.ssr_scorer_n_layers
         ssr_embed_dim = self.args.ssr_embed_dim
-        return network.make_mlp([2 * ssr_embed_dim] + [hid_dim] * n_layers + [1])
+        return make_mlp([2 * ssr_embed_dim] + [hid_dim] * n_layers + [1])

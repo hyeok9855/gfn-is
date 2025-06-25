@@ -1,4 +1,4 @@
-from .policy import BasePolicySA, BasePolicySSR
+from gflownet.policy import BasePolicySA, BasePolicySSR
 
 
 class Actor:

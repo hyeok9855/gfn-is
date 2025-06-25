@@ -1,7 +1,7 @@
 from .buffers import (
     BaseBuffer,
-    GISIntermediateStateBuffer,
-    GISTerminalStateBuffer,
+    PIWIntermediateStateBuffer,
+    PIWTerminalStateBuffer,
     IntermediateStateBuffer,
     TerminalStateBuffer,
 )

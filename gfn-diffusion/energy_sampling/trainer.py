@@ -3,7 +3,7 @@ import warnings
 
 import torch
 
-from buffers import BaseBuffer, GISTerminalStateBuffer, IntermediateStateBuffer, TerminalStateBuffer
+from buffers import BaseBuffer, PIWTerminalStateBuffer, IntermediateStateBuffer, TerminalStateBuffer
 from energies import ALDPFAB, BaseEnergy, IntermediateEnergy
 from losses import cal_subtb_coef_matrix, get_loss
 from mcmcs import BaseMCMC
@@ -438,7 +438,7 @@ class Trainer:
             indices = indices[ind_L]
 
         data_dict = {"states": mcmc_xs, "log_fs": mcmc_log_rs}
-        if isinstance(self.buffer, GISTerminalStateBuffer):
+        if isinstance(self.buffer, PIWTerminalStateBuffer):
             data_dict["log_iws"] = self.buffer.log_iws_dataset[indices]
         elif self.buffer.normalized_iws_dataset is not None:
             data_dict["normalized_iws"] = self.buffer.normalized_iws_dataset[indices]

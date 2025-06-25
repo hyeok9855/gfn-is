@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 from torch_geometric.nn import GCNConv, GINEConv, global_mean_pool
 
-from . import utils
+from gflownet.utils.misc_utils import make_batch
 
 
 """
@@ -26,7 +26,7 @@ class StateFeaturizeWrap(torch.nn.Module):
 
     def forward(self, batch):
         """List of States -> torch.tensor"""
-        tensor_inp = utils.batch([self.featurizer(state) for state in batch])
+        tensor_inp = make_batch([self.featurizer(state) for state in batch])
         return self.net(tensor_inp)
 
 
@@ -56,7 +56,7 @@ class GraphMaskSAWrap(torch.nn.Module):
         Featurize, mask, and flatten
         """
         masks = [self.masker(state) for state in batch]
-        inp_graphs = utils.batch([self.featurizer(state) for state in batch])
+        inp_graphs = make_batch([self.featurizer(state) for state in batch])
 
         # [B graphs] -> [B graphs]
         out_globals, out_graphs = self.net(inp_graphs)

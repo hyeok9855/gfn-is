@@ -12,7 +12,7 @@ from argparse import Namespace
 from gflownet.MDPs import molstrmdp
 from gflownet.GFNs import models
 from gflownet.trainers import Trainer
-from gflownet.utils import scale_rewards
+from gflownet.utils.misc_utils import scale_rewards
 
 from rdkit.Chem.rdMolDescriptors import GetMorganFingerprintAsBitVect
 from rdkit.DataStructs import FingerprintSimilarity

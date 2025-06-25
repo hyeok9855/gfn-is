@@ -6,8 +6,8 @@ import wandb
 from tqdm import trange
 
 from buffers import (
-    GISIntermediateStateBuffer,
-    GISTerminalStateBuffer,
+    PIWIntermediateStateBuffer,
+    PIWTerminalStateBuffer,
     IntermediateStateBuffer,
     TerminalStateBuffer,
 )
@@ -78,9 +78,9 @@ def train(args):
     if args.use_buffer:
         if args.prioritization == "iw":
             buffer_class = (
-                GISTerminalStateBuffer
+                PIWTerminalStateBuffer
                 if args.buffer_type == "terminal"
-                else GISIntermediateStateBuffer
+                else PIWIntermediateStateBuffer
             )
         else:
             buffer_class = (

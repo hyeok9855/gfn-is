@@ -1,10 +1,9 @@
 from math import prod
 
 import torch
-from torch.utils.data import Dataset
 
 
-class CustomDataset(Dataset):
+class CustomDataset:
     def __init__(self, batch_dim: int, dataset_size: int, device: torch.device):
         super().__init__()
         self.batch_dim = batch_dim

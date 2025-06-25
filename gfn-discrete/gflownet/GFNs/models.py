@@ -3,14 +3,14 @@ import torch
 from torch_scatter import scatter_sum
 import wandb
 
-from ..data import Experience
-from .basegfn import BaseTBGFlowNet, tensor_to_np
-from .advantage_actor_critic import A2C
-from .gafn import AugGFlowNet
-from .ppo import PPO
-from .mars import MARS
-from .soft_q_learning import SoftQLearning
-from .teacher import TeacherGFlowNet
+from gflownet.data import Experience
+from gflownet.GFNs.basegfn import BaseTBGFlowNet, tensor_to_np
+from gflownet.GFNs.advantage_actor_critic import A2C
+from gflownet.GFNs.gafn import AugGFlowNet
+from gflownet.GFNs.ppo import PPO
+from gflownet.GFNs.mars import MARS
+from gflownet.GFNs.soft_q_learning import SoftQLearning
+from gflownet.GFNs.teacher import TeacherGFlowNet
 
 
 class Empty(BaseTBGFlowNet):

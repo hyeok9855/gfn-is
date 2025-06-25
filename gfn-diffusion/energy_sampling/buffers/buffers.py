@@ -4,7 +4,7 @@ from typing import Callable, Literal
 import torch
 
 from buffers.datasets import CustomDataset
-from utils.train_utils import binary_search_smoothing, get_smoothing_func
+from utils.train_utils import binary_search_smoothing
 
 
 class BaseBuffer(ABC):
@@ -123,7 +123,7 @@ class TerminalStateBuffer(BaseBuffer):
                 assert self.normalized_iws_dataset is not None
                 weights = self.normalized_iws_dataset.data  # (bs,)
             case "iw":
-                raise ValueError("Use GISTerminalStateBuffer for iw-based prioritization")
+                raise ValueError("Use PIWTerminalStateBuffer for iw-based prioritization")
             case _:
                 raise NotImplementedError
 
@@ -215,7 +215,7 @@ class IntermediateStateBuffer(BaseBuffer):
                 assert self.normalized_iws_dataset is not None
                 weights = self.normalized_iws_dataset[:, t_idx]
             case "iw":
-                raise ValueError("Use GISIntermediateStateBuffer for iw-based prioritization")
+                raise ValueError("Use PIWIntermediateStateBuffer for iw-based prioritization")
             case _:
                 raise NotImplementedError
 
@@ -230,8 +230,8 @@ class IntermediateStateBuffer(BaseBuffer):
         return xs, log_rs
 
 
-##### GIS BUFFER #####
-class GISTerminalStateBuffer(TerminalStateBuffer):
+##### PIW BUFFER #####
+class PIWTerminalStateBuffer(TerminalStateBuffer):
     def __init__(
         self,
         buffer_size: int,
@@ -251,10 +251,9 @@ class GISTerminalStateBuffer(TerminalStateBuffer):
             logr_lb=logr_lb,
         )
         self.log_iws_dataset = CustomDataset(1, buffer_size, device)
-        self.batch_idx_dataset = CustomDataset(1, buffer_size, device)
         self.batch_idx = 0
 
-        # GIS-specific parameters
+        # PIW-specific parameters
         assert 0.0 <= target_ess <= 1.0
         self.target_ess = target_ess
         self.smoothing_strategy = smoothing_strategy
@@ -268,7 +267,8 @@ class GISTerminalStateBuffer(TerminalStateBuffer):
             len(self) + len(data_dict["log_fs"]) > self.buffer_size
             and self.discard_strategy == "gis"
         ):
-            # TODO: Implement GIS-based discard strategy
+            # TODO: Implement discard strategy based on Group Importance Sampling (GIS)
+            # May need to do something with the batch_idx_tensor
             assert len(self.log_fs_dataset) + len(data_dict["log_fs"]) < self.buffer_size
         else:  # discard == "fifo"
             pass  # This is handled in CustomDataset
@@ -298,6 +298,6 @@ class GISTerminalStateBuffer(TerminalStateBuffer):
         return xs, log_rs
 
 
-class GISIntermediateStateBuffer(IntermediateStateBuffer):
+class PIWIntermediateStateBuffer(IntermediateStateBuffer):
     def __init__(self, *args, **kwargs) -> None:
         raise NotImplementedError

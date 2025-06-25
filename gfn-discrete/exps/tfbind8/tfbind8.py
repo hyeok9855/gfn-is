@@ -16,7 +16,7 @@ from argparse import Namespace
 from gflownet.GFNs import models
 from gflownet.MDPs import seqpamdp, seqarmdp
 from gflownet.trainers import Trainer
-from gflownet.utils import scale_rewards
+from gflownet.utils.misc_utils import scale_rewards
 
 
 def dynamic_inherit_mdp(base, args):

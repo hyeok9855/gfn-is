@@ -31,7 +31,6 @@ setting_calls = {
 
 
 def main(args: Namespace) -> None:
-    print(f"Using {args.setting} ...")
     exp_f = setting_calls[args.setting]
     exp_f(args)
 
@@ -52,7 +51,7 @@ if __name__ == "__main__":
         run_name += f"{args.lamda}"
 
     if args.num_offline_batches_per_round > 0:
-        run_name += "_" + args.offline_select
+        run_name += "_" + args.prioritization
 
     run_name += "_" + f"epsilon{args.explore_epsilon}"
 

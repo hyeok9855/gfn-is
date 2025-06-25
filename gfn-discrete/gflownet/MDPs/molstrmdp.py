@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from . import _blockgraphlists as BGL
-from . import seqpamdp
+import gflownet.MDPs._blockgraphlists as BGL
+from gflownet.MDPs import seqpamdp
 
 
 class MolStrMDP(seqpamdp.SeqPrependAppendMDP):

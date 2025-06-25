@@ -2,7 +2,7 @@ import torch
 import wandb
 from pathlib import Path
 
-from ..data import Experience
+from gflownet.data import Experience
 
 
 class AugGFlowNet:

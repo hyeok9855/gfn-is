@@ -22,7 +22,11 @@ sql_alpha: 0.01
 lamda: 0.9
 
 # Prioritized Buffer
-offline_select: 'random'  # choices=['reward', 'loss', 'teacher_reward', 'iw', 'normalized_iw','random']
+prioritization: 'random'  # choices=['reward', 'loss', 'iw', 'normalized_iw','random']
+buffer_sampling: 'systematic'  # choices=['multinomial', 'stratified', 'systematic', 'rank']
+rank_k: 0.01
+target_ess: 0.05
+smoothing_strategy: 'temper'  # choices=['temper', 'clip_above', 'clip_below']
 
 # model architecture
 # inp_dim is specified by mdp
@@ -35,9 +39,9 @@ sa_hid_dim: 128
 sa_n_layers: 2
 
 # trainer
-num_active_learning_rounds: 1000
-num_samples_per_online_batch: 32
-num_samples_per_offline_batch: 32
+num_active_learning_rounds: 2000
+num_samples_per_online_batch: 128
+num_samples_per_offline_batch: 128
 
 online_num_steps_per_batch: 1
 offline_num_steps_per_batch: 1

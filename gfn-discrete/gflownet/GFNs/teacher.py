@@ -3,8 +3,8 @@ import torch
 import wandb
 from pathlib import Path
 
-from ..utils import tensor_to_np
-from ..data import Experience
+from gflownet.utils.misc_utils import tensor_to_np
+from gflownet.data import Experience
 
 
 class TeacherGFlowNet:

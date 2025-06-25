@@ -2,9 +2,9 @@ import torch
 import wandb
 from pathlib import Path
 
-from .basegfn import unroll_trajs
-from ..data import Experience
-from ..utils import tensor_to_np
+from gflownet.GFNs.basegfn import unroll_trajs
+from gflownet.data import Experience
+from gflownet.utils.misc_utils import tensor_to_np
 
 
 class SoftQLearning:

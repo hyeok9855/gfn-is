@@ -1,27 +1,18 @@
 import math
 import random
 import pickle
+from typing import cast
 import numpy as np
 from scipy import stats
 import torch
 import wandb
 from tqdm import trange
-from collections import OrderedDict
 
-from .GFNs.models import TeacherGFN
-from .data import Experience
-
-
-class FixSizeOrderedDict(OrderedDict):
-    def __init__(self, *args, max=0, **kwargs):
-        self._max = max
-        super().__init__(*args, **kwargs)
-
-    def __setitem__(self, key, value):
-        OrderedDict.__setitem__(self, key, value)
-        if self._max > 0:
-            if len(self) > self._max:
-                self.popitem(False)
+from gflownet.GFNs.models import TeacherGFN
+from gflownet.data import Experience
+from gflownet.buffer import TerminalStateBuffer
+from gflownet.utils.sampling_utils import get_sampling_func
+from gflownet.MDPs.basemdp import BaseState
 
 
 class Trainer:
@@ -50,7 +41,14 @@ class Trainer:
         dataset = List of [Experience]
         """
         allXtoR = dict()
-        prioritized_buffer = FixSizeOrderedDict(max=self.args.replay_buffer_size)
+        prioritized_buffer = TerminalStateBuffer(
+            buffer_size=self.args.replay_buffer_size,
+            device=self.args.device,
+            prioritization=self.args.prioritization,
+            sampling_func=get_sampling_func(self.args.buffer_sampling, self.args.rank_k),
+            target_ess=self.args.target_ess,
+            smoothing_strategy=self.args.smoothing_strategy,
+        )
 
         num_online = self.args.num_online_batches_per_round
         num_offline = self.args.num_offline_batches_per_round
@@ -118,42 +116,36 @@ class Trainer:
                         normalized_iw = log_iw.softmax(dim=0)
                         tb_delta = log_iw - self.model.logZ
                         tb_loss = tb_delta**2
-                        teacher_reward = torch.log(
-                            torch.where(tb_delta > 0, 20 * tb_loss, tb_loss) + 1.001
-                        )  # Note: this definition of teacher reward is different from the one in the paper
 
                         if self.args.model == "teacher":
+                            teacher_reward = torch.log(
+                                torch.where(tb_delta > 0, 20 * tb_loss, tb_loss) + 1.001
+                            )  # Note: this definition of teacher reward is different from the one in the paper
                             assert isinstance(self.teacher, TeacherGFN)
                             self.teacher.train(
                                 explore_data, torch.log(teacher_reward).detach(), round_num
                             )
+
+                    # Save experiences to prioritized buffer
+                    states = np.array([exp.x for exp in explore_data])
+                    log_rs = torch.stack([exp.logr for exp in explore_data])
+                    data_dict = {"states": states, "log_fs": log_rs}
+                    match self.args.prioritization:
+                        case "loss":
+                            data_dict["losses"] = tb_loss
+                        case "iw":
+                            data_dict["log_iws"] = log_iw
+                        case "normalized_iw":
+                            data_dict["normalized_iws"] = normalized_iw
+                        case _:
+                            raise ValueError(f"Unknown offline select: {self.args.prioritization}")
+                    prioritized_buffer.add(**data_dict)
                 else:
                     raise ValueError(f"Unknown model: {self.args.model}")
 
-                # Save to full dataset & prioritized buffer
                 for i, exp in enumerate(explore_data):
                     if exp.x not in allXtoR:
                         allXtoR[exp.x] = exp.r
-
-                    # We use prioritized buffer for only tb and teacher models
-                    if self.args.model in ["tb", "teacher"]:
-                        match self.args.offline_select:
-                            case "random":
-                                prioritized_buffer[exp.x] = None
-                            case "reward":
-                                prioritized_buffer[exp.x] = exp.r
-                            case "loss":
-                                prioritized_buffer[exp.x] = tb_loss[i].item()  # type: ignore
-                            case "teacher_reward":
-                                prioritized_buffer[exp.x] = teacher_reward[i].item()  # type: ignore
-                            case "iw":
-                                prioritized_buffer[exp.x] = log_iw[i].item()  # type: ignore
-                            case "normalized_iw":
-                                prioritized_buffer[exp.x] = normalized_iw[i].item()  # type: ignore
-                            case _:
-                                raise ValueError(
-                                    f"Unknown offline select: {self.args.offline_select}"
-                                )
 
                 total_samples.extend(explore_data)
 
@@ -172,9 +164,11 @@ class Trainer:
                         offline_dataset = random.choices(accepted_samples, k=offline_bsize)
                         for _ in range(self.args.offline_num_steps_per_batch):
                             self.model.train(offline_dataset)
-                else:
-                    offline_xs = self.select_offline_xs(prioritized_buffer, offline_bsize)
-                    offline_dataset = self.offline_PB_traj_sample(offline_xs, allXtoR)
+                elif self.args.model in ["tb", "teacher"]:
+                    offline_xs, offline_log_rs, offline_indices = prioritized_buffer.sample(
+                        offline_bsize
+                    )
+                    offline_dataset = self.offline_PB_traj_sample(offline_xs.tolist(), allXtoR)
                     for _ in range(self.args.offline_num_steps_per_batch):
                         log_iw = self.model.train(offline_dataset)
 
@@ -189,12 +183,12 @@ class Trainer:
                                 offline_dataset, torch.log(teacher_reward).detach(), round_num
                             )
 
-                if self.args.offline_select in ["loss", "teacher_reward"]:
-                    for i, exp in enumerate(offline_dataset):
-                        if self.args.offline_select == "loss":
-                            prioritized_buffer[exp.x] = tb_loss[i].item()  # type: ignore
-                        elif self.args.offline_select == "teacher_reward":
-                            prioritized_buffer[exp.x] = teacher_reward[i].item()  # type: ignore
+                    if self.args.prioritization == "loss":
+                        prioritized_buffer.update(
+                            offline_indices, losses=cast(torch.Tensor, tb_loss)
+                        )
+                else:
+                    raise ValueError(f"Unknown model: {self.args.model}")
 
             if round_num and (
                 round_num % self.args.eval_every_x_active_rounds == 0
@@ -247,28 +241,9 @@ class Trainer:
     Offline training
     """
 
-    def select_offline_xs(self, buffer: FixSizeOrderedDict, batch_size: int):
-        if self.args.offline_select == "random":
-            return random.choices(list(buffer.keys()), k=batch_size)
-        else:
-            return self.__biased_sample_xs(buffer, batch_size)
-
-    def __biased_sample_xs(self, buffer: FixSizeOrderedDict, batch_size: int):
-        """Select xs for offline training. Returns List of [State].
-        Draws 50% from top 10% of priority, and 50% from bottom 90%.
-        """
-        if len(buffer) < 10:
-            return []
-        priority = np.array(list(buffer.values()))
-        threshold = np.percentile(priority, 90)
-        top_xs = [x for x, p in buffer.items() if p >= threshold]
-        bottom_xs = [x for x, p in buffer.items() if p <= threshold]
-        sampled_xs = random.choices(top_xs, k=batch_size // 2) + random.choices(
-            bottom_xs, k=batch_size // 2
-        )
-        return sampled_xs
-
-    def offline_PB_traj_sample(self, offline_xs, allXtoR):
+    def offline_PB_traj_sample(
+        self, offline_xs: list[BaseState], allXtoR: dict[BaseState, float] | None
+    ):
         """Sample trajectories for x using P_B, for offline training with TB.
         Returns List of [Experience].
         """

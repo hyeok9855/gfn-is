@@ -12,7 +12,7 @@ from gflownet.MDPs import molstrmdp
 from gflownet.GFNs import models
 
 # from datasets.sehstr import gbr_proxy
-from gflownet.utils import scale_rewards
+from gflownet.utils.misc_utils import scale_rewards
 from gflownet.trainers import Trainer
 
 
