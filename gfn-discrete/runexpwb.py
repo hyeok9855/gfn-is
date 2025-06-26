@@ -51,6 +51,7 @@ if __name__ == "__main__":
         run_name += f"{args.lamda}"
 
     if args.num_offline_batches_per_round > 0:
+        run_name += "_" + f"buffer_size{args.replay_buffer_size}"
         run_name += "_" + args.prioritization
 
     if args.explore_epsilon > 0:
@@ -70,7 +71,6 @@ if __name__ == "__main__":
         run_name += "_" + f"i{args.i}"
 
     run_name += "_" + f"beta{args.beta}"
-    run_name += "_" + f"buffer_size{args.replay_buffer_size}"
 
     if args.exp_name:
         run_name = f"[{args.exp_name}]" + run_name
