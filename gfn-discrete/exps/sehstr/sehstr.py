@@ -59,8 +59,9 @@ class SEHstringMDP(molstrmdp.MolStrMDP):
                 with open(filename, "rb") as f:
                     self.modes = pickle.load(f)
             else:
-                mode_percentile = args.mode_percentile
-                self.mode_r_threshold = np.percentile(scaled_rewards, 100 * (1 - mode_percentile))
+                self.mode_r_threshold = np.percentile(
+                    scaled_rewards, 100 * (1 - args.mode_percentile)
+                )
                 self.mode_div_threshold = args.mode_div_threshold
 
                 print(
@@ -96,22 +97,23 @@ class SEHstringMDP(molstrmdp.MolStrMDP):
             f"Beta: {args.beta}\tExpected reward: {self.expected_reward:.2f}\tLogZ: {self.logZ:.2f}"
         )
 
-        true_samples_filename = f"{prefix}/samples_beta{args.beta}.pkl"
+        true_samples_filename = f"{prefix}/samples_beta{args.beta}_n{args.eval_num_samples}.pkl"
         if os.path.exists(true_samples_filename):
             with open(true_samples_filename, "rb") as f:
-                true_samples_info = pickle.load(f)
-            self.true_samples = true_samples_info["true_samples"]
+                self.true_samples = pickle.load(f)
         else:
             # generate samples from true distribution
             all_samples = list(self.oracle.keys())
             true_dist = np.exp(log_rewards - self.logZ)
             true_samples_idx = np.random.choice(
-                len(self.oracle), size=args.eval_num_samples, p=true_dist
+                len(self.oracle), size=args.eval_num_samples, p=true_dist, replace=True
             )
             self.true_samples = [self.state(all_samples[i], is_leaf=True) for i in true_samples_idx]
 
             with open(true_samples_filename, "wb") as f:
-                pickle.dump({"true_samples": self.true_samples}, f)
+                pickle.dump(self.true_samples, f)
+            del all_samples, true_dist, true_samples_idx
+        del all_rewards, scaled_rewards, log_rewards, log_rewards_square
 
     # Core
     @functools.lru_cache(maxsize=None)
@@ -167,27 +169,3 @@ def main(args):
 
     trainer.learn()
     return
-
-
-def number_of_modes(args):
-    print("Running evaluation sehstr ...")
-    mdp = SEHstringMDP(args)
-
-    # load model checkpoint
-    ckpt_path = args.saved_models_dir + args.run_name
-    with open(ckpt_path + "/" + f"final_sample.pkl", "rb") as f:
-        generated_samples = pickle.load(f)
-
-    unique_modes = set()
-    batch_size = args.num_samples_per_online_batch
-    number_of_modes = np.zeros((len(generated_samples) // batch_size,))
-    with tqdm(total=len(generated_samples)) as pbar:
-        for i in range(0, len(generated_samples), batch_size):
-            for exp in generated_samples[i : i + batch_size]:
-                if mdp.is_mode(exp.x, exp.r) and exp.x.content not in unique_modes:
-                    unique_modes.add(exp.x.content)
-                    number_of_modes[i // batch_size] += 1
-            pbar.update(batch_size)
-            pbar.set_postfix(number_of_modes=np.sum(number_of_modes))
-    print(np.sum(number_of_modes))
-    np.savez_compressed(ckpt_path + "/" + f"number_of_modes.npz", modes=number_of_modes)

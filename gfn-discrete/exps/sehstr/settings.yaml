@@ -65,7 +65,7 @@ eval_every_x_active_rounds: 50
 # reward
 scale_reward_min: 0.001
 scale_reward_max: 10
-beta: 6
+beta: 20
 
 # experiment-specific settings
 blocks_file: datasets/sehstr/block_18.json
@@ -83,7 +83,7 @@ i: 7
 
 # checkpointing
 ckpt: -1
-eval_num_samples: 2048
+eval_num_samples: 10000
 
 # reproduction
 seed: 0

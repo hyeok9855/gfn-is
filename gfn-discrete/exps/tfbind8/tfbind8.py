@@ -110,7 +110,7 @@ def dynamic_inherit_mdp(base, args):
             all_samples = list(self.oracle.keys())
             true_dist = np.exp(log_rewards - self.logZ)
             true_samples_idx = np.random.choice(
-                len(self.oracle), size=args.eval_num_samples, p=true_dist
+                len(self.oracle), size=args.eval_num_samples, p=true_dist, replace=True
             )
             self.true_samples = [self.state(all_samples[i], is_leaf=True) for i in true_samples_idx]
 
@@ -178,32 +178,3 @@ def main(args: Namespace):
 
     trainer.learn()
     return
-
-
-def number_of_modes(args: Namespace):
-    print("Running evaluation TFBind8 ...")
-
-    if args.mdp_style == "pa":
-        base = seqpamdp.SeqPrependAppendMDP
-    elif args.mdp_style == "autoregressive":
-        base = seqarmdp.SeqAutoregressiveMDP
-    mdp = dynamic_inherit_mdp(base, args)
-
-    # load model checkpoint
-    ckpt_path = args.saved_models_dir + args.run_name
-    with open(ckpt_path + "/" + f"final_sample.pkl", "rb") as f:
-        generated_samples = pickle.load(f)
-
-    unique_modes = set()
-    batch_size = args.num_samples_per_online_batch
-    number_of_modes = np.zeros((len(generated_samples) // batch_size,))
-    with tqdm(total=len(generated_samples)) as pbar:
-        for i in range(0, len(generated_samples), batch_size):
-            for exp in generated_samples[i : i + batch_size]:
-                if mdp.is_mode(exp.x, exp.r) and exp.x.content not in unique_modes:
-                    unique_modes.add(exp.x.content)
-                    number_of_modes[i // batch_size] += 1
-            pbar.update(batch_size)
-            pbar.set_postfix(number_of_modes=np.sum(number_of_modes))
-    print(np.sum(number_of_modes))
-    np.savez_compressed(ckpt_path + "/" + f"number_of_modes.npz", modes=number_of_modes)

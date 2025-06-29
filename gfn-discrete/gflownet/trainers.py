@@ -216,25 +216,6 @@ class Trainer:
                 pbar_dict["logZ"] = self.model.logZ.item()
                 pbar.set_postfix(pbar_dict)
 
-            if round_num and (
-                round_num % self.args.save_every_x_active_rounds == 0
-                or round_num == self.args.num_active_learning_rounds - 1
-            ):
-                self.model.save_params(
-                    self.args.saved_models_dir
-                    + self.args.run_name
-                    + "/"
-                    + f"round_{round_num+1}.pth"
-                )
-                with open(
-                    self.args.saved_models_dir
-                    + self.args.run_name
-                    + "/"
-                    + f"round_{round_num+1}_sample.pkl",
-                    "wb",
-                ) as f:
-                    pickle.dump(total_samples, f)
-
         print("Finished training.")
         self.model.save_params(self.args.saved_models_dir + self.args.run_name + "/" + "final.pth")
         with open(

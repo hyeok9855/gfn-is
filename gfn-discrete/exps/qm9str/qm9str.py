@@ -99,7 +99,7 @@ class QM9stringMDP(molstrmdp.MolStrMDP):
         all_samples = list(self.oracle.keys())
         true_dist = np.exp(log_rewards - self.logZ)
         true_samples_idx = np.random.choice(
-            len(self.oracle), size=args.eval_num_samples, p=true_dist
+            len(self.oracle), size=args.eval_num_samples, p=true_dist, replace=True
         )
         self.true_samples = [self.state(all_samples[i], is_leaf=True) for i in true_samples_idx]
 
@@ -151,39 +151,3 @@ def main(args: Namespace) -> None:
         trainer = Trainer(args, model, mdp)
     trainer.learn()
     return
-
-
-def number_of_modes(args):
-    print("Count number of modes qm9str ...")
-
-    # load model checkpoint
-    ckpt_path = args.saved_models_dir + args.run_name
-    with open(ckpt_path + "/" + f"final_sample.pkl", "rb") as f:
-        generated_samples = pickle.load(f)
-
-    with open(args.mode_info_file, "rb") as f:
-        mode_info = pickle.load(f)
-
-    unique_samples = set()
-    batch_size = args.num_samples_per_online_batch
-    number_of_modes = {k: np.zeros((len(generated_samples) // batch_size,)) for k in mode_info}
-    with tqdm(total=len(generated_samples)) as pbar:
-        for i in range(0, len(generated_samples), batch_size):
-            for exp in generated_samples[i : i + batch_size]:
-                if exp.x not in unique_samples:
-                    if exp.x.content in mode_info["modes_div_threshold_075"]:
-                        number_of_modes["modes_div_threshold_075"][i // batch_size] += 1
-                    if exp.x.content in mode_info["modes_div_threshold_05"]:
-                        number_of_modes["modes_div_threshold_05"][i // batch_size] += 1
-                    if exp.x.content in mode_info["modes"]:
-                        number_of_modes["modes"][i // batch_size] += 1
-                unique_samples.add(exp.x)
-            pbar.update(batch_size)
-            pbar.set_postfix(number_of_modes=np.sum(number_of_modes["modes"]))
-    print(np.sum(number_of_modes["modes"]))
-    np.savez_compressed(
-        ckpt_path + "/" + f"number_of_modes_updated.npz",
-        modes=number_of_modes["modes"],
-        modes_div_threshold_05=number_of_modes["modes_div_threshold_05"],
-        modes_div_threshold_075=number_of_modes["modes_div_threshold_075"],
-    )
