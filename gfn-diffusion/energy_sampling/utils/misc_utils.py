@@ -70,7 +70,7 @@ def get_name(args: argparse.Namespace) -> str:
     name += args.loss_type_str
 
     name += f"_{args.module}"
-    if args.module in ["pismlp", "mlp"]:
+    if args.module in ["mlp", "pismlp", "ddsmlp"]:
         name += f"-h{args.hidden_dim}l{args.joint_layers}"
         if args.loss_type in ["subtb", "db"]:
             name += f"-Fh{args.flow_hidden_dim}l{args.flow_layers}"

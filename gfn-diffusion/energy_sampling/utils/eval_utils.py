@@ -7,48 +7,49 @@ import numpy as np
 import ot as pot
 import torch
 from ott.geometry import pointcloud
-from ott.problems.linear import linear_problem
-from ott.solvers.linear import sinkhorn
+
+# from ott.problems.linear import linear_problem
+# from ott.solvers.linear import sinkhorn
 
 from utils.misc_utils import logmeanexp
 
 MIN_VAR_EST = 1e-8
 
 
-# Credit: https://github.com/anonymous3141/SCLD/blob/master/eval/optimal_transport.py
-@jax.jit
-def compute_OT(
-    gt_samples: jax.Array,
-    model_samples: jax.Array,
-    a: jax.Array,
-    b: jax.Array,
-    epsilon: float = 1e-3,
-    entropy_reg: bool = True,
-) -> jax.Array:
-    """
-    Entropy regularized optimal transport cost (see https://ott-jax.readthedocs.io/en/latest/tutorials/point_clouds.html)
+# # Credit: https://github.com/anonymous3141/SCLD/blob/master/eval/optimal_transport.py
+# @jax.jit
+# def compute_OT(
+#     gt_samples: jax.Array,
+#     model_samples: jax.Array,
+#     a: jax.Array,
+#     b: jax.Array,
+#     epsilon: float = 1e-3,
+#     entropy_reg: bool = True,
+# ) -> jax.Array:
+#     """
+#     Entropy regularized optimal transport cost (see https://ott-jax.readthedocs.io/en/latest/tutorials/point_clouds.html)
 
-    Args:
-        gt_samples: Ground truth samples
-        model_samples: Model samples
-        a: Source distribution weights
-        b: Target distribution weights
-        epsilon: Entropy regularization parameter (static)
-        entropy_reg: Whether to use entropy regularization (static)
-    """
-    geom = pointcloud.PointCloud(gt_samples, model_samples, epsilon=epsilon)
-    ot_prob = linear_problem.LinearProblem(geom, a=a, b=b)
-    solver = sinkhorn.Sinkhorn()
-    ot = solver(ot_prob)
+#     Args:
+#         gt_samples: Ground truth samples
+#         model_samples: Model samples
+#         a: Source distribution weights
+#         b: Target distribution weights
+#         epsilon: Entropy regularization parameter (static)
+#         entropy_reg: Whether to use entropy regularization (static)
+#     """
+#     geom = pointcloud.PointCloud(gt_samples, model_samples, epsilon=epsilon)
+#     ot_prob = linear_problem.LinearProblem(geom, a=a, b=b)
+#     solver = sinkhorn.Sinkhorn()
+#     ot = solver(ot_prob)
 
-    # More JAX-friendly way to handle the cost computation
-    reg_cost = ot.reg_ot_cost
-    unreg_cost = jnp.sum(ot.matrix * ot.geom.cost_matrix)
-    return jnp.where(entropy_reg, reg_cost, unreg_cost)  # type: ignore
+#     # More JAX-friendly way to handle the cost computation
+#     reg_cost = ot.reg_ot_cost
+#     unreg_cost = jnp.sum(ot.matrix * ot.geom.cost_matrix)
+#     return jnp.where(entropy_reg, reg_cost, unreg_cost)  # type: ignore
 
 
-# Create a specialized version with static arguments
-compute_OT_static = jax.jit(compute_OT, static_argnames=("epsilon", "entropy_reg"))
+# # Create a specialized version with static arguments
+# compute_OT_static = jax.jit(compute_OT, static_argnames=("epsilon", "entropy_reg"))
 
 
 def wasserstein(
@@ -74,15 +75,41 @@ def wasserstein(
         ret = cast(float, pot.emd2(a, b, M, numItermax=10_000_000))
         ret = math.sqrt(ret)  # To make it consistent with previous works
     elif method == "sinkhorn":
-        ret = compute_OT_static(
-            gt_samples=jnp.array(x0),
-            model_samples=jnp.array(x1),
-            a=jnp.array(a),
-            b=jnp.array(b),
-            epsilon=1e-3,
-            entropy_reg=True,
-        )
+        # ret = compute_OT_static(
+        #     gt_samples=jnp.array(x0),
+        #     model_samples=jnp.array(x1),
+        #     a=jnp.array(a),
+        #     b=jnp.array(b),
+        #     epsilon=1e-3,
+        #     entropy_reg=True,
+        # )
+        # ret = float(ret)
+
+        from ott.tools import sinkhorn_divergence
+
+        class SD:
+            def __init__(self, gt_samples, epsilon=1e-3):
+                self.groundtruth = gt_samples
+                self.epsilon = epsilon
+
+            def compute_SD(self, model_samples):
+                """
+                Entropy regularized debiased optimal transport (Sinkhorn divergence - SD) cost (see https://ott-jax.readthedocs.io/en/latest/tutorials/point_clouds.html)
+                """
+
+                geom = pointcloud.PointCloud(self.groundtruth, model_samples, epsilon=1e-3)
+
+                sd = sinkhorn_divergence.sinkhorn_divergence(
+                    geom,
+                    x=geom.x,
+                    y=geom.y,
+                ).divergence
+
+                return sd
+
+        ret = SD(jnp.array(x0), epsilon=1e-3).compute_SD(jnp.array(x1))
         ret = float(ret)
+
     else:
         raise ValueError(f"Unknown method: {method}")
 

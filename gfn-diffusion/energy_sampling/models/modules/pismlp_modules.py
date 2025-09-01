@@ -112,7 +112,7 @@ class JointPolicyPIS(nn.Module):
         )
 
         if zero_init:
-            self.model[-1].weight.data.fill_(0.0)
+            self.model[-1].weight.data.fill_(1e-8)
             self.model[-1].bias.data.fill_(0.0)
 
     def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
@@ -171,7 +171,7 @@ class LangevinScalingModelPIS(nn.Module):
         self.register_buffer("pe", torch.linspace(start=0.1, end=100, steps=harmonics_dim)[None])
 
         if zero_init:
-            self.lgv_model[-1].weight.data.fill_(0.0)
+            self.lgv_model[-1].weight.data.fill_(1e-8)
             self.lgv_model[-1].bias.data.fill_(0.01)
 
     def forward(self, t: torch.Tensor) -> torch.Tensor:

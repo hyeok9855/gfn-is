@@ -268,7 +268,9 @@ if __name__ == "__main__":
     parser.add_argument("--eval_batch_size", type=int, default=2000)
     parser.add_argument("--epochs", type=int, default=25000)
 
-    parser.add_argument("--module", type=str, default="pismlp", choices=("pismlp", "mlp", "egnn"))
+    parser.add_argument(
+        "--module", type=str, default="pismlp", choices=("pismlp", "mlp", "egnn", "ddsmlp")
+    )
     parser.add_argument("--use_checkpoint", action="store_true", default=False)
     parser.add_argument("--init_log_Z", type=str, default="0.0")  # "iw_elbo", "elbo" or float
     parser.add_argument("--precision", type=str, default="float", choices=("float", "double"))
@@ -463,7 +465,7 @@ if __name__ == "__main__":
         args.buffer_size = 100 * args.batch_size
 
     if args.prefill_epochs == -1:
-        args.prefill_epochs = min(100, args.buffer_size / args.batch_size // 10)
+        args.prefill_epochs = int(min(100, args.buffer_size / args.batch_size // 10))
 
     if args.full_eval_freq < 1:
         args.full_eval_freq = args.full_eval_freq * args.epochs

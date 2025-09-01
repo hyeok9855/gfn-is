@@ -215,7 +215,6 @@ class TimeEncoding(nn.Module):
             nn.Linear(2 * harmonics_dim, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, t_emb_dim),
-            nn.GELU(),
         )
         self.register_buffer("pe", pe)
 
@@ -238,7 +237,6 @@ class StateEncoding(nn.Module):
             nn.Linear(ndim, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, s_emb_dim),
-            nn.GELU(),
         )
 
     def forward(self, s_emb: torch.Tensor) -> torch.Tensor:

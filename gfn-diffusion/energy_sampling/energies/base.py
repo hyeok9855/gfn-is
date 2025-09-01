@@ -1,7 +1,6 @@
 import abc
 
 import torch
-import torch.distributions as D
 
 
 class BaseEnergy(abc.ABC):

@@ -265,7 +265,7 @@ def viz_interatomic_dist_hist(energy: LennardJones | ALDP | ALDPFAB, xs: torch.T
 
 
 def viz_manywell(
-    energy: ManyWell,
+    energy: ManyWell | IntermediateEnergy,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
 ) -> dict:
@@ -281,12 +281,13 @@ def viz_manywell(
         if fig_kde is not None:
             out_dict.update({f"visualization/kde{idx1}{idx2}": wandb.Image(fig_to_image(fig_kde))})
 
-    out_dict.update(viz_energy_hist(energy, samples))
+    if isinstance(energy, ManyWell):
+        out_dict.update(viz_energy_hist(energy, samples))
     return out_dict
 
 
 def viz_funnel(
-    energy: Funnel,
+    energy: Funnel | IntermediateEnergy,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
 ) -> dict:
@@ -300,12 +301,13 @@ def viz_funnel(
         if fig_kde is not None:
             out_dict.update({f"visualization/kde0{i}": wandb.Image(fig_to_image(fig_kde))})
 
-    out_dict.update(viz_energy_hist(energy, samples))
+    if isinstance(energy, Funnel):
+        out_dict.update(viz_energy_hist(energy, samples))
     return out_dict
 
 
 def viz_gmm(
-    energy: GMM40 | TwentyFiveGaussianMixture,
+    energy: GMM40 | TwentyFiveGaussianMixture | IntermediateEnergy,
     samples: torch.Tensor,
     weights: torch.Tensor | None = None,
 ) -> dict:
@@ -321,7 +323,8 @@ def viz_gmm(
         if fig_kde is not None:
             out_dict.update({f"visualization/kde{i - 1}{i}": wandb.Image(fig_to_image(fig_kde))})
 
-    out_dict.update(viz_energy_hist(energy, samples))
+    if isinstance(energy, GMM40 | TwentyFiveGaussianMixture):
+        out_dict.update(viz_energy_hist(energy, samples))
     return out_dict
 
 
@@ -362,7 +365,11 @@ def viz_student_t_mixture(
         )
     ax.set_xlim(boarder[0], boarder[1])
     ax.set_ylim(boarder[0], boarder[1])
-    return {"visualization/contour": wandb.Image(fig_to_image(fig))}
+
+    out_dict = {"visualization/contour": wandb.Image(fig_to_image(fig))}
+    if isinstance(energy, StudentTMixture):
+        out_dict.update(viz_energy_hist(energy, samples))
+    return out_dict
 
 
 def viz_lennard_jones(energy: LennardJones, xs: torch.Tensor) -> dict:

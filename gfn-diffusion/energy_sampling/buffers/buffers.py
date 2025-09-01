@@ -251,6 +251,7 @@ class PIWTerminalStateBuffer(TerminalStateBuffer):
             logr_lb=logr_lb,
         )
         self.log_iws_dataset = CustomDataset(1, buffer_size, device)
+        self.batch_idx_dataset = CustomDataset(1, buffer_size, device)
         self.batch_idx = 0
 
         # PIW-specific parameters

@@ -6,6 +6,7 @@ from .base import BaseModule
 from .egnn_modules import EGNNModule
 from .mlp_modules import MLPModule
 from .pismlp_modules import PISMLPModule
+from .ddsmlp_modules import DDSMLPModule
 
 
 def get_module(args: argparse.Namespace, energy: BaseEnergy) -> BaseModule:
@@ -40,7 +41,11 @@ def get_module(args: argparse.Namespace, energy: BaseEnergy) -> BaseModule:
             "lgv_layers": args.lgv_layers,
         }
 
-        module_cls = MLPModule if args.module == "mlp" else PISMLPModule
+        module_cls = {
+            "mlp": MLPModule,
+            "pismlp": PISMLPModule,
+            "ddsmlp": DDSMLPModule,
+        }[args.module]
         return module_cls(**common_kwargs, **mlp_kwargs)
 
     elif "egnn" in args.module:
