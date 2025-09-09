@@ -113,11 +113,6 @@ def train(args):
             else:
                 raise ValueError(f"Invalid MCMC type: {args.mcmc_type}")
 
-    train_discretizer = get_discretizer(
-        discretizer=args.discretizer, max_ratio=args.discretizer_max_ratio
-    )
-    eval_discretizer = get_discretizer(discretizer="uniform")
-
     trainer = Trainer(
         energy=energy,
         gfn_model=gfn_model,
@@ -134,7 +129,9 @@ def train(args):
         buffer_save_interval=args.buffer_save_interval,
         prefill_epochs=args.prefill_epochs,
         batch_size=args.batch_size,
-        train_discretizer=train_discretizer,
+        train_discretizer=get_discretizer(
+            discretizer=args.discretizer, max_ratio=args.discretizer_max_ratio
+        ),
         train_T=args.T,
         epsilon=args.epsilon,
         anneal_epsilon=args.anneal_epsilon,
@@ -151,7 +148,7 @@ def train(args):
         invtemp_anneal=args.invtemp_anneal,
         init_log_Z=args.init_log_Z,
         eval_batch_size=args.eval_batch_size,
-        eval_discretizer=eval_discretizer,
+        eval_discretizer=get_discretizer(discretizer="uniform"),
         eval_T=args.eval_T,
         eval_weighting=args.eval_weighting,
         eval_resampling=args.eval_resampling,
