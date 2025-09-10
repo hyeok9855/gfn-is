@@ -54,7 +54,19 @@ class DDSMLPModule(MLPModule):
             raise NotImplementedError("Backward correction is not implemented for DDSMLPModule!")
 
         if self.conditional_flow_model:  # TODO: implement conditional flow
-            raise NotImplementedError("Conditional flow is not implemented for DDSMLPModule!")
+            assert self.flow_t_emb_dim == self.flow_s_emb_dim
+            assert self.share_embeddings
+            self.t_model_flow = nn.Identity()
+            self.s_model_flow = nn.Identity()
+            self.flow_model = nn.Sequential(
+                nn.Linear(self.ndim + self.t_emb_dim, self.flow_hidden_dim),
+                nn.GELU(),
+                *[
+                    nn.Sequential(nn.Linear(self.flow_hidden_dim, self.flow_hidden_dim), nn.GELU())
+                    for _ in range(self.flow_layers - 1)
+                ],
+                nn.Linear(self.flow_hidden_dim, 1),
+            )
         else:
             self.flow_model = torch.nn.Parameter(torch.tensor(0.0))
 
@@ -66,8 +78,13 @@ class DDSMLPModule(MLPModule):
 
         backward_params = []
 
-        assert isinstance(self.flow_model, nn.Parameter)
-        flow_params = [self.flow_model]
+        flow_params = []
+        if isinstance(self.flow_model, nn.Module):
+            flow_params += list(self.flow_model.parameters())
+            flow_params += list(self.t_model_flow.parameters())
+            flow_params += list(self.s_model_flow.parameters())
+        else:
+            flow_params = [self.flow_model]
 
         lgv_params = []
         if self.time_coder_grad is not None:
@@ -98,8 +115,15 @@ class DDSMLPModule(MLPModule):
         mean, logvar = self.get_gaussian_params(
             out_state, s, t, grad_logr_fn, time_array_emb=time_array_emb
         )
-        flow = self.predict_flow(s=s, t=t)  # TODO: support conditional flow
+        flow = self.predict_flow(s=s, t=t, extended_input=extended_input)
         return mean, logvar, flow
+
+    def predict_conditional_flow(
+        self, s: torch.Tensor, t: torch.Tensor, extended_input: torch.Tensor
+    ) -> torch.Tensor:
+        assert isinstance(self.flow_model, nn.Module)
+        flow = self.flow_model(extended_input).squeeze(-1)
+        return flow
 
     def get_lp_scaling(
         self, t: torch.Tensor, time_array_emb: torch.Tensor, **kwargs
