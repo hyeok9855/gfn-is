@@ -86,15 +86,29 @@ class GFN(nn.Module):
         s_next: torch.Tensor | None,  # state at time t + \Delta t; if None, we sample
         step: int,  # step at time t; not used here
         pf_mean: torch.Tensor,
-        pf_logvar: torch.Tensor,
-        detach: bool = True,
+        pf_logvar_correction: torch.Tensor,
+        detach: bool = True,  # for PIS
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.reference_process == "pinned_brownian":
-            return forward_step_pinned_brownian(
-                s, s_next, step, self.num_steps, pf_mean, pf_logvar, self.t_scale, detach
+            fwd_mean = s + self.dt * pf_mean
+            fwd_std = (self.dt * math.sqrt(self.t_scale)).sqrt() * (pf_logvar_correction / 2).exp()
+        elif self.reference_process == "ou":
+            sqrt_at = torch.clamp(
+                torch.tensor(self.alpha_fn(step), device=s.device).sqrt(), 0.0, 1.0
             )
-        else:  # TODO
+            sqrt_1_minus_at = (1 - sqrt_at**2).sqrt()
+            fwd_mean = sqrt_1_minus_at * s + sqrt_at**2 * pf_mean
+            fwd_std = sqrt_at * self.init_std * (pf_logvar_correction / 2).exp()
+        else:
             raise ValueError(f"Invalid reference process: {self.reference_process}")
+
+        if s_next is None:
+            s_next = fwd_mean + fwd_std * torch.randn_like(s, device=s.device)
+            s_next = s_next.detach() if detach else s_next
+
+        noise = (s_next - fwd_mean) / fwd_std
+        log_pfs = -0.5 * (logtwopi + 2 * fwd_std.log() + noise**2).sum(1)
+        return s_next, log_pfs
 
     def backward_step(
         self,
@@ -105,11 +119,32 @@ class GFN(nn.Module):
         pb_var_correction: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.reference_process == "pinned_brownian":
-            return backward_step_pinned_brownian(
-                s, s_next, step, self.num_steps, pb_mean_correction, pb_var_correction, self.t_scale
+            t_next = (step + 1) / self.num_steps
+
+            bwd_mean = s_next - s_next * self.dt / t_next * pb_mean_correction
+            bwd_var = self.t_scale * self.dt * (t_next - self.dt) / t_next * pb_var_correction
+            bwd_std = bwd_var.sqrt()
+        elif self.reference_process == "ou":
+            sqrt_at = torch.clamp(
+                torch.tensor(self.alpha_fn(step), device=s.device).sqrt(), 0.0, 1.0
             )
-        else:  # TODO
+            sqrt_1_minus_at = (1 - sqrt_at**2).sqrt()
+            bwd_mean = sqrt_1_minus_at * s_next
+            bwd_std = sqrt_at * self.init_std * (pb_var_correction / 2).exp()
+        else:
             raise ValueError(f"Invalid reference process: {self.reference_process}")
+
+        if self.reference_process == "pinned_brownian" and step == 0:
+            s = torch.zeros_like(s_next)
+            log_pbs = torch.zeros_like(bwd_mean[:, 0])
+        else:
+            if s is None:
+                s = bwd_mean + bwd_std * torch.randn_like(s_next)
+                s = s.detach()
+
+            noise = (s - bwd_mean) / bwd_std
+            log_pbs = -0.5 * (logtwopi + 2 * bwd_std.log() + noise**2).sum(1)
+        return s, log_pbs
 
     def get_partial_energy(
         self,
@@ -262,99 +297,3 @@ class GFN(nn.Module):
             )
 
         return states, log_rs, log_iws
-
-
-def forward_step_pinned_brownian(
-    s: torch.Tensor,  # state at time t
-    s_next: torch.Tensor | None,  # state at time t + \Delta t; if None, we sample
-    step: int,  # step at time t; not used here
-    num_steps: int,
-    pf_mean: torch.Tensor,
-    pf_logvar: torch.Tensor,
-    t_scale: float,
-    detach: bool = True,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    # s.shape = (bsz, ndim)
-    # s_next.shape = (bsz, ndim)
-    # pf_mean.shape = (bsz, ndim)
-    # pf_logvar.shape = (bsz, ndim)
-
-    dt = torch.tensor(1.0 / num_steps, device=s.device)
-
-    pf_logvar = pf_logvar + math.log(t_scale)
-
-    # PIS requires gradients w.r.t. the parameters
-    if detach:
-        pf_mean_sample = pf_mean.detach()
-        pf_logvar_sample = pf_logvar.detach()
-    else:
-        pf_mean_sample = pf_mean
-        pf_logvar_sample = pf_logvar
-
-    if s_next is None:
-        s_next = (
-            s
-            + dt * pf_mean_sample
-            + dt.sqrt() * (pf_logvar_sample / 2).exp() * torch.randn_like(s, device=s.device)
-        )
-
-    noise = ((s_next - s) - dt * pf_mean) / (dt.sqrt() * (pf_logvar / 2).exp())
-    log_pfs = -0.5 * (noise**2 + logtwopi + dt.log() + pf_logvar).sum(1)
-
-    return s_next, log_pfs
-
-
-def backward_step_pinned_brownian(
-    s: torch.Tensor | None,  # state at time t; if None, we sample
-    s_next: torch.Tensor,  # state at time t + \Delta t
-    step: int,  # step at time t
-    num_steps: int,
-    pb_mean_correction: torch.Tensor,
-    pb_var_correction: torch.Tensor,
-    t_scale: float,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    # s.shape = (bsz, ndim)
-    # s_next.shape = (bsz, ndim)
-    # pb_mean_correction.shape = (bsz, ndim)
-    # pb_var_correction.shape = (bsz, ndim)
-
-    dt = torch.tensor(1.0 / num_steps, device=s_next.device)
-    t_next = (step + 1) / num_steps
-
-    back_mean = s_next - s_next * dt / t_next * pb_mean_correction
-    back_var = t_scale * dt * (t_next - dt) / t_next * pb_var_correction
-
-    if s is None:
-        if step == 0:
-            s = torch.zeros_like(s_next)
-        else:
-            s = back_mean.detach() + back_var.sqrt().detach() * torch.randn_like(s_next)
-
-    noise_backward = (s - back_mean) / back_var.sqrt()
-    if step == 0:
-        log_pbs = torch.zeros_like(back_mean[:, 0])
-    else:
-        log_pbs = -0.5 * (noise_backward**2 + logtwopi + back_var.log()).sum(1)
-    return s, log_pbs
-
-
-def forward_step_ou(
-    s: torch.Tensor,  # state at time t
-    s_next: torch.Tensor | None,  # state at time t + \Delta t; if None, we sample
-    step: int,  # step at time t; not used here
-    num_steps: int,
-    pf_mean: torch.Tensor,
-    pf_logvar: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    raise NotImplementedError
-
-
-def backward_step_ou(
-    s: torch.Tensor | None,  # state at time t; if None, we sample
-    s_next: torch.Tensor,  # state at time t + \Delta t
-    step: int,  # step at time t
-    num_steps: int,
-    pb_mean_correction: torch.Tensor,
-    pb_var_correction: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    raise NotImplementedError

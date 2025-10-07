@@ -128,25 +128,25 @@ class DDSMLPModule(MLPModule):
         mean, logvar = self.get_gaussian_params(
             out_state, s, t, grad_logr_fn, time_array_emb=time_array_emb
         )
-        if self.conditional_flow_model:
-            flow = self.predict_flow(s=s, t=t, extended_input=extended_input)
-        else:
-            flow = torch.zeros(s.shape[0], device=s.device)
+        flow = self.predict_flow(s=s, t=t, extended_input=extended_input)
         return mean, logvar, flow
 
     def predict_flow(
         self, s: torch.Tensor, t: torch.Tensor, extended_input: torch.Tensor
     ) -> torch.Tensor:
-        assert self.flow_state_time_net is not None
-        if not self.share_embeddings:
-            sin_embed_cond = (t * self.flow_pe + self.flow_timestep_phase).sin()  # type: ignore
-            cos_embed_cond = (t * self.flow_pe + self.flow_timestep_phase).cos()  # type: ignore
-            flow_time_array_emb = torch.cat([sin_embed_cond, cos_embed_cond], dim=-1)
-            flow_t_net1 = self.flow_time_coder_state(flow_time_array_emb)
-            flow_extended_input = torch.cat([s, flow_t_net1], dim=-1)
+        if self.conditional_flow_model:
+            assert self.flow_state_time_net is not None
+            if not self.share_embeddings:
+                sin_embed_cond = (t * self.flow_pe + self.flow_timestep_phase).sin()  # type: ignore
+                cos_embed_cond = (t * self.flow_pe + self.flow_timestep_phase).cos()  # type: ignore
+                flow_time_array_emb = torch.cat([sin_embed_cond, cos_embed_cond], dim=-1)
+                flow_t_net1 = self.flow_time_coder_state(flow_time_array_emb)
+                flow_extended_input = torch.cat([s, flow_t_net1], dim=-1)
+            else:
+                flow_extended_input = extended_input
+            flow = self.flow_state_time_net(flow_extended_input).squeeze(-1)
         else:
-            flow_extended_input = extended_input
-        flow = self.flow_state_time_net(flow_extended_input).squeeze(-1)
+            flow = torch.zeros(s.shape[0], device=s.device)
         return flow
 
     def get_lp_scaling(
