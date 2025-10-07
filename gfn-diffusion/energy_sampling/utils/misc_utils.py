@@ -70,30 +70,27 @@ def get_name(args: argparse.Namespace) -> str:
     name += args.loss_type_str
 
     name += f"_{args.module}"
-    if args.module in ["mlp", "pismlp", "ddsmlp"]:
-        name += f"-h{args.hidden_dim}l{args.joint_layers}"
-        if args.loss_type in ["subtb", "db"]:
-            name += f"-Fh{args.flow_hidden_dim}l{args.flow_layers}"
-    elif args.module == "egnn":
-        name += f"-h{args.egnn_hidden_nf}l{args.egnn_n_layers}"
+    name += f"-h{args.hidden_dim}l{args.joint_layers}"
+    if args.loss_type in ["subtb", "db"]:
+        name += f"-Fh{args.flow_hidden_dim}l{args.flow_layers}"
 
     if args.lp:
         name += "-lp"
 
     if args.partial_energy:
         name += "_partialE"
-        if args.learn_beta_T > 0:
-            name += f"-learnbetaT{args.learn_beta_T}"
+        if args.learn_beta:
+            name += f"-learnbeta"
 
     name += f"_tscale{args.t_scale}"
     name += f"_bsz{args.batch_size}"
 
     name += f"_lrfwd{args.lr_fwd}"
     if args.loss_type == "tb":
-        name += f"-lrZ{args.lr_Z}"
+        name += f"-lrZ{args.lr_logZ}"
     elif args.loss_type in ["subtb", "db"]:
         name += f"-lrflow{args.lr_flow}"
-        if args.learn_beta_T > 0:
+        if args.learn_beta:
             name += f"-lrbeta{args.lr_beta}"
     if args.learn_pb:
         name += f"-lrbwd{args.lr_bwd}"
@@ -102,14 +99,7 @@ def get_name(args: argparse.Namespace) -> str:
     if args.use_scheduler:
         name += f"-lrsch"
 
-    name += f"_T{args.T}-{args.discretizer}"
-    if args.discretizer == "random":
-        name += f"-maxr{args.discretizer_max_ratio}"
-
-    if args.epsilon > 0.0:
-        name += f"_eps{args.epsilon}"
-        if args.anneal_epsilon:
-            name += f"-annealed"
+    name += f"_numsteps{args.num_steps}"
 
     if args.invtemp != 1.0:
         name += f"_invtemp{args.invtemp}"
@@ -118,7 +108,6 @@ def get_name(args: argparse.Namespace) -> str:
 
     if args.use_buffer:
         name += f"_btf{args.bwd_to_fwd_ratio}"
-        name += f"-buf{args.buffer_type}"
         buffer_size_str = (
             f"{args.buffer_size // 1000}K" if args.buffer_size >= 1000 else f"{args.buffer_size}"
         )
@@ -132,16 +121,8 @@ def get_name(args: argparse.Namespace) -> str:
             if args.mcmc_type == "md":
                 name += f"-gamma{args.mcmc_gamma}"
 
-    if args.train_resampling or args.train_weighting:
-        if args.train_resampling:
-            name += "_resampling"
-        if args.train_weighting:
-            name += "_weighting"
-        if args.alternating:
-            name += "-alt"
-
     if args.target_ess != 0.0:
-        name += f"_tgtess{args.target_ess}-{args.smoothing_strategy}"
+        name += f"_tgtess{args.target_ess}"
 
     name += f"_{args.exp_name}" if args.exp_name else ""
 

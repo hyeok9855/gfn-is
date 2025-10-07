@@ -5,13 +5,7 @@ import torch
 import wandb
 from tqdm import trange
 
-from buffers import (
-    PIWIntermediateStateBuffer,
-    PIWTerminalStateBuffer,
-    IntermediateStateBuffer,
-    TerminalStateBuffer,
-)
-from discretizers import get_discretizer
+from buffers import TerminalStateBuffer
 from energies import get_energy
 from mcmcs import MALA, MD
 from models import GFN
@@ -53,11 +47,17 @@ def train(args):
     gfn_model = GFN(
         energy=energy,
         module=module,
-        t_scale=args.t_scale,
-        partial_energy=args.partial_energy,
-        learn_beta_T=args.learn_beta_T,
-        state_remove_mean=args.state_remove_mean,
         device=device,
+        num_steps=args.num_steps,
+        reference_process=args.reference_process,
+        # --- Pinned Brownian Args --- #
+        t_scale=args.t_scale,
+        # --- OU Args --- #
+        init_std=args.init_std,
+        noise_scale=args.noise_scale,
+        # --- SubTB Args --- #
+        partial_energy=args.partial_energy,
+        learn_beta=args.learn_beta,
     ).to(device)
 
     gfn_optimizer, gfn_scheduler = get_gfn_optimizer(
@@ -65,6 +65,7 @@ def train(args):
         lr_fwd=args.lr_fwd,
         lr_bwd=args.lr_bwd,
         lr_flow=args.lr_flow,
+        lr_logZ=args.lr_logZ,
         lr_beta=args.lr_beta,
         lr_lgv=args.lr_lgv,
         use_weight_decay=args.use_weight_decay,
@@ -76,24 +77,12 @@ def train(args):
 
     buffer = mcmc = None
     if args.use_buffer:
-        if args.prioritization == "iw":
-            buffer_class = (
-                PIWTerminalStateBuffer
-                if args.buffer_type == "terminal"
-                else PIWIntermediateStateBuffer
-            )
-        else:
-            buffer_class = (
-                TerminalStateBuffer if args.buffer_type == "terminal" else IntermediateStateBuffer
-            )
-
-        buffer = buffer_class(
+        buffer = TerminalStateBuffer(
             args.buffer_size,
             device,
             prioritization=args.prioritization,
             sampling_func=get_sampling_func(args.buffer_sampling, args.rank_k),
             logr_lb=args.logr_lb,
-            smoothing_strategy=args.smoothing_strategy,
             target_ess=args.target_ess,
         )
 
@@ -126,21 +115,9 @@ def train(args):
         n_epochs=args.epochs,
         bwd_to_fwd_ratio=args.bwd_to_fwd_ratio,
         buffer=buffer,
-        buffer_save_interval=args.buffer_save_interval,
         prefill_epochs=args.prefill_epochs,
         batch_size=args.batch_size,
-        train_discretizer=get_discretizer(
-            discretizer=args.discretizer, max_ratio=args.discretizer_max_ratio
-        ),
-        train_T=args.T,
-        epsilon=args.epsilon,
-        anneal_epsilon=args.anneal_epsilon,
-        weighting=args.train_weighting,
-        resampling=args.train_resampling,
-        resampling_strategy=args.resampling_strategy,
-        alternating=args.alternating,
-        target_ess=args.target_ess,
-        smoothing_strategy=args.smoothing_strategy,
+        num_steps=args.num_steps,
         mcmc=mcmc,
         mcmc_freq=args.mcmc_freq,
         mcmc_batch_size=args.mcmc_batch_size,
@@ -148,10 +125,6 @@ def train(args):
         invtemp_anneal=args.invtemp_anneal,
         init_log_Z=args.init_log_Z,
         eval_batch_size=args.eval_batch_size,
-        eval_discretizer=get_discretizer(discretizer="uniform"),
-        eval_T=args.eval_T,
-        eval_weighting=args.eval_weighting,
-        eval_resampling=args.eval_resampling,
         plot_gt=args.plot_gt,
         plot_t_idx=args.plot_t_idx,
         plot_buffer_t_idx=args.plot_buffer_t_idx,
@@ -249,15 +222,15 @@ if __name__ == "__main__":
 
     parser.add_argument("--lr_fwd", type=float, default=1e-3)
     parser.add_argument("--lr_bwd", type=float, default=None)
-    parser.add_argument("--lr_Z", type=float, default=5e-2)
+    parser.add_argument("--lr_logZ", type=float, default=1e-1)
     parser.add_argument("--lr_flow", type=float, default=1e-2)
-    parser.add_argument("--lr_beta", type=float, default=1e-3)
+    parser.add_argument("--lr_beta", type=float, default=1e-1)
     parser.add_argument("--lr_lgv", type=float, default=1e-4)
     parser.add_argument("--use_weight_decay", action="store_true", default=False)
     parser.add_argument("--weight_decay", type=float, default=1e-7)
     parser.add_argument("--use_scheduler", action="store_true", default=False)
-    parser.add_argument("--milestones", type=float, nargs="+", default=[0.5, 0.8])
-    parser.add_argument("--gamma", type=float, default=0.2)
+    parser.add_argument("--milestones", type=float, nargs="+", default=[0.5, 0.75])
+    parser.add_argument("--gamma", type=float, default=0.3)
 
     parser.add_argument("--bwd_to_fwd_ratio", type=float, default=2.0)
     parser.add_argument("--clip_grad_norm", type=float, default=1.0)
@@ -265,12 +238,24 @@ if __name__ == "__main__":
     parser.add_argument("--eval_batch_size", type=int, default=2000)
     parser.add_argument("--epochs", type=int, default=25000)
 
-    parser.add_argument(
-        "--module", type=str, default="pismlp", choices=("pismlp", "mlp", "egnn", "ddsmlp")
-    )
+    parser.add_argument("--module", type=str, default="pismlp", choices=("pismlp", "mlp", "ddsmlp"))
     parser.add_argument("--use_checkpoint", action="store_true", default=False)
     parser.add_argument("--init_log_Z", type=str, default="0.0")  # "iw_elbo", "elbo" or float
     parser.add_argument("--precision", type=str, default="float", choices=("float", "double"))
+
+    ################################################################
+    ### Diffusion process
+    parser.add_argument("--num_steps", type=int, default=100)
+    parser.add_argument(
+        "--reference_process",
+        type=str,
+        default="pinned_brownian",
+        choices=("ou", "pinned_brownian"),
+    )
+    parser.add_argument("--t_scale", type=float, default=1.0)
+    parser.add_argument("--init_std", type=float, default=0.1)
+    parser.add_argument("--noise_scale", type=float, default=6.0)
+    ################################################################
 
     ################################################################
     ### MLP parameters
@@ -279,8 +264,7 @@ if __name__ == "__main__":
     # parser.add_argument("--t_emb_dim", type=int, default=256)
     # parser.add_argument("--harmonics_dim", type=int, default=256)
     parser.add_argument("--joint_layers", type=int, default=2)
-    parser.add_argument("--no_zero_init", action="store_false", dest="zero_init")
-    parser.add_argument("--no_share_embeddings", action="store_false", dest="share_embeddings")
+    parser.add_argument("--share_embeddings", action="store_true", default=False)
     parser.add_argument("--flow_hidden_dim", type=int, default=256)
     # parser.add_argument("--flow_s_emb_dim", type=int, default=256)
     # parser.add_argument("--flow_t_emb_dim", type=int, default=256)
@@ -297,53 +281,20 @@ if __name__ == "__main__":
     parser.add_argument("--learn_variance", action="store_true", default=False)
     parser.add_argument("--log_var_range", type=float, default=4.0)
 
-    parser.add_argument("--t_scale", type=float, default=1.0)
     parser.add_argument("--partial_energy", action="store_true", default=False)
-    parser.add_argument("--learn_beta_T", type=int, default=0)
-    ################################################################
-
-    ################################################################
-    ### For EGNN
-    parser.add_argument("--egnn_hidden_nf", type=int, default=128)
-    parser.add_argument("--egnn_n_layers", type=int, default=5)
-    parser.add_argument("--egnn_no_recurrent", action="store_false", dest="egnn_recurrent")
-    parser.add_argument("--egnn_no_attention", action="store_false", dest="egnn_attention")
-    parser.add_argument(
-        "--egnn_no_condition_time", action="store_false", dest="egnn_condition_time"
-    )
-    parser.add_argument("--egnn_no_tanh", action="store_false", dest="egnn_tanh")
-    parser.add_argument("--egnn_agg", type=str, default="sum")
-    ################################################################
-
-    ################################################################
-    ### For discretizer
-    parser.add_argument("--T", type=int, default=100)
-    # evaluation T
-    parser.add_argument("--eval_T", type=int, default=100)
-    # discretization scheme for training
-    parser.add_argument(
-        "--discretizer",
-        type=str,
-        default="uniform",
-        choices=("uniform", "random", "equidistant"),
-    )
-    # maximum ratio between the longest and the shortest step size (only for 'random' discretizer)
-    parser.add_argument("--discretizer_max_ratio", type=float, default=10.0)
+    parser.add_argument("--learn_beta", action="store_true", default=False)
     ################################################################
 
     ################################################################
     ### For replay buffer
     parser.add_argument("--no_use_buffer", action="store_false", dest="use_buffer")
     parser.add_argument("--buffer_size", type=int, default=-1)  # 100 * batch_size by default
-    parser.add_argument(
-        "--buffer_type", type=str, default="terminal", choices=("terminal", "intermediate")
-    )
     # prioritization
     parser.add_argument(
         "--prioritization",
         type=str,
         default="none",
-        choices=("none", "target", "loss", "iw", "normalized_iw"),
+        choices=("none", "reward", "loss", "iw", "normalized_iw"),
     )
     # buffer sampling strategy  # TODO: support percentile-based sampling
     parser.add_argument(
@@ -355,10 +306,7 @@ if __name__ == "__main__":
     # low rank_k give steep priorization in rank-based replay sampling
     parser.add_argument("--rank_k", type=float, default=1e-2)
     # logr_lb for filtering out samples with extremely low reward values for numerical stability
-    parser.add_argument("--logr_lb", type=float, default=-1e5)
-    # Interval between time indices at which to save intermediate states in the buffer
-    # (0 means only save terminal states, n>0 saves states at every nth timestep)
-    parser.add_argument("--buffer_save_interval", type=int, default=0)
+    parser.add_argument("--logr_lb", type=float, default=-1e8)
     # prefill to wait before starting to sample from buffer
     parser.add_argument("--prefill_epochs", type=int, default=-1)
     ################################################################
@@ -373,11 +321,6 @@ if __name__ == "__main__":
     parser.add_argument("--mcmc_thinning", type=int, default=1)
     parser.add_argument("--mcmc_step_size", type=float, default=0.001)
     parser.add_argument("--mcmc_gamma", type=float, default=1.0)  # for MD
-    ################################################################
-
-    ### Exploration with extra noise
-    parser.add_argument("--epsilon", type=float, default=0.0)
-    parser.add_argument("--no_anneal_epsilon", action="store_false", dest="anneal_epsilon")
     ################################################################
 
     ################################################################
@@ -403,24 +346,7 @@ if __name__ == "__main__":
 
     ################################################################
     ### Importance sampling related
-    parser.add_argument("--train_resampling", action="store_true", default=False)
-    parser.add_argument("--train_weighting", action="store_true", default=False)
-    parser.add_argument("--alternating", action="store_true", default=False)
     parser.add_argument("--target_ess", type=float, default=0.0)  # 0.0 has no effect
-    parser.add_argument(
-        "--smoothing_strategy",
-        type=str,
-        default="temper",
-        choices=("clip_above", "clip_below", "temper", "mix_with_uniform"),
-    )
-    parser.add_argument("--eval_resampling", action="store_true", default=False)
-    parser.add_argument("--eval_weighting", action="store_true", default=False)
-    parser.add_argument(
-        "--resampling_strategy",
-        type=str,
-        default="systematic",
-        choices=("multinomial", "stratified", "systematic"),
-    )
     ################################################################
 
     args = parser.parse_args()
@@ -429,8 +355,6 @@ if __name__ == "__main__":
         args.init_log_Z = float(args.init_log_Z)
     except ValueError:
         assert args.init_log_Z in ["iw_elbo", "elbo"]
-
-    args.state_remove_mean = True if args.energy_name in ["lj13", "lj55"] else False
 
     args.loss_type_str = args.loss_type
     if args.loss_type in ["db", "subtb"]:
@@ -454,13 +378,12 @@ if __name__ == "__main__":
         args.conditional_flow_model = True
     else:
         args.conditional_flow_model = False
-        args.lr_flow = args.lr_Z  # For TB
 
     if args.buffer_size == -1:
         args.buffer_size = 100 * args.batch_size
 
     if args.prefill_epochs == -1:
-        args.prefill_epochs = int(min(100, args.buffer_size / args.batch_size // 10))
+        args.prefill_epochs = int(min(100, args.buffer_size / args.batch_size))
 
     if args.full_eval_freq < 1:
         args.full_eval_freq = args.full_eval_freq * args.epochs

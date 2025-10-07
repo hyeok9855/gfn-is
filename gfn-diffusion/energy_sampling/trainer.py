@@ -1,9 +1,9 @@
-from typing import Callable, Literal
+from typing import Literal
 import warnings
 
 import torch
 
-from buffers import BaseBuffer, PIWTerminalStateBuffer, IntermediateStateBuffer, TerminalStateBuffer
+from buffers import TerminalStateBuffer
 from energies import ALDPFAB, BaseEnergy, IntermediateEnergy
 from losses import cal_subtb_coef_matrix, get_loss
 from mcmcs import BaseMCMC
@@ -11,8 +11,6 @@ from models import GFN
 from utils.eval_utils import density_metrics, distribution_distance_metrics
 from utils.misc_utils import linear_annealing, logmeanexp
 from utils.plot_utils import visualize
-from utils.sampling_utils import get_sampling_func
-from utils.train_utils import binary_search_smoothing
 
 
 class Trainer:
@@ -29,31 +27,17 @@ class Trainer:
         sublogvar_K: int,
         n_epochs: int,
         bwd_to_fwd_ratio: float,
-        buffer: BaseBuffer | None,
-        buffer_save_interval: int,
+        buffer: TerminalStateBuffer | None,
         prefill_epochs: int,
         batch_size: int,
-        train_discretizer: Callable[[int, int], torch.Tensor],
-        train_T: int,
-        weighting: bool,
-        resampling: bool,
-        resampling_strategy: Literal["multinomial", "stratified", "systematic"],
-        alternating: bool,
-        target_ess: float,
-        smoothing_strategy: Literal["temper", "clip_above", "clip_below"],
+        num_steps: int,
         mcmc: BaseMCMC | None,
         mcmc_freq: int,
         mcmc_batch_size: int,
-        epsilon: float,
-        anneal_epsilon: bool,
         invtemp: float,
         invtemp_anneal: bool,
         init_log_Z: Literal["iw_elbo", "iw"] | float,
         eval_batch_size: int,
-        eval_discretizer: Callable[[int, int], torch.Tensor],
-        eval_T: int,
-        eval_weighting: bool,
-        eval_resampling: bool,
         plot_gt: bool,
         plot_t_idx: list[int],
         plot_buffer_t_idx: list[int],
@@ -73,7 +57,7 @@ class Trainer:
         self.subtb_n_chunks = subtb_n_chunks
         self.subtb_coef_matrix = None
         if loss_type == "subtb" and subtb_n_chunks == 0:  # chunk-based subtb
-            self.subtb_coef_matrix = cal_subtb_coef_matrix(subtb_lambda, train_T).to(self.device)
+            self.subtb_coef_matrix = cal_subtb_coef_matrix(subtb_lambda, num_steps).to(self.device)
         self.sublogvar_K = sublogvar_K
 
         # Training parameters and buffer
@@ -85,31 +69,11 @@ class Trainer:
             self.bwd_to_fwd_ratio = int(bwd_to_fwd_ratio)
             self.fwd_to_bwd_ratio = None
         self.buffer = buffer
-        self.buffer_save_interval = buffer_save_interval
         self.prefill_epochs = prefill_epochs if self.buffer is not None else 0
 
         # Sampling parameters
         self.batch_size = batch_size
-        self.train_discretizer = train_discretizer
-        self.train_T = train_T
-
-        # Weighted or resampled training
-        self._weighting = weighting
-        self._resampling = resampling
-        self.resampling_strategy = resampling_strategy
-        self.alternating = alternating
-        self._alternating_flag = True
-
-        # Importance sampling
-        if (
-            (self.buffer is not None and self.buffer.prioritization == "normalized_iw")
-            or weighting
-            or resampling
-        ):
-            self.target_ess = target_ess
-        else:  # otherwise, we don't need smoothing; disable it by setting target_ess to 0.0
-            self.target_ess = 0.0
-        self.smoothing_strategy = smoothing_strategy
+        self.num_steps = num_steps
 
         # MCMC
         self.mcmc = mcmc
@@ -117,37 +81,22 @@ class Trainer:
         self.mcmc_batch_size = mcmc_batch_size
 
         # Misc
-        self._epsilon = epsilon
-        self.anneal_epsilon = anneal_epsilon
         self._invtemp = invtemp
         self.invtemp_anneal = invtemp_anneal
 
         self.init_log_Z = self.init_log_Z_ratios = self.init_log_Z_log_rs = None
-        if loss_type == "tb":
-            if isinstance(init_log_Z, float):
-                self.gfn_model.pred_module.set_log_Z(init_log_Z)
-            else:
-                self.init_log_Z = init_log_Z
-                self.init_log_Z_ratios = torch.zeros((0,)).to(self.device)
-                self.init_log_Z_log_rs = torch.zeros((0,)).to(self.device)
+        if isinstance(init_log_Z, float):
+            self.gfn_model.pred_module.set_log_Z(init_log_Z)
+        else:
+            self.init_log_Z = init_log_Z
+            self.init_log_Z_ratios = torch.zeros((0,)).to(self.device)
+            self.init_log_Z_log_rs = torch.zeros((0,)).to(self.device)
 
         # Eval and Plot
         self.eval_batch_size = eval_batch_size
-        self.eval_discretizer = eval_discretizer
-        self.eval_T = eval_T
-        self.eval_weighting = eval_weighting
-        self.eval_resampling = eval_resampling
         self.plot_gt = plot_gt
         self.plot_t_idx = plot_t_idx
         self.plot_buffer_t_idx = plot_buffer_t_idx
-
-    @property
-    def weighting(self) -> bool:
-        return self._weighting and self._alternating_flag
-
-    @property
-    def resampling(self) -> bool:
-        return self._resampling and self._alternating_flag
 
     def get_invtemp(self, it: int) -> float:
         if not self.invtemp_anneal:
@@ -155,11 +104,6 @@ class Trainer:
         return linear_annealing(
             it, int(0.5 * self.n_epochs), self._invtemp, 1.0, descending=False, avoid_zero=True
         )
-
-    def get_epsilon(self, it: int) -> float:
-        if not self.anneal_epsilon:
-            return self._epsilon
-        return linear_annealing(it, int(0.5 * self.n_epochs), 0.0, self._epsilon, descending=True)
 
     def prefill(self) -> None:
         # Prefill the buffer at the beginning of training
@@ -210,7 +154,7 @@ class Trainer:
 
         # MCMC buffer augmentation
         if self.mcmc is not None and it % self.mcmc_freq == 0:
-            self.perform_mcmc(it)
+            self.perform_mcmc()
 
         if loss.isinf() or loss > 1e28:
             print(f"Loss is inf or too large: {loss.item()}; skipping this batch...")
@@ -229,12 +173,9 @@ class Trainer:
         return loss.item()
 
     def fwd_train_step(self, it: int) -> torch.Tensor:
-        init_states = torch.zeros(self.batch_size, self.energy.ndim).to(self.device)
-        ts = self.train_discretizer(self.batch_size, self.train_T).to(self.device)
-
         # Forward sampling
-        states, log_pfs, log_pbs, log_fs, log_pfs_exp = self.gfn_model.get_trajectory_fwd(
-            init_states, ts, epsilon=self.get_epsilon(it), pis=self.loss_type == "pis"
+        states, log_pfs, log_pbs, log_fs, init_log_probs = self.gfn_model.get_trajectory_fwd(
+            self.batch_size, pis=self.loss_type == "pis"
         )
 
         # Compute losses
@@ -243,96 +184,41 @@ class Trainer:
             log_pfs,
             log_pbs,
             log_fs,
+            init_log_probs,
+            log_Z=self.gfn_model.pred_module.log_Z,
             invtemp=self.get_invtemp(it),
             subtb_coef_matrix=self.subtb_coef_matrix,
             subtb_n_chunks=self.subtb_n_chunks,
             ndim=self.energy.ndim,
         )
 
-        log_iws_0t = normalized_iws_0t = None
-        if (
-            (self.buffer is not None and self.buffer.prioritization in ["iw", "normalized_iw"])
-            or self.weighting
-            or self.resampling
-        ):
-            log_iws_0t = (log_fs[:, 1:] + log_pbs.cumsum(-1) - log_pfs_exp.cumsum(-1)).detach()
-            if self.target_ess != 0.0:
-                _target_ess = (
-                    self.target_ess * self.batch_size
-                    if 0.0 <= self.target_ess <= 1.0
-                    else self.target_ess
-                )
-                assert 1.0 < _target_ess <= self.batch_size, f"Invalid target ESS: {_target_ess}"
-
-                log_iws_0t_smoothed = binary_search_smoothing(
-                    log_iws_0t, _target_ess, self.smoothing_strategy
-                )
-                normalized_iws_0t = log_iws_0t_smoothed.softmax(dim=0)  # (bs, T)
-            else:
-                normalized_iws_0t = log_iws_0t.softmax(dim=0)  # (bs, T)
-
         # Add data to buffer
         if self.buffer is not None:
-            data_dict = {"states": states[:, 1:], "log_fs": log_fs[:, 1:]}  # (bs, T) both
-            if self.buffer.prioritization == "loss":
-                assert isinstance(self.buffer, TerminalStateBuffer)
-                data_dict["losses"] = losses.unsqueeze(1)  # (bs, 1)
-            elif self.buffer.prioritization == "iw":
-                assert log_iws_0t is not None
-                data_dict["log_iws"] = log_iws_0t  # (bs, T)
-            elif self.buffer.prioritization == "normalized_iw":
-                assert normalized_iws_0t is not None
-                data_dict["normalized_iws"] = normalized_iws_0t  # (bs, T)
+            self.buffer.add(
+                xs=states[:, -1],
+                log_rs=log_fs[:, -1],
+                log_iws=log_fs[:, -1] + log_pbs.sum(-1) - log_pfs.sum(-1),
+                losses=losses,
+            )
 
-            if isinstance(self.buffer, TerminalStateBuffer):
-                data_dict = {k: v[:, -1] for k, v in data_dict.items()}
-            else:  # IntermediateStateBuffer
-                data_dict["ts"] = ts[:, 1:]  # (bs, T)
-                if self.buffer_save_interval > 0:
-                    data_dict = {
-                        k: v[:, self.buffer_save_interval - 1 :: self.buffer_save_interval]
-                        for k, v in data_dict.items()
-                    }
-            self.buffer.add(**data_dict)
-
-        # Weighting or resampling here is supported only on the trajectory level
-        # TODO: support for the transition-level weighting or resampling
-        if self.weighting or self.resampling:
-            assert normalized_iws_0t is not None
-            x_iws = normalized_iws_0t[:, -1]
-            if self.weighting:
-                loss = (x_iws * losses).sum()
-            else:  # resampling
-                indices = get_sampling_func(self.resampling_strategy)(  # type: ignore
-                    x_iws, self.batch_size, True
-                )
-                loss = losses[indices].mean()
-        else:
-            loss = losses.mean()
-
-        if self.alternating:
-            self._alternating_flag = not self._alternating_flag
-
+        loss = losses.mean()
         if it == 0 and self.init_log_Z is not None:
             assert self.init_log_Z_ratios is not None and self.init_log_Z_log_rs is not None
             assert (
                 isinstance(self.gfn_model.pred_module.flow_model, torch.nn.Parameter)
                 and self.gfn_model.pred_module.flow_model.item() == 0.0
             )
-            ratios = (log_pbs.sum(-1) - log_pfs_exp.sum(-1)).detach()
+            ratios = (log_pbs.sum(-1) - log_pfs.sum(-1)).detach()
             self.init_log_Z_ratios = torch.cat([self.init_log_Z_ratios, ratios], dim=0)
             self.init_log_Z_log_rs = torch.cat([self.init_log_Z_log_rs, log_fs[:, -1]], dim=0)
 
         return loss
 
     def bwd_train_step(self, it: int) -> torch.Tensor:
-        sub_logvar_params = {}
-
         if self.loss_type == "mle":
             gt_xs, gt_log_rewards = self.energy.cached_sample(self.batch_size, seed=it)
-            ts = self.train_discretizer(self.batch_size, self.train_T).to(self.device)
-            _, log_pfs, log_pbs, log_fs = self.gfn_model.get_trajectory_bwd(
-                gt_xs, ts, gt_log_rewards
+            _, log_pfs, log_pbs, log_fs, init_log_probs = self.gfn_model.get_trajectory_bwd(
+                gt_xs, gt_log_rewards
             )
             # mle over trajectories
             loss = -log_pfs.sum(-1).mean()
@@ -344,55 +230,9 @@ class Trainer:
                 # each with shape (bs,)
 
                 # Construct complete trajectories
-                ts = self.train_discretizer(self.batch_size, self.train_T).to(self.device)
-                _, log_pfs, log_pbs, log_fs = self.gfn_model.get_trajectory_bwd(
-                    buf_xs, ts, buf_log_rs
+                _, log_pfs, log_pbs, log_fs, init_log_probs = self.gfn_model.get_trajectory_bwd(
+                    buf_xs, buf_log_rs
                 )
-
-            elif isinstance(self.buffer, IntermediateStateBuffer):
-                # # Option 1: Construct transitions / subtrajectories (chunks)
-                # chunk_size = T // subtb_n_chunks  # assumption: T is divisible by subtb_n_chunks
-                # buf_states, buf_ts, buf_log_fs, indices = buffer.sample(batch_size * subtb_n_chunks)
-                # # each with shape (bs,)
-
-                # # TODO: support for other discretizers
-                # assert discretizer.__name__ == "uniform_discretizer"
-                # sub_ts = discretizer(batch_size * subtb_n_chunks, chunk_size).to(device) / subtb_n_chunks
-
-                # # clamp to avoid negative time steps from floating point error
-                # ts = (buf_ts.unsqueeze(-1) + sub_ts - sub_ts[:, [-1]]).clamp(min=0.0)
-                # _, log_pfs, log_pbs, log_fs = gfn_model.get_subtrajectory_bwd(
-                #     buf_states, ts, buf_log_fs, energy.log_reward
-                # )
-
-                # Option 2: Construct complete trajectories by sampling both backward and forward
-                if self.loss_type == "logvar" and self.sublogvar_K > 1:
-                    assert self.batch_size % self.sublogvar_K == 0
-                    buf_states, buf_ts, _, indices = self.buffer.sample(
-                        self.batch_size // self.sublogvar_K
-                    )
-                    buf_states = (
-                        buf_states.unsqueeze(1).repeat(1, self.sublogvar_K, 1).flatten(0, 1)
-                    )
-                    buf_ts = buf_ts.unsqueeze(1).repeat(1, self.sublogvar_K).flatten(0, 1)
-                else:
-                    buf_states, buf_ts, _, indices = self.buffer.sample(self.batch_size)
-
-                # TODO: support for other discretizers
-                try:
-                    assert self.train_discretizer.__name__ == "uniform_discretizer"
-                except:  # for partial function
-                    assert self.train_discretizer.func.__name__ == "uniform_discretizer"
-                ts = self.train_discretizer(self.batch_size, self.train_T).to(self.device)
-
-                _, log_pfs, log_pbs, log_fs, _ = self.gfn_model.get_trajectory_fwd_and_bwd(
-                    buf_states, ts, buf_ts, epsilon=0.0  # TODO: support for epsilon
-                )
-                sub_logvar_params = {
-                    "sublogvar_K": self.sublogvar_K,
-                    "ts": ts,
-                    "curr_t": buf_ts,
-                }
 
             else:
                 raise ValueError(f"Invalid buffer type: {type(self.buffer)}")
@@ -402,11 +242,12 @@ class Trainer:
                 log_pfs,
                 log_pbs,
                 log_fs,
+                init_log_probs,
+                log_Z=self.gfn_model.pred_module.log_Z,
                 invtemp=self.get_invtemp(it),
                 subtb_coef_matrix=self.subtb_coef_matrix,
                 subtb_n_chunks=self.subtb_n_chunks,
                 ndim=self.energy.ndim,
-                **sub_logvar_params,  # subtrajectory-based logvar specific
             )
 
             if self.buffer.prioritization == "loss":
@@ -416,10 +257,11 @@ class Trainer:
 
         return loss
 
-    def perform_mcmc(self, it: int) -> None:
+    def perform_mcmc(self) -> None:
         # TODO: support for intermediate states
         assert self.mcmc is not None
         assert isinstance(self.buffer, TerminalStateBuffer) and len(self.buffer) > 0
+        assert self.buffer.prioritization != "loss"
 
         buf_xs, _, indices = self.buffer.sample(self.mcmc_batch_size)
 
@@ -437,40 +279,11 @@ class Trainer:
             mcmc_log_rs = mcmc_log_rs[ind_L]
             indices = indices[ind_L]
 
-        data_dict = {"states": mcmc_xs, "log_fs": mcmc_log_rs}
-        if isinstance(self.buffer, PIWTerminalStateBuffer):
-            data_dict["log_iws"] = self.buffer.log_iws_dataset[indices]
-        elif self.buffer.normalized_iws_dataset is not None:
-            data_dict["normalized_iws"] = self.buffer.normalized_iws_dataset[indices]
-        elif self.buffer.prioritization == "loss":
-            losses = []
-            n_batches = mcmc_xs.shape[0] // self.batch_size + int(
-                mcmc_xs.shape[0] % self.batch_size != 0
-            )
-            with torch.no_grad():
-                for i in range(n_batches):
-                    from_idx = i * self.batch_size
-                    to_idx = min(from_idx + self.batch_size, mcmc_xs.shape[0])
-                    bsz = to_idx - from_idx
-                    ts = self.train_discretizer(bsz, self.train_T).to(self.device)
-                    _, log_pfs, log_pbs, log_fs = self.gfn_model.get_trajectory_bwd(
-                        mcmc_xs[from_idx:to_idx], ts, mcmc_log_rs[from_idx:to_idx]
-                    )
-                    losses.append(
-                        get_loss(
-                            self.loss_type,
-                            log_pfs,
-                            log_pbs,
-                            log_fs,
-                            invtemp=self.get_invtemp(it),
-                            subtb_coef_matrix=self.subtb_coef_matrix,
-                            subtb_n_chunks=self.subtb_n_chunks,
-                            ndim=self.energy.ndim,
-                        )
-                    )
-            data_dict["losses"] = torch.cat(losses, dim=0)
-
-        self.buffer.add(**data_dict)
+        self.buffer.add(
+            xs=mcmc_xs,
+            log_rs=mcmc_log_rs,
+            log_iws=self.buffer.priority_dataset.data[indices],
+        )
 
     def eval_and_plot(
         self,
@@ -479,13 +292,9 @@ class Trainer:
         final_eval: bool = False,
         plot: bool = False,
     ) -> dict:
-        metrics, model_trajs, weights, sample_xs_r, buffer_xs = self.eval_step(
-            data_size, full_eval, final_eval
-        )
+        metrics, model_trajs, buffer_xs = self.eval_step(data_size, full_eval, final_eval)
         if plot:
-            images = self.plot_step(
-                model_trajs, weights, sample_xs_r, buffer_xs, self.plot_gt or final_eval
-            )
+            images = self.plot_step(model_trajs, buffer_xs, self.plot_gt or final_eval)
             metrics.update(images)
             self.plot_gt = False  # disable plotting gt after first plot
         return metrics
@@ -496,7 +305,7 @@ class Trainer:
         data_size: int,
         full_eval: bool = False,
         final_eval: bool = False,
-    ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+    ) -> tuple[dict, torch.Tensor, torch.Tensor | None]:
         self.gfn_model.eval()
 
         metrics = {}
@@ -507,49 +316,46 @@ class Trainer:
             divisible = data_size % eval_batch_size == 0
             n_epochs = data_size // eval_batch_size + (1 if not divisible else 0)
 
-            model_trajs, log_pfs, log_pbs, log_fs, log_rewards = [], [], [], [], []
+            model_trajs, log_pfs, log_pbs, log_fs, log_rs, init_log_probs = [], [], [], [], [], []
 
             for i in range(n_epochs):
-                init_state = torch.zeros(eval_batch_size, self.energy.ndim).to(
-                    self.gfn_model.device
-                )
-                ts = self.eval_discretizer(eval_batch_size, self.eval_T).to(self.gfn_model.device)
-                _model_trajs, _log_pfs, _log_pbs, _log_fs, _ = self.gfn_model.get_trajectory_fwd(
-                    init_state, ts, epsilon=0.0, pis=self.loss_type == "pis"
+                _model_trajs, _log_pfs, _log_pbs, _log_fs, _init_log_probs = (
+                    self.gfn_model.get_trajectory_fwd(eval_batch_size, pis=self.loss_type == "pis")
                 )
                 _log_rewards = self.energy.log_reward(_model_trajs[:, -1])
                 model_trajs.append(_model_trajs)
                 log_pfs.append(_log_pfs)
                 log_pbs.append(_log_pbs)
                 log_fs.append(_log_fs)
-                log_rewards.append(_log_rewards)
+                log_rs.append(_log_rewards)
+                init_log_probs.append(_init_log_probs)
             model_trajs = torch.cat(model_trajs, dim=0)[:data_size]
             sample_xs = model_trajs[:, -1]
             log_pfs = torch.cat(log_pfs, dim=0)[:data_size]
             log_pbs = torch.cat(log_pbs, dim=0)[:data_size]
             log_fs = torch.cat(log_fs, dim=0)[:data_size]
-            log_rewards = torch.cat(log_rewards, dim=0)[:data_size]
+            log_rs = torch.cat(log_rs, dim=0)[:data_size]
+            init_log_probs = torch.cat(init_log_probs, dim=0)[:data_size]
 
             try:
-                gt_xs, gt_log_rewards = self.energy.cached_sample(data_size)
-                gt_log_pfs, gt_log_pbs = [], []
+                gt_xs, gt_log_rs = self.energy.cached_sample(data_size)
+                gt_log_pfs, gt_log_pbs, gt_init_log_probs = [], [], []
                 for i in range(n_epochs):
                     gt_xs_batch = gt_xs[i * eval_batch_size : (i + 1) * eval_batch_size]
-                    gt_log_rewards_batch = gt_log_rewards[
+                    gt_log_rewards_batch = gt_log_rs[
                         i * eval_batch_size : (i + 1) * eval_batch_size
                     ]
-                    ts = self.eval_discretizer(eval_batch_size, self.eval_T).to(
-                        self.gfn_model.device
-                    )
-                    _, _log_pfs, _log_pbs, _ = self.gfn_model.get_trajectory_bwd(
-                        gt_xs_batch, ts, gt_log_rewards_batch
+                    _, _log_pfs, _log_pbs, _, _init_log_probs = self.gfn_model.get_trajectory_bwd(
+                        gt_xs_batch, gt_log_rewards_batch
                     )
                     gt_log_pfs.append(_log_pfs)
                     gt_log_pbs.append(_log_pbs)
+                    gt_init_log_probs.append(_init_log_probs)
                 gt_log_pfs = torch.cat(gt_log_pfs, dim=0)[:data_size]
                 gt_log_pbs = torch.cat(gt_log_pbs, dim=0)[:data_size]
+                gt_init_log_probs = torch.cat(gt_init_log_probs, dim=0)[:data_size]
             except NotImplementedError:
-                gt_xs = gt_log_rewards = gt_log_pfs = gt_log_pbs = None
+                gt_xs = gt_log_rs = gt_log_pfs = gt_log_pbs = gt_init_log_probs = None
 
         try:
             gt_log_Z = self.energy.gt_logz()
@@ -561,10 +367,12 @@ class Trainer:
                 log_pfs,
                 log_pbs,
                 log_fs,
-                log_rewards,
+                log_rs,
+                init_log_probs,
                 gt_log_pfs=gt_log_pfs,
                 gt_log_pbs=gt_log_pbs,
-                gt_log_rewards=gt_log_rewards,
+                gt_log_rewards=gt_log_rs,
+                gt_init_log_probs=gt_init_log_probs,
                 gt_log_Z=gt_log_Z,
             )
         )
@@ -576,33 +384,10 @@ class Trainer:
 
         metrics = {f"eval/{k}": v for k, v in metrics.items()}
 
-        ### Weighted or resampled
-        weights = (log_rewards + log_pbs.sum(-1) - log_pfs.sum(-1)).softmax(0)
-        if self.eval_weighting and full_eval:
-            assert gt_xs is not None
-            metrics_w = distribution_distance_metrics(sample_xs, gt_xs, weights=weights)
-            metrics_w = {f"eval_weighted/{k}": v for k, v in metrics_w.items()}
-            metrics.update(metrics_w)
-
-        sample_xs_r = None
-        if self.eval_resampling:
-            # We can't use `estimate_partition_function` with resampled trajectories
-            # since we don't know the distribution of the resampled trajectories
-            assert gt_xs is not None
-            sampled_idx = get_sampling_func(self.resampling_strategy)(  # type: ignore
-                weights, data_size, True
-            )
-            model_trajs_r = model_trajs[sampled_idx]
-            sample_xs_r = model_trajs_r[:, -1]
-            if full_eval:
-                metrics_r = distribution_distance_metrics(sample_xs_r, gt_xs)
-                metrics_r = {f"eval_resampled/{k}": v for k, v in metrics_r.items()}
-                metrics.update(metrics_r)
-
         buffer_xs = None
         if self.buffer is not None and len(self.buffer) > 0:
             assert gt_xs is not None
-            buffer_xs, _ = self.buffer.sample_terminal(data_size)
+            buffer_xs, _, _ = self.buffer.sample(data_size)
             if full_eval:
                 metrics_b = distribution_distance_metrics(buffer_xs, gt_xs)
                 metrics_b = {f"eval_buffer/{k}": v for k, v in metrics_b.items()}
@@ -611,23 +396,17 @@ class Trainer:
         if final_eval:
             metrics = {k.replace("eval", "final_eval"): v for k, v in metrics.items()}
 
-        return metrics, model_trajs, weights, sample_xs_r, buffer_xs
+        return metrics, model_trajs, buffer_xs
 
     @torch.no_grad()
     def plot_step(
         self,
         model_trajs: torch.Tensor,
-        weights: torch.Tensor | None = None,
-        sample_xs_r: torch.Tensor | None = None,
         buffer_xs: torch.Tensor | None = None,
         plot_gt: bool = False,
     ) -> dict:
         xs = model_trajs[:, -1]
         images = visualize(self.energy, xs)
-        if weights is not None:
-            images.update(visualize(self.energy, xs, weights=weights, suffix="_weighted"))
-        if sample_xs_r is not None:
-            images.update(visualize(self.energy, sample_xs_r, suffix="_resample"))
         if buffer_xs is not None:
             images.update(visualize(self.energy, buffer_xs, suffix="_buffer"))
         if plot_gt:
@@ -643,21 +422,10 @@ class Trainer:
         # Plot intermediate states
         if len(self.plot_t_idx) > 0:
             assert self.gfn_model.pred_module.conditional_flow_model
-            eval_ts = self.eval_discretizer(model_trajs.shape[0], self.eval_T)
             for t_idx in self.plot_t_idx:
                 inter_states = model_trajs[:, t_idx]
-                assert (eval_ts[:, t_idx] == eval_ts[0, t_idx]).all()  # uniform discretizer
-                eval_t = round(eval_ts[0, t_idx].item(), 3)
+                eval_t = round(t_idx / self.num_steps, 3)
                 inter_energy = IntermediateEnergy(self.energy, self.gfn_model, eval_t)
                 images.update(visualize(inter_energy, inter_states, suffix=f"-t{eval_t}"))
-
-        if len(self.plot_buffer_t_idx) > 0:
-            assert isinstance(self.buffer, IntermediateStateBuffer)
-            for t_idx in self.plot_buffer_t_idx:
-                inter_states, buf_ts, _ = self.buffer.sample_timestep(model_trajs.shape[0], t_idx)
-                assert (buf_ts == buf_ts[0]).all()  # uniform discretizer
-                buf_t = round(buf_ts[0].item(), 3)
-                inter_energy = IntermediateEnergy(self.energy, self.gfn_model, buf_t)
-                images.update(visualize(inter_energy, inter_states, suffix=f"_buffer-t{buf_t}"))
 
         return images

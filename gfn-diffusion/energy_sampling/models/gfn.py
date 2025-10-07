@@ -1,4 +1,5 @@
 import math
+from typing import Literal
 
 import torch
 import torch.nn as nn
@@ -14,29 +15,60 @@ class GFN(nn.Module):
         self,
         energy: BaseEnergy,
         module: BaseModule,
-        t_scale: float = 1.0,
-        partial_energy: bool = False,
-        learn_beta_T: int = 0,
-        state_remove_mean: bool = False,
         device=torch.device("cuda"),
+        num_steps: int | None = None,
+        reference_process: Literal["pinned_brownian", "ou"] = "pinned_brownian",
+        # --- Pinned Brownian Args --- #
+        t_scale: float | None = None,
+        # --- OU Args --- #
+        init_std: float | None = None,
+        noise_scale: float | None = None,
+        # --- SubTB Args --- #
+        partial_energy: bool = False,
+        learn_beta: bool = False,
     ) -> None:
         super().__init__()
         self.energy = energy
         self.pred_module = module
-        self.t_scale = t_scale
-        self.partial_energy = partial_energy
-        self.state_remove_mean = state_remove_mean
         self.device = device
 
+        self.num_steps = num_steps
+        self.dt = torch.tensor(1.0 / num_steps, device=self.device)
+
+        self.reference_process = reference_process
+        self.t_scale = self.init_std = self.noise_scale = None
+
+        if reference_process == "pinned_brownian":
+            assert t_scale is not None
+            self.t_scale = t_scale
+            self.sample_initial_state = lambda bsz: torch.zeros(
+                (bsz, self.energy.ndim), device=self.device
+            )
+            self.initial_logprob = lambda s: torch.zeros((s.shape[0],), device=self.device)
+            self.alpha_fn = self.lambda_fn = None
+        elif reference_process == "ou":
+            assert init_std is not None and noise_scale is not None
+            self.init_std = init_std
+            self.noise_scale = noise_scale
+            self.initial_dist = torch.distributions.Normal(
+                torch.zeros((self.energy.ndim,), device=self.device),
+                torch.full((self.energy.ndim,), init_std, device=self.device),
+            )
+            self.sample_initial_state = lambda bsz: self.initial_dist.sample(
+                sample_shape=torch.Size((bsz,))
+            )
+            self.initial_logprob = lambda s: self.initial_dist.log_prob(s)
+            alphas = cos_sq_fn_step_scheme(num_steps, noise_scale=noise_scale)
+            self.alpha_fn = lambda step: alphas[step]
+            self.lambda_fn = lambda step: alphas[step]
+        else:
+            raise ValueError(f"Invalid reference process: {reference_process}")
+
+        self.partial_energy = partial_energy
         self.beta_model = None
-        if learn_beta_T > 0:
+        if learn_beta:
             self.beta_model = torch.nn.Parameter(
-                torch.cat(
-                    [
-                        torch.tensor([-float("inf")], device=self.device),
-                        torch.ones(learn_beta_T, device=self.device) * -1.0,
-                    ],
-                )
+                torch.cat([torch.ones(self.num_steps, device=self.device)])
             )
             self.softplus = nn.Softplus()
 
@@ -44,101 +76,48 @@ class GFN(nn.Module):
         self,
         s: torch.Tensor,  # state at time t
         s_next: torch.Tensor | None,  # state at time t + \Delta t; if None, we sample
-        t: torch.Tensor,  # time t
-        t_next: torch.Tensor,  # time t + \Delta t
+        step: int,  # step at time t; not used here
         pf_mean: torch.Tensor,
         pf_logvar: torch.Tensor,
-        pis: bool = False,
-        epsilon: float = 0.0,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # s.shape = (bsz, ndim)
-        # s_next.shape = (bsz, ndim)
-        # t.shape = (bsz,)
-        # t_next.shape = (bsz,)
-        # pf_mean.shape = (bsz, ndim)
-        # pf_logvar.shape = (bsz, ndim)
-
-        dts = (t_next - t).unsqueeze(1)
-
-        pf_logvar = pf_logvar + math.log(self.t_scale)
-
-        # PIS requires gradients w.r.t. the parameters
-        if pis:
-            assert epsilon == 0.0
-            pf_mean_sample = pf_mean
-            pf_logvar_sample = pf_logvar
-        else:
-            pf_mean_sample = pf_mean.detach()
-            pf_logvar_sample = pf_logvar.detach()
-            # Add exploration noise
-            if epsilon > 0.0:
-                pf_logvar_sample = pf_logvar_sample + math.log(1.0 + epsilon)
-
-        if s_next is None:
-            s_next = (
-                s
-                + dts * pf_mean_sample
-                + dts.sqrt()
-                * (pf_logvar_sample / 2).exp()
-                * torch.randn_like(s, device=self.device)
+        detach: bool = True,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.reference_process == "pinned_brownian":
+            return forward_step_pinned_brownian(
+                s, s_next, step, self.num_steps, pf_mean, pf_logvar, self.t_scale, detach
             )
-
-        noise = ((s_next - s) - dts * pf_mean) / (dts.sqrt() * (pf_logvar / 2).exp())
-        log_pfs = -0.5 * (noise**2 + logtwopi + dts.log() + pf_logvar).sum(1)
-
-        if epsilon > 0.0:
-            noise_exp = ((s_next - s) - dts * pf_mean_sample) / (
-                dts.sqrt() * (pf_logvar_sample / 2).exp()
-            )
-            log_pfs_exp = -0.5 * (noise_exp**2 + logtwopi + dts.log() + pf_logvar_sample).sum(1)
-        else:
-            log_pfs_exp = log_pfs.detach()
-
-        return s_next, log_pfs, log_pfs_exp
+        else:  # TODO
+            raise ValueError(f"Invalid reference process: {self.reference_process}")
 
     def backward_step(
         self,
         s: torch.Tensor | None,  # state at time t; if None, we sample
         s_next: torch.Tensor,  # state at time t + \Delta t
-        t: torch.Tensor,  # t
-        t_next: torch.Tensor,  # t + \Delta t
+        step: int,  # step at time t
+        pb_mean_correction: torch.Tensor,
+        pb_var_correction: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        # s.shape = (bsz, ndim)
-        # s_next.shape = (bsz, ndim)
-        # t.shape = (bsz,)
-        # t_next.shape = (bsz,)
-
-        dts = (t_next - t).unsqueeze(1)
-
-        mean_correction, var_correction = self.pred_module.backward(s_next, t_next)
-        back_mean = s_next - s_next * dts / (t_next).unsqueeze(1) * mean_correction
-        back_var = self.t_scale * dts * (t / t_next).unsqueeze(1) * var_correction
-
-        if s is None:
-            s = torch.zeros_like(s_next)
-            s[t != 0] = back_mean.detach()[t != 0] + back_var.sqrt().detach()[
-                t != 0
-            ] * torch.randn_like(s_next[t != 0])
-
-        noise_backward = (s - back_mean) / back_var.sqrt()
-        log_pbs = torch.zeros_like(back_mean[:, 0])
-        log_pbs[t != 0] = -0.5 * (
-            noise_backward[t != 0] ** 2 + logtwopi + back_var[t != 0].log()
-        ).sum(1)
-        return s, log_pbs
+        if self.reference_process == "pinned_brownian":
+            return backward_step_pinned_brownian(
+                s, s_next, step, self.num_steps, pb_mean_correction, pb_var_correction, self.t_scale
+            )
+        else:  # TODO
+            raise ValueError(f"Invalid reference process: {self.reference_process}")
 
     def get_partial_energy(
         self,
         states: torch.Tensor,  # (bsz, T', ndim)
-        ts: torch.Tensor,  # (bsz, T')
+        steps: torch.Tensor,  # (T')
     ) -> torch.Tensor:
         assert self.partial_energy
         bsz = states.shape[0]
 
+        ts = steps / self.num_steps
+
         if self.beta_model is not None:
             betas = self.softplus(self.beta_model).cumsum(0)
             betas = betas / betas[-1]
-            betas = betas.quantile(ts.flatten()).reshape(bsz, -1)
+            betas = torch.cat([torch.zeros(1), betas], dim=0)
+            betas = betas[steps]
         else:
             betas = ts
 
@@ -152,34 +131,31 @@ class GFN(nn.Module):
 
     def get_trajectory_fwd(
         self,
-        s: torch.Tensor,
-        ts: torch.Tensor,
-        epsilon: float = 0.0,
+        batch_size: int,
         pis=False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        bsz = s.shape[0]
-        T = ts.shape[1] - 1
+        bsz = batch_size
+        s = self.sample_initial_state(bsz)
+        init_log_probs = self.initial_logprob(s)
 
-        log_pfs = torch.zeros((bsz, T), device=self.device)
-        log_pbs = torch.zeros((bsz, T), device=self.device)
-        log_fs = torch.zeros((bsz, T + 1), device=self.device)
-        log_pfs_exp = torch.zeros((bsz, T), device=self.device)
-        states = torch.zeros((bsz, T + 1, self.energy.ndim), device=self.device)
+        log_pfs = torch.zeros((bsz, self.num_steps), device=self.device)
+        log_pbs = torch.zeros((bsz, self.num_steps), device=self.device)
+        log_fs = torch.zeros((bsz, self.num_steps + 1), device=self.device)
+        states = torch.zeros((bsz, self.num_steps + 1, self.energy.ndim), device=self.device)
         states[:, 0] = s
 
-        for i in range(T):
+        for i in range(self.num_steps):  # from step 0 to self.num_steps - 1
             pf_mean, pf_logvar, flow = self.pred_module.forward(
-                s, ts[:, i], self.energy.grad_log_reward
+                s, self.dt * i, self.energy.grad_log_reward
             )
 
-            if self.pred_module.conditional_flow_model or i == 0:
+            if self.pred_module.conditional_flow_model:
                 log_fs[:, i] = flow
 
-            s_, log_pfs[:, i], log_pfs_exp[:, i] = self.forward_step(
-                s, None, ts[:, i], ts[:, i + 1], pf_mean, pf_logvar, pis, epsilon
-            )
-            if i > 0:
-                _, log_pbs[:, i] = self.backward_step(s, s_, ts[:, i], ts[:, i + 1])
+            s_, log_pfs[:, i] = self.forward_step(s, None, i, pf_mean, pf_logvar, detach=not pis)
+
+            mean_correction, var_correction = self.pred_module.backward(s_, self.dt * (i + 1))
+            _, log_pbs[:, i] = self.backward_step(s, s_, i, mean_correction, var_correction)
 
             s = s_
             states[:, i + 1] = s
@@ -190,174 +166,195 @@ class GFN(nn.Module):
             log_fs[:, -1] = self.energy.log_reward(states[:, -1])
 
         if self.partial_energy:
-            log_fs[:, 1:-1] += self.get_partial_energy(states[:, 1:-1], ts[:, 1:-1])
+            log_fs[:, 1:-1] += self.get_partial_energy(
+                states[:, 1:-1], torch.arange(1, self.num_steps, device=self.device)
+            )
 
-        log_pfs_exp = log_pfs_exp if epsilon > 0.0 else log_pfs
-
-        return states, log_pfs, log_pbs, log_fs, log_pfs_exp
+        return states, log_pfs, log_pbs, log_fs, init_log_probs
 
     def get_trajectory_bwd(
         self,
         s: torch.Tensor,
-        ts: torch.Tensor,  # (bsz, T)
         log_r: torch.Tensor,  # (bsz,)
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         bsz = s.shape[0]
-        T = ts.shape[1] - 1
 
-        log_pfs = torch.zeros((bsz, T), device=self.device)
-        log_pbs = torch.zeros((bsz, T), device=self.device)
-        log_fs = torch.zeros((bsz, T + 1), device=self.device)
-        states = torch.zeros((bsz, T + 1, self.energy.ndim), device=self.device)
+        log_pfs = torch.zeros((bsz, self.num_steps), device=self.device)
+        log_pbs = torch.zeros((bsz, self.num_steps), device=self.device)
+        log_fs = torch.zeros((bsz, self.num_steps + 1), device=self.device)
+        states = torch.zeros((bsz, self.num_steps + 1, self.energy.ndim), device=self.device)
         states[:, -1] = s
 
-        for i in range(T):
-            if i < T - 1:
-                s_, log_pbs[:, T - i - 1] = self.backward_step(
-                    None, s, ts[:, T - i - 1], ts[:, T - i]
-                )
-            else:
-                s_ = torch.zeros_like(s)
+        for i in range(self.num_steps - 1, -1, -1):  # from step T - 1 to 0
+            mean_correction, var_correction = self.pred_module.backward(s, self.dt * (i + 1))
+            s_, log_pbs[:, i] = self.backward_step(None, s, i, mean_correction, var_correction)
 
             pf_mean, pf_logvar, flow = self.pred_module.forward(
-                s_, ts[:, T - i - 1], self.energy.grad_log_reward
+                s_, self.dt * i, self.energy.grad_log_reward
             )
 
-            if self.pred_module.conditional_flow_model or i == T - 1:
-                log_fs[:, T - i - 1] = flow
+            if self.pred_module.conditional_flow_model:
+                log_fs[:, i] = flow
 
-            _, log_pfs[:, T - i - 1], _ = self.forward_step(
-                s_, s, ts[:, T - i - 1], ts[:, T - i], pf_mean, pf_logvar
-            )
+            _, log_pfs[:, i] = self.forward_step(s_, s, i, pf_mean, pf_logvar, detach=True)
 
             s = s_
-            states[:, T - i - 1] = s
+            states[:, i] = s
 
         log_fs[:, -1] = log_r
 
         if self.partial_energy:
-            log_fs[:, 1:-1] += self.get_partial_energy(states[:, 1:-1], ts[:, 1:-1])
+            log_fs[:, 1:-1] += self.get_partial_energy(
+                states[:, 1:-1], torch.arange(1, self.num_steps, device=self.device)
+            )
 
-        return states, log_pfs, log_pbs, log_fs
+        init_log_probs = self.initial_logprob(s)
 
-    def get_trajectory_fwd_and_bwd(
+        return states, log_pfs, log_pbs, log_fs, init_log_probs
+
+    def get_trajectory_fwd_smc(
         self,
-        s: torch.Tensor,  # (bsz, ndim)
-        ts: torch.Tensor,  # (bsz, T+1)
-        curr_t: torch.Tensor,  # (bsz)
-        epsilon: float = 0.0,
+        batch_size: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        # Construct complete trajectories both ways
-        # 1. Backward sampling from intermediate_ts to 0
-        # 2. Forward sampling from intermediate_ts to T
-        # 3. Concatenate the two trajectories
-        bsz = s.shape[0]
-        T = ts.shape[1] - 1
-        arange = torch.arange(bsz)
+        raise NotImplementedError  # TODO: implement SMC
+        bsz = batch_size
+        s = self.sample_initial_state(batch_size)
+        init_log_probs = self.initial_logprob(s)
 
-        t_idx_intermediate = torch.where(ts == curr_t.unsqueeze(1))[1]
-        t_idx = t_idx_intermediate.clone()
-        t_idx_next = t_idx.clone()
-        is_backward = t_idx > 0
+        log_pfs = torch.zeros((bsz, self.num_steps), device=self.device)
+        log_pbs = torch.zeros((bsz, self.num_steps), device=self.device)
+        log_fs = torch.zeros((bsz, self.num_steps + 1), device=self.device)
+        states = torch.zeros((bsz, self.num_steps + 1, self.energy.ndim), device=self.device)
+        states[:, 0] = s
 
-        log_pfs = torch.zeros((bsz, T), device=self.device)
-        log_pbs = torch.zeros((bsz, T), device=self.device)
-        log_fs = torch.zeros((bsz, T + 1), device=self.device)
-        log_pfs_exp = torch.zeros((bsz, T), device=self.device)
-        states = torch.zeros((bsz, T + 1, self.energy.ndim), device=self.device)
-        states[arange, t_idx_intermediate] = s
-
-        if (is_intermediate := t_idx_intermediate != T).any():
-            # For non-terminal states, we should predict the flow at the current timestep
-            _, _, flow = self.pred_module.forward(
-                s[is_intermediate], curr_t[is_intermediate], self.energy.grad_log_reward
+        for i in range(self.num_steps):  # from step 0 to self.num_steps - 1
+            pf_mean, pf_logvar, flow = self.pred_module.forward(
+                s, self.dt * i, self.energy.grad_log_reward
             )
-            log_fs[is_intermediate, t_idx_intermediate[is_intermediate]] = flow
-            # The terminal states rewards will be assigned later
 
-        t1 = torch.zeros_like(curr_t)
-        t2 = torch.zeros_like(curr_t)
-        for _ in range(T):
-            t_idx_next[is_backward] = t_idx[is_backward] - 1
-            t_idx_next[~is_backward] = t_idx[~is_backward] + 1
-            t1_idx = torch.min(t_idx, t_idx_next)
-            t2_idx = torch.max(t_idx, t_idx_next)
-            t1 = ts[arange, t1_idx]
-            t2 = ts[arange, t2_idx]
+            if self.pred_module.conditional_flow_model:
+                log_fs[:, i] = flow
 
-            t1_idx_bwd = t1_idx[is_backward]
-            t1_idx_fwd = t1_idx[~is_backward]
-            t2_idx_bwd = t2_idx[is_backward]
-            t2_idx_fwd = t2_idx[~is_backward]
+            s_, log_pfs[:, i] = self.forward_step(s, None, i, pf_mean, pf_logvar, detach=not pis)
 
-            t1_bwd = t1[is_backward]
-            t1_fwd = t1[~is_backward]
-            t2_bwd = t2[is_backward]
-            t2_fwd = t2[~is_backward]
+            mean_correction, var_correction = self.pred_module.backward(s_, self.dt * (i + 1))
+            _, log_pbs[:, i] = self.backward_step(s, s_, i, mean_correction, var_correction)
 
-            # Fill the states[is_backward, t1_idx[is_backward]]
-            if is_backward.any():
-                states_bwd_t1, log_pb_bwd = self.backward_step(
-                    None, states[is_backward, t2_idx_bwd], t1_bwd, t2_bwd
-                )
-                states[is_backward, t1_idx_bwd] = states_bwd_t1
-                log_pbs[is_backward, t1_idx_bwd] = log_pb_bwd
-
-            # Forward pass with the one-step forward state of t1
-            pf_mean, pf_logvars, flow = self.pred_module.forward(
-                states[arange, t1_idx], t1, self.energy.grad_log_reward
-            )
-            log_fs[arange, t1_idx] = flow
-
-            if (~is_backward).any():
-                # Fill the states[~is_backward, t2_idx[~is_backward]]
-                states_fwd_t2, log_pf_fwd, log_pf_fwd_exp = self.forward_step(
-                    states[~is_backward, t1_idx_fwd],
-                    None,
-                    t1_fwd,
-                    t2_fwd,
-                    pf_mean[~is_backward],
-                    pf_logvars[~is_backward],
-                    pis=False,
-                    epsilon=epsilon,
-                )
-                states[~is_backward, t2_idx_fwd] = states_fwd_t2
-                log_pfs[~is_backward, t1_idx_fwd] = log_pf_fwd
-                log_pfs_exp[~is_backward, t1_idx_fwd] = log_pf_fwd_exp
-
-                _, log_pb_fwd = self.backward_step(
-                    states[~is_backward, t1_idx_fwd],
-                    states[~is_backward, t2_idx_fwd],
-                    t1_fwd,
-                    t2_fwd,
-                )
-                log_pbs[~is_backward, t1_idx_fwd] = log_pb_fwd
-
-            if is_backward.any():
-                _, log_pf_bwd, log_pf_bwd_exp = self.forward_step(
-                    states[is_backward, t1_idx_bwd],
-                    states[is_backward, t2_idx_bwd],
-                    t1_bwd,
-                    t2_bwd,
-                    pf_mean[is_backward],
-                    pf_logvars[is_backward],
-                    pis=False,
-                    epsilon=epsilon,
-                )
-                log_pfs[is_backward, t1_idx_bwd] = log_pf_bwd
-                log_pfs_exp[is_backward, t1_idx_bwd] = log_pf_bwd_exp
-
-            # Prepare for the next iteration
-            is_initial = t1_idx == 0
-            t_idx = t_idx_next.clone()
-            t_idx[is_backward & is_initial] = t_idx_intermediate[is_backward & is_initial]
-            is_backward = is_backward & (~is_initial)
+            s = s_
+            states[:, i + 1] = s
 
         # Assign the terminal reward
+        # Set terminal reward based on whether we need gradients for PIS loss
         with torch.no_grad():
             log_fs[:, -1] = self.energy.log_reward(states[:, -1])
 
         if self.partial_energy:
-            log_fs[:, 1:-1] += self.get_partial_energy(states[:, 1:-1], ts[:, 1:-1])
+            log_fs[:, 1:-1] += self.get_partial_energy(
+                states[:, 1:-1], torch.arange(1, self.num_steps, device=self.device)
+            )
 
-        return states, log_pfs, log_pbs, log_fs, log_pfs_exp
+        return states, log_pfs, log_pbs, log_fs, init_log_probs
+
+
+def cos_sq_fn_step_scheme(n_steps, s=0.008, noise_scale=6.0, dtype=torch.float32):
+    pre_phase = torch.linspace(0, 1, n_steps + 1, dtype=dtype)
+    phase = ((pre_phase + s) / (1 + s)) * torch.pi * 0.5
+    dts = torch.cos(phase) ** 4
+    dts_out = dts / dts.sum()
+    return dts_out * noise_scale
+
+
+def forward_step_pinned_brownian(
+    s: torch.Tensor,  # state at time t
+    s_next: torch.Tensor | None,  # state at time t + \Delta t; if None, we sample
+    step: int,  # step at time t; not used here
+    num_steps: int,
+    pf_mean: torch.Tensor,
+    pf_logvar: torch.Tensor,
+    t_scale: float,
+    detach: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    # s.shape = (bsz, ndim)
+    # s_next.shape = (bsz, ndim)
+    # pf_mean.shape = (bsz, ndim)
+    # pf_logvar.shape = (bsz, ndim)
+
+    dt = torch.tensor(1.0 / num_steps, device=s.device)
+
+    pf_logvar = pf_logvar + math.log(t_scale)
+
+    # PIS requires gradients w.r.t. the parameters
+    if detach:
+        pf_mean_sample = pf_mean.detach()
+        pf_logvar_sample = pf_logvar.detach()
+    else:
+        pf_mean_sample = pf_mean
+        pf_logvar_sample = pf_logvar
+
+    if s_next is None:
+        s_next = (
+            s
+            + dt * pf_mean_sample
+            + dt.sqrt() * (pf_logvar_sample / 2).exp() * torch.randn_like(s, device=s.device)
+        )
+
+    noise = ((s_next - s) - dt * pf_mean) / (dt.sqrt() * (pf_logvar / 2).exp())
+    log_pfs = -0.5 * (noise**2 + logtwopi + dt.log() + pf_logvar).sum(1)
+
+    return s_next, log_pfs
+
+
+def backward_step_pinned_brownian(
+    s: torch.Tensor | None,  # state at time t; if None, we sample
+    s_next: torch.Tensor,  # state at time t + \Delta t
+    step: int,  # step at time t
+    num_steps: int,
+    pb_mean_correction: torch.Tensor,
+    pb_var_correction: torch.Tensor,
+    t_scale: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    # s.shape = (bsz, ndim)
+    # s_next.shape = (bsz, ndim)
+    # pb_mean_correction.shape = (bsz, ndim)
+    # pb_var_correction.shape = (bsz, ndim)
+
+    dt = torch.tensor(1.0 / num_steps, device=s_next.device)
+    t_next = (step + 1) / num_steps
+
+    back_mean = s_next - s_next * dt / t_next * pb_mean_correction
+    back_var = t_scale * dt * (t_next - dt) / t_next * pb_var_correction
+
+    if s is None:
+        if step == 0:
+            s = torch.zeros_like(s_next)
+        else:
+            s = back_mean.detach() + back_var.sqrt().detach() * torch.randn_like(s_next)
+
+    noise_backward = (s - back_mean) / back_var.sqrt()
+    if step == 0:
+        log_pbs = torch.zeros_like(back_mean[:, 0])
+    else:
+        log_pbs = -0.5 * (noise_backward**2 + logtwopi + back_var.log()).sum(1)
+    return s, log_pbs
+
+
+def forward_step_ou(
+    s: torch.Tensor,  # state at time t
+    s_next: torch.Tensor | None,  # state at time t + \Delta t; if None, we sample
+    step: int,  # step at time t; not used here
+    num_steps: int,
+    pf_mean: torch.Tensor,
+    pf_logvar: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    raise NotImplementedError
+
+
+def backward_step_ou(
+    s: torch.Tensor | None,  # state at time t; if None, we sample
+    s_next: torch.Tensor,  # state at time t + \Delta t
+    step: int,  # step at time t
+    num_steps: int,
+    pb_mean_correction: torch.Tensor,
+    pb_var_correction: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    raise NotImplementedError

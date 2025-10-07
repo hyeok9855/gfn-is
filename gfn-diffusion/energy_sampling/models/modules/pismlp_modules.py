@@ -13,7 +13,7 @@ class PISMLPModule(MLPModule):
         self.t_model = TimeEncodingPIS(self.harmonics_dim, self.t_emb_dim, self.hidden_dim)
         self.s_model = StateEncodingPIS(self.ndim, self.s_emb_dim)
         self.joint_model = JointPolicyPIS(
-            self.s_emb_dim, self.hidden_dim, self.out_dim, self.joint_layers, self.zero_init
+            self.s_emb_dim, self.hidden_dim, self.out_dim, self.joint_layers
         )
 
         self.bwd_t_model = self.bwd_s_model = self.bwd_joint_model = None
@@ -21,7 +21,7 @@ class PISMLPModule(MLPModule):
             self.bwd_t_model = TimeEncodingPIS(self.harmonics_dim, self.t_emb_dim, self.hidden_dim)
             self.bwd_s_model = StateEncodingPIS(self.ndim, self.s_emb_dim)
             self.bwd_joint_model = JointPolicyPIS(
-                self.s_emb_dim, self.hidden_dim, 2 * self.ndim, self.joint_layers, self.zero_init
+                self.s_emb_dim, self.hidden_dim, 2 * self.ndim, self.joint_layers
             )
 
         if self.conditional_flow_model:
@@ -39,8 +39,6 @@ class PISMLPModule(MLPModule):
             self.flow_model = FlowModelPIS(
                 self.flow_s_emb_dim, self.flow_hidden_dim, 1, self.flow_layers
             )
-        else:
-            self.flow_model = torch.nn.Parameter(torch.tensor(0.0))
 
         self.lp_scaling_model = None
         if self.lp:
@@ -49,7 +47,6 @@ class PISMLPModule(MLPModule):
                 self.hidden_dim,
                 self.lgv_out_dim,
                 self.lgv_layers,
-                self.zero_init,
             )
 
     def get_lp_scaling(self, t: torch.Tensor, **kwargs) -> torch.Tensor:
@@ -73,8 +70,8 @@ class TimeEncodingPIS(nn.Module):
         Arguments:
             t: torch.Tensor
         """
-        t_sin = ((t.unsqueeze(1) * self.pe) + self.timestep_phase).sin()  # type: ignore
-        t_cos = ((t.unsqueeze(1) * self.pe) + self.timestep_phase).cos()  # type: ignore
+        t_sin = (t * self.pe + self.timestep_phase).sin()  # type: ignore
+        t_cos = (t * self.pe + self.timestep_phase).cos()  # type: ignore
         t_emb = torch.cat([t_sin, t_cos], dim=-1)
         return self.t_model(t_emb)
 
@@ -96,7 +93,6 @@ class JointPolicyPIS(nn.Module):
         hidden_dim: int,
         out_dim: int,
         num_layers: int,
-        zero_init: bool = False,
     ) -> None:
         super().__init__()
 
@@ -111,9 +107,8 @@ class JointPolicyPIS(nn.Module):
             nn.Linear(hidden_dim, out_dim),
         )
 
-        if zero_init:
-            self.model[-1].weight.data.fill_(1e-8)
-            self.model[-1].bias.data.fill_(0.0)
+        self.model[-1].weight.data.fill_(1e-8)
+        self.model[-1].bias.data.fill_(0.0)
 
     def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         return self.model(s_emb + t_emb)
@@ -140,6 +135,9 @@ class FlowModelPIS(nn.Module):
             nn.Linear(hidden_dim, out_dim),
         )
 
+        self.model[-1].weight.data.fill_(1e-8)
+        self.model[-1].bias.data.fill_(0.0)
+
     def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         return self.model(s_emb + t_emb)
 
@@ -151,7 +149,6 @@ class LangevinScalingModelPIS(nn.Module):
         hidden_dim: int,
         out_dim: int,
         num_layers: int,
-        zero_init: bool = False,
     ) -> None:
         super().__init__()
 
@@ -170,9 +167,8 @@ class LangevinScalingModelPIS(nn.Module):
         )
         self.register_buffer("pe", torch.linspace(start=0.1, end=100, steps=harmonics_dim)[None])
 
-        if zero_init:
-            self.lgv_model[-1].weight.data.fill_(1e-8)
-            self.lgv_model[-1].bias.data.fill_(0.01)
+        self.lgv_model[-1].weight.data.fill_(1e-8)
+        self.lgv_model[-1].bias.data.fill_(0.1)
 
     def forward(self, t: torch.Tensor) -> torch.Tensor:
         t_sin = ((t.unsqueeze(1) * self.pe) + self.timestep_phase).sin()  # type: ignore

@@ -29,7 +29,6 @@ class MLPModule(BaseModule):
         s_emb_dim: int = 64,
         hidden_dim: int = 64,
         joint_layers: int = 2,
-        zero_init: bool = False,
         share_embeddings: bool = False,
         flow_harmonics_dim: int = 64,
         flow_t_emb_dim: int = 64,
@@ -59,7 +58,6 @@ class MLPModule(BaseModule):
         self.s_emb_dim = s_emb_dim
         self.hidden_dim = hidden_dim
         self.joint_layers = joint_layers
-        self.zero_init = zero_init
 
         self.share_embeddings = share_embeddings
         self.flow_harmonics_dim = flow_harmonics_dim
@@ -81,7 +79,6 @@ class MLPModule(BaseModule):
             self.hidden_dim,
             self.out_dim,
             self.joint_layers,
-            self.zero_init,
         )
         self.bwd_t_model = self.bwd_s_model = self.bwd_joint_model = None
         if self.learn_pb:
@@ -93,7 +90,6 @@ class MLPModule(BaseModule):
                 self.hidden_dim,
                 2 * self.ndim,
                 self.joint_layers,
-                self.zero_init,
             )
 
         if self.conditional_flow_model:
@@ -110,8 +106,6 @@ class MLPModule(BaseModule):
             self.flow_model = FlowModel(
                 self.flow_s_emb_dim, self.flow_t_emb_dim, self.hidden_dim, 1, self.flow_layers
             )
-        else:
-            self.flow_model = torch.nn.Parameter(torch.tensor(0.0))
 
         self.lp_scaling_model = None
         if self.lp:
@@ -121,7 +115,6 @@ class MLPModule(BaseModule):
                 self.hidden_dim,
                 self.lgv_out_dim,
                 self.lgv_layers,
-                self.zero_init,
             )
 
     def get_param_groups(self) -> ParamGroups:
@@ -140,11 +133,11 @@ class MLPModule(BaseModule):
 
         flow_params = []
         if isinstance(self.flow_model, torch.nn.Module):
-            flow_params += list(self.flow_model.parameters())
             flow_params += list(self.t_model_flow.parameters())
             flow_params += list(self.s_model_flow.parameters())
-        else:
-            flow_params += [self.flow_model]
+            flow_params += list(self.flow_model.parameters())
+
+        logZ_params = [self.log_Z]
 
         lgv_params = []
         if self.lp_scaling_model is not None:
@@ -154,6 +147,7 @@ class MLPModule(BaseModule):
             forward_params=forward_params,
             backward_params=backward_params,
             flow_params=flow_params,
+            logZ_params=logZ_params,
             lgv_params=lgv_params,
         )
 
@@ -165,10 +159,15 @@ class MLPModule(BaseModule):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         s_emb = self.s_model(s)
         t_emb = self.t_model(t)
+        if t_emb.shape[0] == 1:
+            t_emb = t_emb.repeat(s.shape[0], 1)
         out = self.joint_model(s_emb, t_emb)
 
         mean, logvar = self.get_gaussian_params(out, s, t, grad_logr_fn, s_emb=s_emb, t_emb=t_emb)
-        flow = self.predict_flow(s=s, t=t, s_emb=s_emb, t_emb=t_emb)
+        if self.conditional_flow_model:
+            flow = self.predict_flow(s=s, t=t, s_emb=s_emb, t_emb=t_emb)
+        else:
+            flow = torch.zeros(s.shape[0], device=s.device)
         return mean, logvar, flow
 
     def get_lp_scaling(
@@ -177,7 +176,7 @@ class MLPModule(BaseModule):
         assert self.lp_scaling_model is not None
         return self.lp_scaling_model(s_emb, t_emb)
 
-    def predict_conditional_flow(
+    def predict_flow(
         self, s: torch.Tensor, t: torch.Tensor, s_emb: torch.Tensor, t_emb: torch.Tensor
     ) -> torch.Tensor:
         assert isinstance(self.flow_model, nn.Module)
@@ -223,8 +222,8 @@ class TimeEncoding(nn.Module):
         Arguments:
             t: torch.Tensor
         """
-        t_sin = (t.unsqueeze(1) * self.pe).sin()  # type: ignore
-        t_cos = (t.unsqueeze(1) * self.pe).cos()  # type: ignore
+        t_sin = (t * self.pe).sin()  # type: ignore
+        t_cos = (t * self.pe).cos()  # type: ignore
         t_emb = torch.cat([t_sin, t_cos], dim=-1)
         return self.t_model(t_emb)
 
@@ -251,7 +250,6 @@ class JointPolicy(nn.Module):
         hidden_dim: int,
         out_dim: int,
         num_layers: int,
-        zero_init: bool = False,
     ) -> None:
         super().__init__()
         self.model = nn.Sequential(
@@ -264,9 +262,9 @@ class JointPolicy(nn.Module):
             ],
             nn.Linear(hidden_dim, out_dim),
         )
-        if zero_init:
-            self.model[-1].weight.data.fill_(0.0)
-            self.model[-1].bias.data.fill_(0.0)
+
+        self.model[-1].weight.data.fill_(1e-8)
+        self.model[-1].bias.data.fill_(0.0)
 
     def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         return self.model(torch.cat([s_emb, t_emb], dim=-1))
@@ -294,6 +292,9 @@ class FlowModel(nn.Module):
             nn.Linear(hidden_dim, out_dim),
         )
 
+        self.model[-1].weight.data.fill_(1e-8)
+        self.model[-1].bias.data.fill_(0.0)
+
     def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         return self.model(torch.cat([s_emb, t_emb], dim=-1))
 
@@ -306,7 +307,6 @@ class LangevinScalingModel(nn.Module):
         hidden_dim: int,
         out_dim: int,
         num_layers: int,
-        zero_init: bool = False,
     ) -> None:
         super().__init__()
 
@@ -323,9 +323,8 @@ class LangevinScalingModel(nn.Module):
             nn.Linear(hidden_dim, out_dim),
         )
 
-        if zero_init:
-            self.lgv_model[-1].weight.data.fill_(0.0)
-            self.lgv_model[-1].bias.data.fill_(0.01)
+        self.lgv_model[-1].weight.data.fill_(1e-8)
+        self.lgv_model[-1].bias.data.fill_(0.1)
 
     def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         return self.lgv_model(torch.cat([s_emb, t_emb], dim=-1))
