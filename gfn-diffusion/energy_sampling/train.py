@@ -441,8 +441,6 @@ if __name__ == "__main__":
                 args.loss_type_str += f"-nchunk{args.subtb_n_chunks}"
             else:
                 args.loss_type_str += f"-lambda{args.subtb_lambda}"
-        if args.learn_beta_T > 0:
-            args.loss_type_str += f"-learnbetaT{args.learn_beta_T}"
     if args.learn_pb:
         args.loss_type_str += "-learnpb"
 
