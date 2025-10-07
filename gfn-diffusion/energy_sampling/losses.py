@@ -13,6 +13,16 @@ def tb_loss(
     return tb_discrepancy**2
 
 
+def logvar_loss(
+    log_pfs: torch.Tensor,  # (bs, T)
+    log_pbs: torch.Tensor,  # (bs, T)
+    log_r: torch.Tensor,  # (bs,)
+    init_log_probs: torch.Tensor,
+) -> torch.Tensor:
+    rnd = log_r + log_pbs.sum(-1) - (init_log_probs + log_pfs.sum(-1))  # (bs,)
+    return (rnd - rnd.mean(dim=0, keepdim=True)) ** 2  # (bs,)
+
+
 def db_loss(
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
@@ -65,17 +75,6 @@ def subtb_chunk_loss(
     subtb_chunk_losses = db_discrepancy_chunked.sum(dim=-1)
     # (bs, n_chunks)
     return (subtb_chunk_losses**2).mean(-1)
-
-
-def logvar_loss(
-    log_pfs: torch.Tensor,  # (bs, T)
-    log_pbs: torch.Tensor,  # (bs, T)
-    log_r: torch.Tensor,  # (bs,)
-    init_log_probs: torch.Tensor,
-) -> torch.Tensor:
-    raise NotImplementedError  # TODO: implement logvar loss
-    rnd = log_r + log_pbs.sum(-1) - log_pfs.sum(-1)  # (bs,)
-    return (rnd - rnd.mean(dim=0, keepdim=True)) ** 2  # (bs,)
 
 
 def get_loss(

@@ -10,6 +10,14 @@ from models.modules import BaseModule
 logtwopi = math.log(2 * math.pi)
 
 
+def cos_sq_fn_step_scheme(n_steps, s=0.008, noise_scale=6.0, dtype=torch.float32):
+    pre_phase = torch.linspace(0, 1, n_steps + 1, dtype=dtype)
+    phase = ((pre_phase + s) / (1 + s)) * torch.pi * 0.5
+    dts = torch.cos(phase) ** 4
+    dts_out = dts / dts.sum()
+    return dts_out * noise_scale
+
+
 class GFN(nn.Module):
     def __init__(
         self,
@@ -215,7 +223,7 @@ class GFN(nn.Module):
     def get_trajectory_fwd_smc(
         self,
         batch_size: int,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         raise NotImplementedError  # TODO: implement SMC
         bsz = batch_size
         s = self.sample_initial_state(batch_size)
@@ -253,15 +261,7 @@ class GFN(nn.Module):
                 states[:, 1:-1], torch.arange(1, self.num_steps, device=self.device)
             )
 
-        return states, log_pfs, log_pbs, log_fs, init_log_probs
-
-
-def cos_sq_fn_step_scheme(n_steps, s=0.008, noise_scale=6.0, dtype=torch.float32):
-    pre_phase = torch.linspace(0, 1, n_steps + 1, dtype=dtype)
-    phase = ((pre_phase + s) / (1 + s)) * torch.pi * 0.5
-    dts = torch.cos(phase) ** 4
-    dts_out = dts / dts.sum()
-    return dts_out * noise_scale
+        return states, log_rs, log_iws
 
 
 def forward_step_pinned_brownian(

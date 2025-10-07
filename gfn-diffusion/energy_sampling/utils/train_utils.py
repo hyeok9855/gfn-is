@@ -20,7 +20,6 @@ def get_gfn_optimizer(
     milestones: list[int] = [100000],
     gamma: float = 1.0,
 ):
-
     module_param_groups = gfn_model.pred_module.get_param_groups()
 
     param_groups = []

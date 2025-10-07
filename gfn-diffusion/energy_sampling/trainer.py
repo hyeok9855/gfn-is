@@ -201,17 +201,14 @@ class Trainer:
                 losses=losses,
             )
 
-        loss = losses.mean()
         if it == 0 and self.init_log_Z is not None:
             assert self.init_log_Z_ratios is not None and self.init_log_Z_log_rs is not None
-            assert (
-                isinstance(self.gfn_model.pred_module.flow_model, torch.nn.Parameter)
-                and self.gfn_model.pred_module.flow_model.item() == 0.0
-            )
+            assert self.gfn_model.pred_module.log_Z.item() == 0.0
             ratios = (log_pbs.sum(-1) - log_pfs.sum(-1)).detach()
             self.init_log_Z_ratios = torch.cat([self.init_log_Z_ratios, ratios], dim=0)
             self.init_log_Z_log_rs = torch.cat([self.init_log_Z_log_rs, log_fs[:, -1]], dim=0)
 
+        loss = losses.mean()
         return loss
 
     def bwd_train_step(self, it: int) -> torch.Tensor:
@@ -316,24 +313,22 @@ class Trainer:
             divisible = data_size % eval_batch_size == 0
             n_epochs = data_size // eval_batch_size + (1 if not divisible else 0)
 
-            model_trajs, log_pfs, log_pbs, log_fs, log_rs, init_log_probs = [], [], [], [], [], []
+            model_trajs, log_pfs, log_pbs, log_rs, init_log_probs = [], [], [], [], []
 
             for i in range(n_epochs):
-                _model_trajs, _log_pfs, _log_pbs, _log_fs, _init_log_probs = (
+                _model_trajs, _log_pfs, _log_pbs, _, _init_log_probs = (
                     self.gfn_model.get_trajectory_fwd(eval_batch_size, pis=self.loss_type == "pis")
                 )
                 _log_rewards = self.energy.log_reward(_model_trajs[:, -1])
                 model_trajs.append(_model_trajs)
                 log_pfs.append(_log_pfs)
                 log_pbs.append(_log_pbs)
-                log_fs.append(_log_fs)
                 log_rs.append(_log_rewards)
                 init_log_probs.append(_init_log_probs)
             model_trajs = torch.cat(model_trajs, dim=0)[:data_size]
             sample_xs = model_trajs[:, -1]
             log_pfs = torch.cat(log_pfs, dim=0)[:data_size]
             log_pbs = torch.cat(log_pbs, dim=0)[:data_size]
-            log_fs = torch.cat(log_fs, dim=0)[:data_size]
             log_rs = torch.cat(log_rs, dim=0)[:data_size]
             init_log_probs = torch.cat(init_log_probs, dim=0)[:data_size]
 
@@ -366,9 +361,9 @@ class Trainer:
             density_metrics(
                 log_pfs,
                 log_pbs,
-                log_fs,
                 log_rs,
                 init_log_probs,
+                log_Z=self.gfn_model.pred_module.log_Z,
                 gt_log_pfs=gt_log_pfs,
                 gt_log_pbs=gt_log_pbs,
                 gt_log_rewards=gt_log_rs,

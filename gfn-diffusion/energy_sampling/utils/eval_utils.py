@@ -354,23 +354,23 @@ def distribution_distance_metrics(
 def density_metrics(
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
-    log_fs: torch.Tensor,
     log_rewards: torch.Tensor,
     init_log_probs: torch.Tensor,
+    log_Z: torch.Tensor,
     gt_log_pfs: torch.Tensor | None = None,
     gt_log_pbs: torch.Tensor | None = None,
     gt_log_rewards: torch.Tensor | None = None,
     gt_init_log_probs: torch.Tensor | None = None,
     gt_log_Z: float | None = None,
 ) -> dict:
-    log_weights = log_rewards + log_pbs.sum(-1) - log_pfs.sum(-1) - init_log_probs
+    log_weights = log_rewards + log_pbs.sum(-1) - (log_pfs.sum(-1) + init_log_probs)
     iw_elbo = logmeanexp(log_weights).item()
-    log_Z_learned = log_fs[:, 0].mean().item()
+    log_Z_learned = log_Z.item()
     elbo = log_weights.mean().item()
     if gt_log_rewards is not None:
         assert (gt_log_pfs is not None) and (gt_log_pbs is not None)
         eubo = (
-            (gt_log_rewards + gt_log_pbs.sum(-1) - gt_log_pfs.sum(-1) - gt_init_log_probs)
+            (gt_log_rewards + gt_log_pbs.sum(-1) - (gt_log_pfs.sum(-1) + gt_init_log_probs))
             .mean()
             .item()
         )
