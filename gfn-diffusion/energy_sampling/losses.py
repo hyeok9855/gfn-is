@@ -5,11 +5,9 @@ import torch
 def tb_loss(
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
-    log_r: torch.Tensor,
-    init_log_probs: torch.Tensor,
-    log_Z: torch.Tensor,
+    log_fs: torch.Tensor,
 ) -> torch.Tensor:
-    tb_discrepancy = (log_Z + init_log_probs) + log_pfs.sum(-1) - log_r - log_pbs.sum(-1)
+    tb_discrepancy = log_fs[:, 0] + log_pfs.sum(-1) - log_fs[:, -1] - log_pbs.sum(-1)
     return tb_discrepancy**2
 
 
@@ -27,8 +25,6 @@ def db_loss(
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
     log_fs: torch.Tensor,
-    init_log_probs: torch.Tensor,
-    log_Z: torch.Tensor,
 ) -> torch.Tensor:
     raise NotImplementedError  # TODO: implement DB loss
     db_discrepancy = log_fs[:, :-1] + log_pfs - log_fs[:, 1:] - log_pbs
@@ -39,8 +35,6 @@ def subtb_loss(
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
     log_fs: torch.Tensor,
-    init_log_probs: torch.Tensor,
-    log_Z: torch.Tensor,
     coef_matrix: torch.Tensor,  # (T+1, T+1)
 ) -> torch.Tensor:
     raise NotImplementedError  # TODO: implement subtb loss
@@ -60,11 +54,8 @@ def subtb_chunk_loss(
     log_pfs: torch.Tensor,
     log_pbs: torch.Tensor,
     log_fs: torch.Tensor,
-    init_log_probs: torch.Tensor,
-    log_Z: torch.Tensor,
     n_chunks: int,
 ) -> torch.Tensor:
-    raise NotImplementedError  # TODO: implement subtb chunk loss (replace flow[:, 0] with logZ * init_log_probs)
     db_discrepancy = log_fs[:, :-1] + log_pfs - log_fs[:, 1:] - log_pbs
     # (bs, T)
     bs, T = db_discrepancy.shape
@@ -77,6 +68,47 @@ def subtb_chunk_loss(
     return (subtb_chunk_losses**2).mean(-1)
 
 
+def subtb_chunk_loss_v2(
+    log_pfs: torch.Tensor,
+    log_pbs: torch.Tensor,
+    log_fs: torch.Tensor,
+    chunk_size: int,
+) -> torch.Tensor:
+    bs, T = log_pfs.shape
+    n_chunks = T // chunk_size
+
+    log_pfs_over_pbs = log_pfs - log_pbs
+    subtb_discrepancy1 = (
+        log_fs[:, :-1:chunk_size]
+        + log_pfs_over_pbs.reshape(bs, n_chunks, -1).sum(-1)
+        - log_fs[:, chunk_size::chunk_size]
+    )
+    log_pfs_over_pbs_cumsum = torch.flip(
+        torch.cumsum(torch.flip(log_pfs_over_pbs, dims=[-1]), dim=-1), dims=[-1]
+    )
+    subtb_discrepancy2 = (
+        log_fs[:, :-1:chunk_size] + log_pfs_over_pbs_cumsum[:, ::chunk_size] - log_fs[:, [-1]]
+    ) / torch.arange(n_chunks, 0, -1, device=log_fs.device).unsqueeze(0)
+
+    subtb_discrepancy = torch.cat([subtb_discrepancy1, subtb_discrepancy2], dim=-1)
+    return (subtb_discrepancy**2).mean(-1)
+
+
+def tb_subtb_loss(  # TB + SubTB (chunk)
+    log_pfs: torch.Tensor,
+    log_pbs: torch.Tensor,
+    log_fs: torch.Tensor,
+    chunk_size: int,
+    subtb_weight: float = 1.0,
+) -> torch.Tensor:
+    # TB for log_Z, log_pfs, and log_pbs
+    tb_losses = tb_loss(log_pfs, log_pbs, log_fs)
+    # SubTB for log_fs (intermediate flows)
+    log_fs[:, 0] = log_fs[:, 0].detach()
+    subtb_losses = subtb_chunk_loss_v2(log_pfs.detach(), log_pbs.detach(), log_fs, chunk_size)
+    return subtb_weight * subtb_losses + tb_losses
+
+
 def get_loss(
     loss_type: str,
     log_pfs: torch.Tensor,
@@ -85,31 +117,32 @@ def get_loss(
     init_log_probs: torch.Tensor,
     log_Z: torch.Tensor,
     invtemp: float = 1.0,
+    logr_clip: float = -1e5,
     subtb_coef_matrix: torch.Tensor | None = None,
-    subtb_n_chunks: int = 0,
+    subtb_chunk_size: int = 0,
+    subtb_weight: float = 1.0,
     ndim: int | None = None,
 ) -> torch.Tensor:
-    # Apply inverse temperature to the log reward
-    log_fs = log_fs.clone()
-    log_fs[:, -1] = log_fs[:, -1] * invtemp
+    # Avoid in-place mutation
+    first_col = (log_Z + init_log_probs).unsqueeze(1)
+    middle_cols = log_fs[:, 1:-1]
+    last_col = (torch.clamp(log_fs[:, -1], min=logr_clip) * invtemp).unsqueeze(1)
+    log_fs = torch.cat([first_col, middle_cols, last_col], dim=1)
 
     if loss_type == "tb":
-        losses = tb_loss(log_pfs, log_pbs, log_fs[:, -1], init_log_probs, log_Z)
+        losses = tb_loss(log_pfs, log_pbs, log_fs)
     elif loss_type == "logvar":
         losses = logvar_loss(log_pfs, log_pbs, log_fs[:, -1], init_log_probs)
     elif loss_type == "db":
-        losses = db_loss(log_pfs, log_pbs, log_fs, init_log_probs, log_Z)
+        losses = db_loss(log_pfs, log_pbs, log_fs)
     elif loss_type == "subtb":
-        if subtb_n_chunks > 0:  # Chunk-based subtb
-            losses = subtb_chunk_loss(
-                log_pfs, log_pbs, log_fs, init_log_probs, log_Z, subtb_n_chunks
-            )
+        if subtb_chunk_size > 0:  # Chunk-based subtb
+            losses = subtb_chunk_loss_v2(log_pfs, log_pbs, log_fs, subtb_chunk_size)
         else:
             assert subtb_coef_matrix is not None
-            losses = subtb_loss(log_pfs, log_pbs, log_fs, init_log_probs, log_Z, subtb_coef_matrix)
+            losses = subtb_loss(log_pfs, log_pbs, log_fs, subtb_coef_matrix)
     elif loss_type == "tb_subtb":
-        # TODO: Implement TB-SubTB loss
-        raise NotImplementedError
+        losses = tb_subtb_loss(log_pfs, log_pbs, log_fs, subtb_chunk_size, subtb_weight)
     elif loss_type == "pis":
         assert ndim is not None
         losses = (1 / ndim) * (log_pfs.sum(-1) - log_pbs.sum(-1) - log_fs[:, -1])

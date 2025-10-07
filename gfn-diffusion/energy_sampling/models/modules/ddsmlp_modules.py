@@ -141,6 +141,8 @@ class DDSMLPModule(MLPModule):
                 cos_embed_cond = (t * self.flow_pe + self.flow_timestep_phase).cos()  # type: ignore
                 flow_time_array_emb = torch.cat([sin_embed_cond, cos_embed_cond], dim=-1)
                 flow_t_net1 = self.flow_time_coder_state(flow_time_array_emb)
+                if flow_t_net1.shape[0] == 1:
+                    flow_t_net1 = flow_t_net1.repeat(s.shape[0], 1)
                 flow_extended_input = torch.cat([s, flow_t_net1], dim=-1)
             else:
                 flow_extended_input = extended_input

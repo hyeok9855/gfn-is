@@ -110,7 +110,7 @@ def train(args):
         clip_grad_norm=args.clip_grad_norm,
         loss_type=args.loss_type,
         subtb_lambda=args.subtb_lambda,
-        subtb_n_chunks=args.subtb_n_chunks,
+        subtb_chunk_size=args.subtb_chunk_size,
         n_epochs=args.epochs,
         bwd_to_fwd_ratio=args.bwd_to_fwd_ratio,
         buffer=buffer,
@@ -126,7 +126,6 @@ def train(args):
         eval_batch_size=args.eval_batch_size,
         plot_gt=args.plot_gt,
         plot_t_idx=args.plot_t_idx,
-        plot_buffer_t_idx=args.plot_buffer_t_idx,
     )
 
     ######################
@@ -213,10 +212,10 @@ if __name__ == "__main__":
         "--loss_type",
         type=str,
         default="tb",
-        choices=("tb", "db", "subtb", "logvar", "pis", "mle"),
+        choices=("tb", "logvar", "db", "subtb", "tb_subtb", "pis", "mle"),
     )
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
-    parser.add_argument("--subtb_n_chunks", type=int, default=0)
+    parser.add_argument("--subtb_chunk_size", type=int, default=4)
 
     parser.add_argument("--lr_fwd", type=float, default=1e-3)
     parser.add_argument("--lr_bwd", type=float, default=None)
@@ -236,7 +235,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval_batch_size", type=int, default=2000)
     parser.add_argument("--epochs", type=int, default=25000)
 
-    parser.add_argument("--module", type=str, default="pismlp", choices=("pismlp", "mlp", "ddsmlp"))
+    parser.add_argument("--module", type=str, default="ddsmlp", choices=("pismlp", "mlp", "ddsmlp"))
     parser.add_argument("--use_checkpoint", action="store_true", default=False)
     parser.add_argument("--init_log_Z", type=str, default="0.0")  # "iw_elbo", "elbo" or float
     parser.add_argument("--precision", type=str, default="float", choices=("float", "double"))
@@ -339,7 +338,6 @@ if __name__ == "__main__":
     parser.add_argument("--plot_freq", type=float, default=0.1)
     parser.add_argument("--no_plot_gt", action="store_false", dest="plot_gt")
     parser.add_argument("--plot_t_idx", type=int, nargs="+", default=[])
-    parser.add_argument("--plot_buffer_t_idx", type=int, nargs="+", default=[])
     ################################################################
 
     ################################################################
@@ -359,8 +357,9 @@ if __name__ == "__main__":
         if args.partial_energy:
             args.loss_type_str = "fl-" + args.loss_type_str
         if args.loss_type == "subtb":
-            if args.subtb_n_chunks > 0:
-                args.loss_type_str += f"-nchunk{args.subtb_n_chunks}"
+            assert args.num_steps % args.subtb_chunk_size == 0
+            if args.subtb_chunk_size > 0:
+                args.loss_type_str += f"-chunksize{args.subtb_chunk_size}"
             else:
                 args.loss_type_str += f"-lambda{args.subtb_lambda}"
     if args.learn_pb:
@@ -372,7 +371,7 @@ if __name__ == "__main__":
     if args.loss_type == "mle" or args.loss_type == "pis":
         args.use_buffer = False
 
-    if args.loss_type in ["db", "subtb"]:
+    if args.loss_type in ["db", "subtb", "tb_subtb"]:
         args.conditional_flow_model = True
     else:
         args.conditional_flow_model = False

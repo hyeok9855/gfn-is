@@ -5,7 +5,7 @@ from models.gfn import GFN
 
 
 class IntermediateEnergy(BaseEnergy):
-    def __init__(self, target_energy: BaseEnergy, gfn: GFN, t: float) -> None:
+    def __init__(self, target_energy: BaseEnergy, gfn: GFN, step: int) -> None:
         super().__init__(
             device=target_energy.device,
             ndim=target_energy.ndim,
@@ -14,7 +14,8 @@ class IntermediateEnergy(BaseEnergy):
         )
         self.target_energy = target_energy
         self.gfn = gfn
-        self.t = t
+        self.step = step
+        self.t = step / gfn.num_steps
 
     def energy(self, states: torch.Tensor) -> torch.Tensor:
         return -self.log_reward(states)
@@ -26,13 +27,13 @@ class IntermediateEnergy(BaseEnergy):
             log_fs = self.target_energy.log_reward(states)
             return log_fs
 
-        ts = torch.ones_like(states[:, 0]) * self.t
         with torch.no_grad():
-            _, _, log_fs = self.gfn.pred_module.predict_forward(
-                states, ts, self.target_energy.log_reward
+            _, _, log_fs = self.gfn.pred_module.forward(
+                states, self.t, self.target_energy.grad_log_reward
             )
             if self.gfn.partial_energy:
-                log_fs += self.gfn.get_partial_energy(states.unsqueeze(1), ts.unsqueeze(1)).squeeze(
-                    1
-                )
+                log_fs += self.gfn.get_partial_energy(
+                    states.unsqueeze(1),
+                    torch.LongTensor([self.step], device=self.device),
+                ).squeeze(1)
         return log_fs

@@ -21,9 +21,9 @@ class Trainer:
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.MultiStepLR | None,
         clip_grad_norm: float,
-        loss_type: Literal["tb", "db", "subtb", "logvar", "pis", "mle"],
+        loss_type: Literal["tb", "logvar", "db", "subtb", "tb_subtb", "pis", "mle"],
         subtb_lambda: float,
-        subtb_n_chunks: int,
+        subtb_chunk_size: int,
         n_epochs: int,
         bwd_to_fwd_ratio: float,
         buffer: TerminalStateBuffer | None,
@@ -39,7 +39,6 @@ class Trainer:
         eval_batch_size: int,
         plot_gt: bool,
         plot_t_idx: list[int],
-        plot_buffer_t_idx: list[int],
     ):
 
         self.energy = energy
@@ -53,9 +52,9 @@ class Trainer:
 
         # Loss
         self.loss_type = loss_type
-        self.subtb_n_chunks = subtb_n_chunks
+        self.subtb_chunk_size = subtb_chunk_size
         self.subtb_coef_matrix = None
-        if loss_type == "subtb" and subtb_n_chunks == 0:  # chunk-based subtb
+        if loss_type == "subtb" and subtb_chunk_size == 0:  # chunk-based subtb
             self.subtb_coef_matrix = cal_subtb_coef_matrix(subtb_lambda, num_steps).to(self.device)
 
         # Training parameters and buffer
@@ -94,7 +93,6 @@ class Trainer:
         self.eval_batch_size = eval_batch_size
         self.plot_gt = plot_gt
         self.plot_t_idx = plot_t_idx
-        self.plot_buffer_t_idx = plot_buffer_t_idx
 
     def get_invtemp(self, it: int) -> float:
         if not self.invtemp_anneal:
@@ -186,7 +184,7 @@ class Trainer:
             log_Z=self.gfn_model.pred_module.log_Z,
             invtemp=self.get_invtemp(it),
             subtb_coef_matrix=self.subtb_coef_matrix,
-            subtb_n_chunks=self.subtb_n_chunks,
+            subtb_chunk_size=self.subtb_chunk_size,
             ndim=self.energy.ndim,
         )
 
@@ -237,7 +235,7 @@ class Trainer:
                 log_Z=self.gfn_model.pred_module.log_Z,
                 invtemp=self.get_invtemp(it),
                 subtb_coef_matrix=self.subtb_coef_matrix,
-                subtb_n_chunks=self.subtb_n_chunks,
+                subtb_chunk_size=self.subtb_chunk_size,
                 ndim=self.energy.ndim,
             )
 
@@ -413,8 +411,13 @@ class Trainer:
             assert self.gfn_model.pred_module.conditional_flow_model
             for t_idx in self.plot_t_idx:
                 inter_states = model_trajs[:, t_idx]
-                eval_t = round(t_idx / self.num_steps, 3)
-                inter_energy = IntermediateEnergy(self.energy, self.gfn_model, eval_t)
-                images.update(visualize(inter_energy, inter_states, suffix=f"-t{eval_t}"))
+                inter_energy = IntermediateEnergy(self.energy, self.gfn_model, t_idx)
+                images.update(
+                    visualize(
+                        inter_energy,
+                        inter_states,
+                        suffix=f"-t{round(t_idx / self.gfn_model.num_steps, 3)}",
+                    )
+                )
 
         return images

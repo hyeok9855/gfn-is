@@ -65,7 +65,7 @@ class GFN(nn.Module):
             self.sample_initial_state = lambda bsz: self.initial_dist.sample(
                 sample_shape=torch.Size((bsz,))
             )
-            self.initial_logprob = lambda s: self.initial_dist.log_prob(s)
+            self.initial_logprob = lambda s: self.initial_dist.log_prob(s).sum(-1)
             alphas = cos_sq_fn_step_scheme(num_steps, noise_scale=noise_scale)
             self.alpha_fn = lambda step: alphas[step]
             self.lambda_fn = lambda step: alphas[step]
@@ -91,16 +91,16 @@ class GFN(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.reference_process == "pinned_brownian":
             fwd_mean = s + self.dt * pf_mean
-            fwd_std = (self.dt * math.sqrt(self.t_scale)).sqrt() * (pf_logvar_correction / 2).exp()
+            fwd_std = (self.dt * self.t_scale).sqrt()
         elif self.reference_process == "ou":
-            sqrt_at = torch.clamp(
-                torch.tensor(self.alpha_fn(step), device=s.device).sqrt(), 0.0, 1.0
-            )
+            sqrt_at = torch.clamp(self.alpha_fn(step).sqrt(), 0.0, 1.0)
             sqrt_1_minus_at = (1 - sqrt_at**2).sqrt()
             fwd_mean = sqrt_1_minus_at * s + sqrt_at**2 * pf_mean
-            fwd_std = sqrt_at * self.init_std * (pf_logvar_correction / 2).exp()
+            fwd_std = sqrt_at * self.init_std
         else:
             raise ValueError(f"Invalid reference process: {self.reference_process}")
+
+        fwd_std = fwd_std * (pf_logvar_correction / 2).exp()
 
         if s_next is None:
             s_next = fwd_mean + fwd_std * torch.randn_like(s, device=s.device)
@@ -121,18 +121,18 @@ class GFN(nn.Module):
         if self.reference_process == "pinned_brownian":
             t_next = (step + 1) / self.num_steps
 
-            bwd_mean = s_next - s_next * self.dt / t_next * pb_mean_correction
-            bwd_var = self.t_scale * self.dt * (t_next - self.dt) / t_next * pb_var_correction
-            bwd_std = bwd_var.sqrt()
+            bwd_mean = s_next - s_next * self.dt / t_next
+            bwd_std = (self.t_scale * self.dt * (t_next - self.dt) / t_next).sqrt()
         elif self.reference_process == "ou":
-            sqrt_at = torch.clamp(
-                torch.tensor(self.alpha_fn(step), device=s.device).sqrt(), 0.0, 1.0
-            )
+            sqrt_at = torch.clamp(self.alpha_fn(step).sqrt(), 0.0, 1.0)
             sqrt_1_minus_at = (1 - sqrt_at**2).sqrt()
             bwd_mean = sqrt_1_minus_at * s_next
-            bwd_std = sqrt_at * self.init_std * (pb_var_correction / 2).exp()
+            bwd_std = sqrt_at * self.init_std
         else:
             raise ValueError(f"Invalid reference process: {self.reference_process}")
+
+        bwd_mean = bwd_mean * pb_mean_correction
+        bwd_std = bwd_std * pb_var_correction.sqrt()
 
         if self.reference_process == "pinned_brownian" and step == 0:
             s = torch.zeros_like(s_next)
@@ -192,8 +192,8 @@ class GFN(nn.Module):
                 s, self.dt * i, self.energy.grad_log_reward
             )
 
-            if self.pred_module.conditional_flow_model:
-                log_fs[:, i] = flow
+            if self.pred_module.conditional_flow_model and i > 0:
+                log_fs[:, i] = flow  # for i == 0, we use log Z + init_log_probs
 
             s_, log_pfs[:, i] = self.forward_step(s, None, i, pf_mean, pf_logvar, detach=not pis)
 
@@ -236,8 +236,8 @@ class GFN(nn.Module):
                 s_, self.dt * i, self.energy.grad_log_reward
             )
 
-            if self.pred_module.conditional_flow_model:
-                log_fs[:, i] = flow
+            if self.pred_module.conditional_flow_model and i > 0:
+                log_fs[:, i] = flow  # for i == 0, we use log Z + init_log_probs
 
             _, log_pfs[:, i] = self.forward_step(s_, s, i, pf_mean, pf_logvar, detach=True)
 
