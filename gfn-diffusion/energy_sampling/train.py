@@ -278,8 +278,8 @@ if __name__ == "__main__":
     parser.add_argument("--learn_variance", action="store_true", default=False)
     parser.add_argument("--log_var_range", type=float, default=4.0)
 
-    parser.add_argument("--partial_energy", action="store_true", default=False)
-    parser.add_argument("--learn_beta", action="store_true", default=False)
+    parser.add_argument("--no_partial_energy", action="store_false", dest="partial_energy")
+    parser.add_argument("--no_learn_beta", action="store_false", dest="learn_beta")
     ################################################################
 
     ################################################################

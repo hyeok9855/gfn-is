@@ -34,6 +34,6 @@ class IntermediateEnergy(BaseEnergy):
             if self.gfn.partial_energy:
                 log_fs += self.gfn.get_partial_energy(
                     states.unsqueeze(1),
-                    torch.LongTensor([self.step], device=self.device),
+                    torch.tensor([self.step], device=self.device, dtype=torch.long),
                 ).squeeze(1)
         return log_fs

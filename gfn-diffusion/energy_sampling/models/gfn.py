@@ -159,12 +159,15 @@ class GFN(nn.Module):
         if self.beta_model is not None:
             betas = self.softplus(self.beta_model).cumsum(0)
             betas = betas / betas[-1]
-            betas = torch.cat([torch.zeros(1), betas], dim=0)
+            betas = torch.cat([torch.zeros(1, device=self.device), betas], dim=0)
             betas = betas[steps]
         else:
             betas = ts
 
-        ref_log_var = (self.t_scale * ts).log().unsqueeze(2)  # (bsz, T', 1)
+        ts = ts.unsqueeze(0)
+        betas = betas.unsqueeze(0)
+
+        ref_log_var = (self.t_scale * ts).log().unsqueeze(2)  # (1, T', 1)
         log_p_ref = -0.5 * (logtwopi + ref_log_var + (-ref_log_var).exp() * (states**2)).sum(-1)
         # (bsz, T')
         partial_energy = (1 - betas) * log_p_ref + betas * self.energy.log_reward(
