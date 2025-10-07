@@ -147,7 +147,7 @@ def binary_search_smoothing(
             print(f"Warning: Binary search failed in {max_steps} steps")
             log_weights_smoothed[:, ~dones] = new_log_weights[:, ~dones]
             break
-    return log_weights_smoothed
+    return log_weights_smoothed, mid
 
 
 def get_min_max(log_weights: torch.Tensor) -> tuple[float, float]:

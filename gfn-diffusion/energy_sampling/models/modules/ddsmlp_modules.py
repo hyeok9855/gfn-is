@@ -1,4 +1,4 @@
-from typing import Callable, cast
+from typing import Callable
 import torch
 from torch import nn
 
@@ -27,14 +27,14 @@ class DDSMLPModule(MLPModule):
                         nn.GELU(),
                         nn.Linear(self.hidden_dim, self.hidden_dim),
                     )
-                    for _ in range(self.lgv_layers - 1)
+                    for _ in range(self.lgv_layers)
                 ],
                 nn.GELU(),
                 nn.Linear(self.hidden_dim, self.lgv_out_dim),
             )
 
             self.time_coder_grad[-1].weight.data.fill_(1e-8)
-            self.time_coder_grad[-1].bias.data.fill_(0.0)
+            self.time_coder_grad[-1].bias.data.fill_(0.1)
 
         self.state_time_net = nn.Sequential(
             nn.Linear(self.ndim + self.t_emb_dim, self.hidden_dim),

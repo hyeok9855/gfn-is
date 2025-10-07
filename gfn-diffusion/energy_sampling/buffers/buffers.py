@@ -107,7 +107,7 @@ class TerminalStateBuffer:
         weights = self.priority_dataset.data
         if self.prioritization == "iw":
             # apply ESS-based smoothing
-            log_iws_smoothed = binary_search_smoothing(
+            log_iws_smoothed, _ = binary_search_smoothing(
                 log_weights=weights.unsqueeze(1),
                 target_ess=self.target_ess,
             )

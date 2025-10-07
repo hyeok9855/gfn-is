@@ -24,7 +24,6 @@ class Trainer:
         loss_type: Literal["tb", "db", "subtb", "logvar", "pis", "mle"],
         subtb_lambda: float,
         subtb_n_chunks: int,
-        sublogvar_K: int,
         n_epochs: int,
         bwd_to_fwd_ratio: float,
         buffer: TerminalStateBuffer | None,
@@ -58,7 +57,6 @@ class Trainer:
         self.subtb_coef_matrix = None
         if loss_type == "subtb" and subtb_n_chunks == 0:  # chunk-based subtb
             self.subtb_coef_matrix = cal_subtb_coef_matrix(subtb_lambda, num_steps).to(self.device)
-        self.sublogvar_K = sublogvar_K
 
         # Training parameters and buffer
         self.n_epochs = n_epochs
@@ -222,17 +220,13 @@ class Trainer:
 
         else:  # self.loss_type != "mle"
             assert self.buffer is not None
-            if isinstance(self.buffer, TerminalStateBuffer):
-                buf_xs, buf_log_rs, indices = self.buffer.sample(self.batch_size)
-                # each with shape (bs,)
+            buf_xs, buf_log_rs, indices = self.buffer.sample(self.batch_size)
+            # each with shape (bs,)
 
-                # Construct complete trajectories
-                _, log_pfs, log_pbs, log_fs, init_log_probs = self.gfn_model.get_trajectory_bwd(
-                    buf_xs, buf_log_rs
-                )
-
-            else:
-                raise ValueError(f"Invalid buffer type: {type(self.buffer)}")
+            # Construct complete trajectories
+            _, log_pfs, log_pbs, log_fs, init_log_probs = self.gfn_model.get_trajectory_bwd(
+                buf_xs, buf_log_rs
+            )
 
             losses = get_loss(
                 self.loss_type,

@@ -111,7 +111,6 @@ def train(args):
         loss_type=args.loss_type,
         subtb_lambda=args.subtb_lambda,
         subtb_n_chunks=args.subtb_n_chunks,
-        sublogvar_K=args.sublogvar_K,
         n_epochs=args.epochs,
         bwd_to_fwd_ratio=args.bwd_to_fwd_ratio,
         buffer=buffer,
@@ -218,7 +217,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
     parser.add_argument("--subtb_n_chunks", type=int, default=0)
-    parser.add_argument("--sublogvar_K", type=int, default=1)
 
     parser.add_argument("--lr_fwd", type=float, default=1e-3)
     parser.add_argument("--lr_bwd", type=float, default=None)
@@ -253,7 +251,7 @@ if __name__ == "__main__":
         choices=("ou", "pinned_brownian"),
     )
     parser.add_argument("--t_scale", type=float, default=1.0)
-    parser.add_argument("--init_std", type=float, default=0.1)
+    parser.add_argument("--init_std", type=float, default=1.0)
     parser.add_argument("--noise_scale", type=float, default=6.0)
     ################################################################
 
