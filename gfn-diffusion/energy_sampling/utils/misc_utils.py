@@ -113,16 +113,18 @@ def get_name(args: argparse.Namespace) -> str:
         )
         name += f"-{buffer_size_str}"
         if args.prioritization != "none":
-            name += f"-{args.prioritization}-{args.buffer_sampling}"
+            name += f"-{args.prioritization}"
+            if args.prioritization in ["iw", "normalized_iw"]:
+                name += f"-tgtess{args.buffer_target_ess}"
+
+        if args.smc:
+            name += f"_smc-thres{args.smc_resample_threshold}-tgtess{args.smc_target_ess}"
 
         if args.mcmc_type != "none":
             name += f"_{args.mcmc_type}-freq{args.mcmc_freq}"
             name += f"-n{args.mcmc_n_steps}-b{args.mcmc_burn_in}-s{args.mcmc_step_size}"
             if args.mcmc_type == "md":
                 name += f"-gamma{args.mcmc_gamma}"
-
-    if args.target_ess != 0.0:
-        name += f"_tgtess{args.target_ess}"
 
     name += f"_{args.exp_name}" if args.exp_name else ""
 

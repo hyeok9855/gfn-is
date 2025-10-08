@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Callable, Literal
 import warnings
 
 import torch
@@ -30,6 +30,10 @@ class Trainer:
         prefill_epochs: int,
         batch_size: int,
         num_steps: int,
+        smc: bool,
+        smc_sampling_func: Callable[[torch.Tensor, int, bool], torch.Tensor],
+        smc_resample_threshold: float,
+        smc_target_ess: float,
         mcmc: BaseMCMC | None,
         mcmc_freq: int,
         mcmc_batch_size: int,
@@ -72,6 +76,12 @@ class Trainer:
         self.batch_size = batch_size
         self.num_steps = num_steps
 
+        # SMC
+        self.smc = smc
+        self.smc_sampling_func = smc_sampling_func
+        self.smc_resample_threshold = smc_resample_threshold
+        self.smc_target_ess = smc_target_ess
+
         # MCMC
         self.mcmc = mcmc
         self.mcmc_freq = mcmc_freq
@@ -81,12 +91,12 @@ class Trainer:
         self._invtemp = invtemp
         self.invtemp_anneal = invtemp_anneal
 
-        self.init_log_Z = self.init_log_Z_ratios = self.init_log_Z_log_rs = None
+        self.init_log_Z = self.init_log_Z_pbs_over_pfs = self.init_log_Z_log_rs = None
         if isinstance(init_log_Z, float):
             self.gfn_model.pred_module.set_log_Z(init_log_Z)
         else:
             self.init_log_Z = init_log_Z
-            self.init_log_Z_ratios = torch.zeros((0,)).to(self.device)
+            self.init_log_Z_pbs_over_pfs = torch.zeros((0,)).to(self.device)
             self.init_log_Z_log_rs = torch.zeros((0,)).to(self.device)
 
         # Eval and Plot
@@ -106,17 +116,32 @@ class Trainer:
         assert self.prefill_epochs > 0 and self.buffer is not None
         with torch.no_grad():
             for _ in range(self.prefill_epochs):
-                self.fwd_train_step(0)
+                if not self.smc:
+                    self.fwd_train_step(0)
+                else:
+                    xs, log_iws, _, _, _, subtraj_log_fs = self.gfn_model.get_trajectory_fwd_smc(
+                        self.batch_size,
+                        self.subtb_chunk_size,
+                        self.smc_sampling_func,
+                        self.smc_resample_threshold,
+                        self.smc_target_ess,
+                    )
+                    self.buffer.add(
+                        xs=xs,
+                        log_rs=subtraj_log_fs[-1, :, -1],
+                        log_iws=log_iws,
+                        losses=None,
+                    )
 
     def initialize_log_Z(self) -> None:
-        assert self.init_log_Z_ratios is not None and self.init_log_Z_log_rs is not None
+        assert self.init_log_Z_pbs_over_pfs is not None and self.init_log_Z_log_rs is not None
 
-        if self.init_log_Z_ratios.shape[0] == 0:
+        if self.init_log_Z_pbs_over_pfs.shape[0] == 0:
             # sample one batch to initialize log_Z
             with torch.no_grad():
                 self.fwd_train_step(0)
 
-        log_iws = self.init_log_Z_ratios + (self.init_log_Z_log_rs * self.get_invtemp(1))
+        log_iws = self.init_log_Z_pbs_over_pfs + (self.init_log_Z_log_rs * self.get_invtemp(1))
         if self.init_log_Z == "iw_elbo":
             init_log_Z_val = logmeanexp(log_iws).item()
         elif self.init_log_Z == "elbo":
@@ -124,7 +149,7 @@ class Trainer:
         else:
             raise ValueError(f"Invalid init_log_Z: {self.init_log_Z}")
         self.gfn_model.pred_module.set_log_Z(init_log_Z_val)
-        del self.init_log_Z_ratios
+        del self.init_log_Z_pbs_over_pfs
         del self.init_log_Z_log_rs
         self.init_log_Z = None
 
@@ -193,15 +218,15 @@ class Trainer:
             self.buffer.add(
                 xs=states[:, -1],
                 log_rs=log_fs[:, -1],
-                log_iws=log_fs[:, -1] + log_pbs.sum(-1) - log_pfs.sum(-1),
+                log_iws=log_fs[:, -1] + log_pbs.sum(-1) - (log_pfs.sum(-1) + init_log_probs),
                 losses=losses,
             )
 
         if it == 0 and self.init_log_Z is not None:
-            assert self.init_log_Z_ratios is not None and self.init_log_Z_log_rs is not None
+            assert self.init_log_Z_pbs_over_pfs is not None and self.init_log_Z_log_rs is not None
             assert self.gfn_model.pred_module.log_Z.item() == 0.0
-            ratios = (log_pbs.sum(-1) - log_pfs.sum(-1)).detach()
-            self.init_log_Z_ratios = torch.cat([self.init_log_Z_ratios, ratios], dim=0)
+            ratios = (log_pbs.sum(-1) - (log_pfs.sum(-1) + init_log_probs)).detach()
+            self.init_log_Z_pbs_over_pfs = torch.cat([self.init_log_Z_pbs_over_pfs, ratios], dim=0)
             self.init_log_Z_log_rs = torch.cat([self.init_log_Z_log_rs, log_fs[:, -1]], dim=0)
 
         loss = losses.mean()
@@ -218,6 +243,25 @@ class Trainer:
 
         else:  # self.loss_type != "mle"
             assert self.buffer is not None
+            assert self.subtb_chunk_size > 0
+
+            # SMC sampling and adding to buffer if smc is True
+            if self.smc:
+                xs, log_iws, _, _, _, subtraj_log_fs = self.gfn_model.get_trajectory_fwd_smc(
+                    self.batch_size,
+                    self.subtb_chunk_size,
+                    self.smc_sampling_func,
+                    self.smc_resample_threshold,
+                    self.smc_target_ess,
+                )
+                self.buffer.add(
+                    xs=xs,
+                    log_rs=subtraj_log_fs[-1, :, -1],
+                    log_iws=log_iws,
+                    losses=None,
+                )
+
+            # Buffer sampling
             buf_xs, buf_log_rs, indices = self.buffer.sample(self.batch_size)
             # each with shape (bs,)
 

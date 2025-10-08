@@ -83,7 +83,7 @@ def train(args):
             prioritization=args.prioritization,
             sampling_func=get_sampling_func(args.buffer_sampling, args.rank_k),
             logr_lb=args.logr_lb,
-            target_ess=args.target_ess,
+            target_ess=args.buffer_target_ess,
         )
 
         if args.mcmc_type != "none":
@@ -117,6 +117,10 @@ def train(args):
         prefill_epochs=args.prefill_epochs,
         batch_size=args.batch_size,
         num_steps=args.num_steps,
+        smc=args.smc,
+        smc_sampling_func=get_sampling_func(args.smc_sampling),
+        smc_resample_threshold=args.smc_resample_threshold,
+        smc_target_ess=args.smc_target_ess,
         mcmc=mcmc,
         mcmc_freq=args.mcmc_freq,
         mcmc_batch_size=args.mcmc_batch_size,
@@ -306,6 +310,21 @@ if __name__ == "__main__":
     parser.add_argument("--logr_lb", type=float, default=-1e8)
     # prefill to wait before starting to sample from buffer
     parser.add_argument("--prefill_epochs", type=int, default=-1)
+    # target ESS for buffer sampling
+    parser.add_argument("--buffer_target_ess", type=float, default=0.05)  # 0.0 has no effect
+    ################################################################
+
+    ################################################################
+    ### For SMC
+    parser.add_argument("--smc", action="store_true", default=False)
+    parser.add_argument(
+        "--smc_sampling",
+        type=str,
+        default="systematic",
+        choices=("multinomial", "stratified", "systematic", "rank"),
+    )
+    parser.add_argument("--smc_resample_threshold", type=float, default=0.2)
+    parser.add_argument("--smc_target_ess", type=float, default=0.05)
     ################################################################
 
     ################################################################
@@ -338,11 +357,6 @@ if __name__ == "__main__":
     parser.add_argument("--plot_freq", type=float, default=0.1)
     parser.add_argument("--no_plot_gt", action="store_false", dest="plot_gt")
     parser.add_argument("--plot_t_idx", type=int, nargs="+", default=[])
-    ################################################################
-
-    ################################################################
-    ### Importance sampling related
-    parser.add_argument("--target_ess", type=float, default=0.0)  # 0.0 has no effect
     ################################################################
 
     args = parser.parse_args()
