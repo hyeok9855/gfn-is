@@ -11,7 +11,6 @@ import seaborn as sns
 import torch
 import wandb
 from matplotlib.colors import LogNorm
-from PIL import Image as PILImage
 
 from energies import (
     ALDP,
@@ -74,18 +73,13 @@ def sliced_log_reward(x: torch.Tensor, energy: BaseEnergy, dims: tuple) -> torch
     return energy.log_reward(_x.to(energy.device)).detach().cpu()
 
 
-def fig_to_image(fig):
-    fig.canvas.draw()
-    return PILImage.frombytes("RGB", fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
-
-
 def viz_kde2d(
     points: torch.Tensor,
     title: str,
     weights: torch.Tensor | None = None,
     lim=3.0,
 ):
-    fig, ax = plt.subplots(1, 1, figsize=(7, 7), dpi=200)
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
     if title is not None:
         ax.set_title(title)
     try:
@@ -135,7 +129,7 @@ def viz_contour_sample2d(
     grid_width_n_points=200,
     clamp_min=-1000.0,
 ):
-    fig, ax = plt.subplots(1, 1, figsize=(7, 7))
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
 
     viz_contour_with_ax(
         ax,
@@ -222,7 +216,7 @@ def viz_energy_hist(energy: BaseEnergy, xs: torch.Tensor) -> dict:
     ax.legend(["generated data", "test data"])
     ax.grid(True)
 
-    return {"visualization/energy_hist": wandb.Image(fig_to_image(fig))}
+    return {"visualization/energy_hist": wandb.Image(fig)}
 
 
 def viz_interatomic_dist_hist(energy: LennardJones | ALDP | ALDPFAB, xs: torch.Tensor) -> dict:
@@ -258,7 +252,7 @@ def viz_interatomic_dist_hist(energy: LennardJones | ALDP | ALDPFAB, xs: torch.T
     ax.legend(["generated data", "test data"])
     ax.grid(True)
 
-    return {"visualization/interatomic_dist_hist": wandb.Image(fig_to_image(fig))}
+    return {"visualization/interatomic_dist_hist": wandb.Image(fig)}
 
 
 ##### Energy-specific visualization #####
@@ -275,11 +269,9 @@ def viz_manywell(
         fig_kde, fig_contour = viz_2d_slice(
             energy, (idx1, idx2), samples, weights=weights, lim=lim, kde=False
         )
-        out_dict.update(
-            {f"visualization/contour{idx1}{idx2}": wandb.Image(fig_to_image(fig_contour))}
-        )
+        out_dict.update({f"visualization/contour{idx1}{idx2}": wandb.Image(fig_contour)})
         if fig_kde is not None:
-            out_dict.update({f"visualization/kde{idx1}{idx2}": wandb.Image(fig_to_image(fig_kde))})
+            out_dict.update({f"visualization/kde{idx1}{idx2}": wandb.Image(fig_kde)})
 
     if isinstance(energy, ManyWell):
         out_dict.update(viz_energy_hist(energy, samples))
@@ -297,9 +289,9 @@ def viz_funnel(
         fig_kde, fig_contour = viz_2d_slice(
             energy, (0, i), samples, weights=weights, lim=lim, kde=False
         )
-        out_dict.update({f"visualization/contour0{i}": wandb.Image(fig_to_image(fig_contour))})
+        out_dict.update({f"visualization/contour0{i}": wandb.Image(fig_contour)})
         if fig_kde is not None:
-            out_dict.update({f"visualization/kde0{i}": wandb.Image(fig_to_image(fig_kde))})
+            out_dict.update({f"visualization/kde0{i}": wandb.Image(fig_kde)})
 
     if isinstance(energy, Funnel):
         out_dict.update(viz_energy_hist(energy, samples))
@@ -317,11 +309,9 @@ def viz_gmm(
         fig_kde, fig_contour = viz_2d_slice(
             energy, (i - 1, i), samples, weights=weights, lim=lim, n_contour_levels=100, kde=False
         )
-        out_dict.update(
-            {f"visualization/contour{i - 1}{i}": wandb.Image(fig_to_image(fig_contour))}
-        )
+        out_dict.update({f"visualization/contour{i - 1}{i}": wandb.Image(fig_contour)})
         if fig_kde is not None:
-            out_dict.update({f"visualization/kde{i - 1}{i}": wandb.Image(fig_to_image(fig_kde))})
+            out_dict.update({f"visualization/kde{i - 1}{i}": wandb.Image(fig_kde)})
 
     if isinstance(energy, GMM40 | TwentyFiveGaussianMixture):
         out_dict.update(viz_energy_hist(energy, samples))
@@ -343,7 +333,7 @@ def viz_student_t_mixture(
     weights = weights.detach().cpu() if weights is not None else None
 
     boarder = [-energy.plot_bound, energy.plot_bound]
-    fig, ax = plt.subplots(1, 1, figsize=(7, 7))
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
     x, y = torch.meshgrid(
         torch.linspace(boarder[0], boarder[1], 100), torch.linspace(boarder[0], boarder[1], 100)
     )
@@ -366,7 +356,7 @@ def viz_student_t_mixture(
     ax.set_xlim(boarder[0], boarder[1])
     ax.set_ylim(boarder[0], boarder[1])
 
-    out_dict = {"visualization/contour": wandb.Image(fig_to_image(fig))}
+    out_dict = {"visualization/contour": wandb.Image(fig)}
     if isinstance(energy, StudentTMixture):
         out_dict.update(viz_energy_hist(energy, samples))
     return out_dict
@@ -471,7 +461,7 @@ def plot_phi_psi(energy: ALDP | ALDPFAB, xs: torch.Tensor, dpi=300):
     plt.yticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi], ["-π", "-π/2", "0", "π/2", "π"])
     # plt.colorbar(label="Density")
     plt.tight_layout()
-    return {"visualization/phi_psi": wandb.Image(fig_to_image(fig))}
+    return {"visualization/phi_psi": wandb.Image(fig)}
 
 
 def draw_mols(energy: ALDP | ALDPFAB, xs: torch.Tensor, name="aldp"):
@@ -500,7 +490,7 @@ def draw_mols(energy: ALDP | ALDPFAB, xs: torch.Tensor, name="aldp"):
             ax,
             xs[i].reshape(-1, 3).detach().cpu().numpy(),
         )
-    return {"visualization/3D": wandb.Image(fig_to_image(fig))}
+    return {"visualization/3D": wandb.Image(fig)}
 
 
 @typing.no_type_check

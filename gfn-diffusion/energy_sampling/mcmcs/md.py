@@ -44,7 +44,6 @@ class MD(BaseMCMC):
         self.std_baoab = torch.sqrt(self.kBT * (1 - (self.exp_mgdt**2)) / self.mass)
 
     def sample(self, xs: torch.Tensor):
-        assert isinstance(self.energy, ALDPFAB)
         positions = []
         log_rs = []
 
@@ -86,7 +85,6 @@ class MD(BaseMCMC):
         return new_xs, log_rs
 
     def step_euler(self, position, velocity, force):
-        assert isinstance(self.energy, ALDPFAB)
         with torch.no_grad():
             velocity = (
                 (1 - self.gamma * self.dt) * velocity
@@ -102,7 +100,6 @@ class MD(BaseMCMC):
         return position.detach(), velocity.detach(), force.detach(), log_r.detach()
 
     def step_baoab(self, position, velocity, force):
-        assert isinstance(self.energy, ALDPFAB)
         with torch.no_grad():
             velocity_half = velocity + (self.dt_half / self.mass) * force
             position_half = position + (self.dt_half) * velocity_half

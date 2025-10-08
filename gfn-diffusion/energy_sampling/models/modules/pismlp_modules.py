@@ -171,7 +171,7 @@ class LangevinScalingModelPIS(nn.Module):
         self.lgv_model[-1].bias.data.fill_(0.1)
 
     def forward(self, t: torch.Tensor) -> torch.Tensor:
-        t_sin = ((t.unsqueeze(1) * self.pe) + self.timestep_phase).sin()  # type: ignore
-        t_cos = ((t.unsqueeze(1) * self.pe) + self.timestep_phase).cos()  # type: ignore
+        t_sin = ((t * self.pe) + self.timestep_phase).sin()  # type: ignore
+        t_cos = ((t * self.pe) + self.timestep_phase).cos()  # type: ignore
         t_emb = torch.cat([t_sin, t_cos], dim=-1)
         return self.lgv_model(t_emb)

@@ -141,7 +141,7 @@ def get_loss(
         else:
             assert subtb_coef_matrix is not None
             losses = subtb_loss(log_pfs, log_pbs, log_fs, subtb_coef_matrix)
-    elif loss_type == "tb_subtb":
+    elif loss_type == "tb-subtb":
         losses = tb_subtb_loss(log_pfs, log_pbs, log_fs, subtb_chunk_size, subtb_weight)
     elif loss_type == "pis":
         assert ndim is not None

@@ -17,7 +17,9 @@ from .twenty_five_gmm import TwentyFiveGaussianMixture
 from .intermediate_energy import IntermediateEnergy
 
 
-def get_energy(args: argparse.Namespace, device: torch.device, seed: int = 0) -> BaseEnergy:
+def get_energy(
+    args: argparse.Namespace, device: torch.device, seed: int = 0, n_threads: int = 6
+) -> BaseEnergy:
     energy_name: str = args.energy_name
     ndim: int = args.ndim
 
@@ -42,7 +44,7 @@ def get_energy(args: argparse.Namespace, device: torch.device, seed: int = 0) ->
     elif energy_name == "aldp":
         energy = ALDP(device=device, seed=seed)
     elif energy_name == "aldp_fab":
-        energy = ALDPFAB(device=device, seed=seed)
+        energy = ALDPFAB(device=device, seed=seed, n_threads=n_threads)
     else:
         raise ValueError(f"Unknown energy: {energy_name}")
     return energy

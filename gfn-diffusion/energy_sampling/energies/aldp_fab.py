@@ -153,6 +153,7 @@ class ALDPFAB(BaseEnergy):
         x_fab, log_det = self.scale_ind_circ(x)
         energy = -(self.p.log_prob(x_fab) + log_det) + self._compute_chirality_penalty(x)
         energy[energy.isnan()] = 2 * self.energy_cut
+        energy[energy > 2 * self.energy_cut] = 2 * self.energy_cut
         return energy
 
     def get_lform_indices(self, x: torch.Tensor) -> torch.Tensor:

@@ -26,7 +26,7 @@ def train(args):
 
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
 
-    energy = get_energy(args, device)
+    energy = get_energy(args, device, n_threads=args.n_threads)
     exp_name = get_name(args)
 
     config = args.__dict__
@@ -211,12 +211,13 @@ if __name__ == "__main__":
     parser.add_argument("--exp_name", type=str, default="")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--cpu", action="store_true", default=False)
+    parser.add_argument("--n_threads", type=int, default=6)
 
     parser.add_argument(
         "--loss_type",
         type=str,
         default="tb",
-        choices=("tb", "logvar", "db", "subtb", "tb_subtb", "pis", "mle"),
+        choices=("tb", "logvar", "db", "subtb", "tb-subtb", "pis", "mle"),
     )
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
     parser.add_argument("--subtb_chunk_size", type=int, default=4)
@@ -367,7 +368,7 @@ if __name__ == "__main__":
         assert args.init_log_Z in ["iw_elbo", "elbo"]
 
     args.loss_type_str = args.loss_type
-    if args.loss_type in ["db", "subtb"]:
+    if args.loss_type in ["db", "subtb", "tb-subtb"]:
         if args.partial_energy:
             args.loss_type_str = "fl-" + args.loss_type_str
         if args.loss_type == "subtb":
@@ -376,6 +377,10 @@ if __name__ == "__main__":
                 args.loss_type_str += f"-chunksize{args.subtb_chunk_size}"
             else:
                 args.loss_type_str += f"-lambda{args.subtb_lambda}"
+    else:
+        args.partial_energy = False
+        args.learn_beta = False
+
     if args.learn_pb:
         args.loss_type_str += "-learnpb"
 
@@ -385,7 +390,7 @@ if __name__ == "__main__":
     if args.loss_type == "mle" or args.loss_type == "pis":
         args.use_buffer = False
 
-    if args.loss_type in ["db", "subtb", "tb_subtb"]:
+    if args.loss_type in ["db", "subtb", "tb-subtb"]:
         args.conditional_flow_model = True
     else:
         args.conditional_flow_model = False

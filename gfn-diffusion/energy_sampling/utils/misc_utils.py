@@ -67,22 +67,26 @@ def linear_annealing(
 def get_name(args: argparse.Namespace) -> str:
     name = ""
 
-    name += args.loss_type_str
+    name += args.module
 
-    name += f"_{args.module}"
-    name += f"-h{args.hidden_dim}l{args.joint_layers}"
-    if args.loss_type in ["subtb", "db"]:
-        name += f"-Fh{args.flow_hidden_dim}l{args.flow_layers}"
-
+    name += f"_{args.loss_type_str}"
     if args.lp:
         name += "-lp"
 
-    if args.partial_energy:
-        name += "_partialE"
-        if args.learn_beta:
-            name += f"-learnbeta"
+    name += f"-h{args.hidden_dim}l{args.joint_layers}"
+    if args.loss_type in ["subtb", "db", "tb-subtb"]:
+        name += f"-Fh{args.flow_hidden_dim}l{args.flow_layers}"
+        if args.partial_energy:
+            name += "-partialE"
+            if args.learn_beta:
+                name += f"-learnbeta"
 
-    name += f"_tscale{args.t_scale}"
+    name += f"_ref{args.reference_process}"
+    if args.reference_process == "pinned_brownian":
+        name += f"-tscale{args.t_scale}"
+    elif args.reference_process == "ou":
+        name += f"-initstd{args.init_std}-noise{args.noise_scale}"
+
     name += f"_bsz{args.batch_size}"
 
     name += f"_lrfwd{args.lr_fwd}"

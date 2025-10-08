@@ -21,7 +21,7 @@ class Trainer:
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.MultiStepLR | None,
         clip_grad_norm: float,
-        loss_type: Literal["tb", "logvar", "db", "subtb", "tb_subtb", "pis", "mle"],
+        loss_type: Literal["tb", "logvar", "db", "subtb", "tb-subtb", "pis", "mle"],
         subtb_lambda: float,
         subtb_chunk_size: int,
         n_epochs: int,

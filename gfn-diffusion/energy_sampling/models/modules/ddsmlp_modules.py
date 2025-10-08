@@ -70,7 +70,7 @@ class DDSMLPModule(MLPModule):
                 )
 
             self.flow_state_time_net = nn.Sequential(
-                nn.Linear(self.ndim + self.t_emb_dim, self.flow_hidden_dim),
+                nn.Linear(self.ndim + self.flow_t_emb_dim, self.flow_hidden_dim),
                 nn.GELU(),
                 *[
                     nn.Sequential(nn.Linear(self.flow_hidden_dim, self.flow_hidden_dim), nn.GELU())
