@@ -27,7 +27,7 @@ class DDSMLPModule(MLPModule):
                         nn.GELU(),
                         nn.Linear(self.hidden_dim, self.hidden_dim),
                     )
-                    for _ in range(self.lgv_layers)
+                    for _ in range(self.lgv_layers - 1)
                 ],
                 nn.GELU(),
                 nn.Linear(self.hidden_dim, self.lgv_out_dim),
