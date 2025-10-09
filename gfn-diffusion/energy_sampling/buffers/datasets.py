@@ -1,24 +1,20 @@
-from math import prod
-
 import torch
 
 
 class CustomDataset:
-    def __init__(self, batch_dim: int, dataset_size: int, device: torch.device):
+    def __init__(self, dataset_size: int, device: torch.device):
         super().__init__()
-        self.batch_dim = batch_dim
-        assert self.batch_dim in [1, 2]
         self.dataset_size = dataset_size
         self.data = torch.tensor([], device=device)
 
     def __len__(self) -> int:
-        return prod(self.data.shape[: self.batch_dim])
+        return self.data.shape[0]
 
     def __getitem__(
         self, idx: torch.Tensor | tuple[int | slice | torch.Tensor, int | slice | torch.Tensor]
     ) -> torch.Tensor:
         if isinstance(idx, tuple):
-            assert self.batch_dim == len(idx)
+            assert len(idx) == 1
         return self.data[idx]
 
     def add(self, new_batch: torch.Tensor) -> None:
@@ -29,10 +25,7 @@ class CustomDataset:
 
     def trim_if_needed(self) -> None:
         if len(self) > self.dataset_size:
-            if self.batch_dim == 1:
-                trim_from = self.data.shape[0] - self.dataset_size
-            else:  # batch_dim == 2
-                trim_from = self.data.shape[0] - self.dataset_size // self.data.shape[1]
+            trim_from = self.data.shape[0] - self.dataset_size
             self.data = self.data[trim_from:]  # FIFO
 
     def update(
@@ -41,7 +34,7 @@ class CustomDataset:
         new_batch: torch.Tensor,
     ) -> None:
         if isinstance(indices, tuple):
-            assert self.batch_dim == len(indices)
+            assert len(indices) == 1
         self.data[indices] = new_batch.detach()
 
     def discard(self, indices: torch.Tensor) -> None:

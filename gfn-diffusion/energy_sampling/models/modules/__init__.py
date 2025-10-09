@@ -3,7 +3,6 @@ import argparse
 from energies import BaseEnergy
 
 from .base import BaseModule
-from .egnn_modules import EGNNModule
 from .mlp_modules import MLPModule
 from .pismlp_modules import PISMLPModule
 from .ddsmlp_modules import DDSMLPModule
@@ -48,19 +47,5 @@ def get_module(args: argparse.Namespace, energy: BaseEnergy) -> BaseModule:
         }[args.module]
         return module_cls(**common_kwargs, **mlp_kwargs)
 
-    elif "egnn" in args.module:
-        egnn_kwargs = {
-            "n_particles": energy.n_particles,  # type: ignore
-            "spatial_dim": energy.spatial_dim,  # type: ignore
-            "h_initial": energy.h_initial,  # type: ignore
-            "hidden_nf": args.egnn_hidden_nf,
-            "n_layers": args.egnn_n_layers,
-            "recurrent": args.egnn_recurrent,
-            "attention": args.egnn_attention,
-            "condition_time": args.egnn_condition_time,
-            "tanh": args.egnn_tanh,
-            "agg": args.egnn_agg,
-        }
-        return EGNNModule(**common_kwargs, **egnn_kwargs)
     else:
         raise ValueError(f"Module {args.module} not found")
