@@ -68,10 +68,10 @@ def get_name(args: argparse.Namespace) -> str:
     name = ""
 
     name += args.module
-
-    name += f"_{args.loss_type_str}"
     if args.lp:
         name += "-lp"
+
+    name += f"_{args.loss_type_str}"
 
     name += f"-h{args.hidden_dim}l{args.joint_layers}"
     if args.loss_type in ["subtb", "db", "tb-subtb"]:
@@ -116,10 +116,9 @@ def get_name(args: argparse.Namespace) -> str:
             f"{args.buffer_size // 1000}K" if args.buffer_size >= 1000 else f"{args.buffer_size}"
         )
         name += f"-{buffer_size_str}"
-        if args.prioritization != "none":
-            name += f"-{args.prioritization}"
-            if args.prioritization in ["iw", "normalized_iw"]:
-                name += f"-tgtess{args.buffer_target_ess}"
+        name += f"-{args.prioritization}"
+        if args.prioritization in ["iw", "normalized_iw"]:
+            name += f"-tgtess{args.buffer_target_ess}"
 
         if args.smc:
             name += f"_smc-thres{args.smc_resample_threshold}-tgtess{args.smc_target_ess}"

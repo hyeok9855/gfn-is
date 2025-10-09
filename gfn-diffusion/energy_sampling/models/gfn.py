@@ -24,7 +24,6 @@ class GFN(nn.Module):
         self,
         energy: BaseEnergy,
         module: BaseModule,
-        device=torch.device("cuda"),
         num_steps: int | None = None,
         reference_process: Literal["pinned_brownian", "ou"] = "pinned_brownian",
         # --- Pinned Brownian Args --- #
@@ -35,12 +34,12 @@ class GFN(nn.Module):
         # --- SubTB Args --- #
         partial_energy: bool = False,
         learn_beta: bool = False,
+        device=torch.device("cuda"),
     ) -> None:
         super().__init__()
         self.energy = energy
         self.pred_module = module
         self.device = device
-
         self.num_steps = num_steps
         self.dt = torch.tensor(1.0 / num_steps, device=self.device)
 
@@ -171,7 +170,7 @@ class GFN(nn.Module):
             log_p_ref = -0.5 * (logtwopi + ref_log_var + (-ref_log_var).exp() * (states**2)).sum(-1)
         else:
             log_p_ref = self.initial_logprob(states.reshape(-1, self.energy.ndim)).view(bsz, -1)
-        # (bsz, T')
+
         partial_energy = (1 - betas) * log_p_ref + betas * self.energy.log_reward(
             states.reshape(-1, self.energy.ndim)
         ).view(bsz, -1).detach()

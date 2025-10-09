@@ -47,7 +47,6 @@ def train(args):
     gfn_model = GFN(
         energy=energy,
         module=module,
-        device=device,
         num_steps=args.num_steps,
         reference_process=args.reference_process,
         # --- Pinned Brownian Args --- #
@@ -58,6 +57,7 @@ def train(args):
         # --- SubTB Args --- #
         partial_energy=args.partial_energy,
         learn_beta=args.learn_beta,
+        device=device,
     ).to(device)
 
     gfn_optimizer, gfn_scheduler = get_gfn_optimizer(
@@ -116,7 +116,6 @@ def train(args):
         buffer=buffer,
         prefill_epochs=args.prefill_epochs,
         batch_size=args.batch_size,
-        num_steps=args.num_steps,
         smc=args.smc,
         smc_sampling_func=get_sampling_func(args.smc_sampling),
         smc_resample_threshold=args.smc_resample_threshold,
@@ -240,7 +239,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval_batch_size", type=int, default=2000)
     parser.add_argument("--epochs", type=int, default=25000)
 
-    parser.add_argument("--module", type=str, default="ddsmlp", choices=("pismlp", "mlp", "ddsmlp"))
+    parser.add_argument("--module", type=str, default="pismlp", choices=("pismlp", "mlp", "ddsmlp"))
     parser.add_argument("--use_checkpoint", action="store_true", default=False)
     parser.add_argument("--init_log_Z", type=str, default="0.0")  # "iw_elbo", "elbo" or float
     parser.add_argument("--precision", type=str, default="float", choices=("float", "double"))

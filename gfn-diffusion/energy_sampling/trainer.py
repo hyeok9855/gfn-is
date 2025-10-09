@@ -29,7 +29,6 @@ class Trainer:
         buffer: TerminalStateBuffer | None,
         prefill_epochs: int,
         batch_size: int,
-        num_steps: int,
         smc: bool,
         smc_sampling_func: Callable[[torch.Tensor, int, bool], torch.Tensor],
         smc_resample_threshold: float,
@@ -59,7 +58,9 @@ class Trainer:
         self.subtb_chunk_size = subtb_chunk_size if self.loss_type in ["subtb", "tb-subtb"] else 1
         self.subtb_coef_matrix = None
         if loss_type == "subtb" and subtb_chunk_size == 0:  # chunk-based subtb
-            self.subtb_coef_matrix = cal_subtb_coef_matrix(subtb_lambda, num_steps).to(self.device)
+            self.subtb_coef_matrix = cal_subtb_coef_matrix(
+                subtb_lambda, self.gfn_model.num_steps
+            ).to(self.device)
 
         # Training parameters and buffer
         self.n_epochs = n_epochs
@@ -74,7 +75,6 @@ class Trainer:
 
         # Sampling parameters
         self.batch_size = batch_size
-        self.num_steps = num_steps
 
         # SMC
         self.smc = smc
@@ -358,18 +358,17 @@ class Trainer:
             model_trajs, log_pfs, log_pbs, log_rs, init_log_probs = [], [], [], [], []
 
             for i in range(n_epochs):
-                _model_trajs, _log_pfs, _log_pbs, _, _init_log_probs = (
+                _model_trajs, _log_pfs, _log_pbs, _log_fs, _init_log_probs = (
                     self.gfn_model.get_trajectory_fwd(
                         eval_batch_size,
                         pis=self.loss_type == "pis",
                         subtraj_len=self.subtb_chunk_size,
                     )
                 )
-                _log_rewards = self.energy.log_reward(_model_trajs[:, -1])
                 model_trajs.append(_model_trajs)
                 log_pfs.append(_log_pfs)
                 log_pbs.append(_log_pbs)
-                log_rs.append(_log_rewards)
+                log_rs.append(_log_fs[:, -1])
                 init_log_probs.append(_init_log_probs)
             model_trajs = torch.cat(model_trajs, dim=0)[:data_size]
             sample_xs = model_trajs[:, -1]
