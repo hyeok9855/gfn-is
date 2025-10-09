@@ -174,13 +174,14 @@ class GFN(nn.Module):
         # (bsz, T')
         partial_energy = (1 - betas) * log_p_ref + betas * self.energy.log_reward(
             states.reshape(-1, self.energy.ndim)
-        ).view(bsz, -1)
+        ).view(bsz, -1).detach()
         return partial_energy  # (bsz, T')
 
     def get_trajectory_fwd(
         self,
         batch_size: int,
         pis=False,
+        subtraj_len: int = 1,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         bsz = batch_size
         s = self.sample_initial_state(bsz)
@@ -216,8 +217,9 @@ class GFN(nn.Module):
             log_fs[:, -1] = self.energy.log_reward(states[:, -1])
 
         if self.partial_energy:
-            log_fs[:, 1:-1] += self.get_partial_energy(
-                states[:, 1:-1], torch.arange(1, self.num_steps, device=self.device)
+            log_fs[:, subtraj_len:-1:subtraj_len] += self.get_partial_energy(
+                states[:, subtraj_len:-1:subtraj_len],
+                torch.arange(subtraj_len, self.num_steps, subtraj_len, device=self.device),
             )
 
         return states, log_pfs, log_pbs, log_fs, init_log_probs
@@ -226,6 +228,7 @@ class GFN(nn.Module):
         self,
         s: torch.Tensor,
         log_r: torch.Tensor,  # (bsz,)
+        subtraj_len: int = 1,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         bsz = s.shape[0]
 
@@ -256,8 +259,9 @@ class GFN(nn.Module):
         log_fs[:, -1] = log_r
 
         if self.partial_energy:
-            log_fs[:, 1:-1] += self.get_partial_energy(
-                states[:, 1:-1], torch.arange(1, self.num_steps, device=self.device)
+            log_fs[:, subtraj_len:-1:subtraj_len] += self.get_partial_energy(
+                states[:, subtraj_len:-1:subtraj_len],
+                torch.arange(subtraj_len, self.num_steps, subtraj_len, device=self.device),
             )
 
         init_log_probs = self.initial_logprob(s)
@@ -340,7 +344,7 @@ class GFN(nn.Module):
                     s, self.dt * step, self.energy.grad_log_reward
                 )
 
-                if step > 0:
+                if j > 0:
                     subtraj_log_fs[i, :, j] = flow
 
                 s_next, log_pfs = self.forward_step(s, None, step, pf_mean, pf_logvar, detach=True)
@@ -360,21 +364,14 @@ class GFN(nn.Module):
                 _, _, next_log_f = self.pred_module.forward(
                     s, self.dt * end_step, self.energy.grad_log_reward
                 )
+                if self.partial_energy:
+                    next_log_f += self.get_partial_energy(
+                        s.unsqueeze(1),
+                        torch.tensor([end_step], device=self.device, dtype=torch.long),
+                    ).squeeze(1)
             subtraj_log_fs[i, :, subtraj_len] = next_log_f
 
             # --- Update Importance Weights ---
-
-            if self.partial_energy:
-                # Add partial energy to intermediate log_fs
-                skip_l = 1 if start_step == 0 else 0
-                skip_r = 1 if end_step == self.num_steps else 0
-                from_idx = skip_l
-                to_idx = subtraj_len + 1 - skip_r
-                subtraj_log_fs[i, :, from_idx:to_idx] += self.get_partial_energy(
-                    subtraj_states[i, :, from_idx:to_idx, :],
-                    start_step + torch.arange(from_idx, to_idx, device=self.device),
-                )
-
             log_iws += (
                 subtraj_log_fs[i, :, subtraj_len]
                 + subtraj_log_pbs[i].sum(dim=1)
@@ -389,12 +386,17 @@ class GFN(nn.Module):
                 tempered_log_iws, temp = binary_search_smoothing(log_iws.unsqueeze(1), target_ess)
                 tempered_log_iws = tempered_log_iws.squeeze(1)
                 temp = temp.item()
+                log_iws = log_iws * (1 - 1 / temp)
                 indices = sampling_func(
                     tempered_log_iws.softmax(dim=0), log_iws.shape[0], replacement=True
                 )
-                s = s[indices]
-                log_iws = log_iws[indices] * (1 - 1 / temp)
+            else:
+                indices = torch.arange(batch_size, device=self.device)
 
+            s = s[indices]
+            log_iws = log_iws[indices]
+            if i < num_subtrajs - 1:
+                subtraj_log_fs[i + 1, :, 0] = subtraj_log_fs[i, indices, subtraj_len]
             log_iws = log_iws.log_softmax(dim=0)  # normalise
 
         # Final update to logZ and combine with log_iws

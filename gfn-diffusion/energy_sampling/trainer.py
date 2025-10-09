@@ -56,7 +56,7 @@ class Trainer:
 
         # Loss
         self.loss_type = loss_type
-        self.subtb_chunk_size = subtb_chunk_size
+        self.subtb_chunk_size = subtb_chunk_size if self.loss_type in ["subtb", "tb-subtb"] else 1
         self.subtb_coef_matrix = None
         if loss_type == "subtb" and subtb_chunk_size == 0:  # chunk-based subtb
             self.subtb_coef_matrix = cal_subtb_coef_matrix(subtb_lambda, num_steps).to(self.device)
@@ -196,7 +196,7 @@ class Trainer:
     def fwd_train_step(self, it: int) -> torch.Tensor:
         # Forward sampling
         states, log_pfs, log_pbs, log_fs, init_log_probs = self.gfn_model.get_trajectory_fwd(
-            self.batch_size, pis=self.loss_type == "pis"
+            self.batch_size, pis=self.loss_type == "pis", subtraj_len=self.subtb_chunk_size
         )
 
         # Compute losses
@@ -236,7 +236,7 @@ class Trainer:
         if self.loss_type == "mle":
             gt_xs, gt_log_rewards = self.energy.cached_sample(self.batch_size, seed=it)
             _, log_pfs, log_pbs, log_fs, init_log_probs = self.gfn_model.get_trajectory_bwd(
-                gt_xs, gt_log_rewards
+                gt_xs, gt_log_rewards, subtraj_len=self.subtb_chunk_size
             )
             # mle over trajectories
             loss = -log_pfs.sum(-1).mean()
@@ -312,6 +312,12 @@ class Trainer:
             mcmc_log_rs = mcmc_log_rs[ind_L]
             indices = indices[ind_L]
 
+        if mcmc_xs.isnan().any():  # This happens rarely when mcmc is MD
+            valid_mask = ~mcmc_xs.isnan().any(1)
+            mcmc_xs = mcmc_xs[valid_mask]
+            mcmc_log_rs = mcmc_log_rs[valid_mask]
+            indices = indices[valid_mask]
+
         self.buffer.add(
             xs=mcmc_xs,
             log_rs=mcmc_log_rs,
@@ -353,7 +359,11 @@ class Trainer:
 
             for i in range(n_epochs):
                 _model_trajs, _log_pfs, _log_pbs, _, _init_log_probs = (
-                    self.gfn_model.get_trajectory_fwd(eval_batch_size, pis=self.loss_type == "pis")
+                    self.gfn_model.get_trajectory_fwd(
+                        eval_batch_size,
+                        pis=self.loss_type == "pis",
+                        subtraj_len=self.subtb_chunk_size,
+                    )
                 )
                 _log_rewards = self.energy.log_reward(_model_trajs[:, -1])
                 model_trajs.append(_model_trajs)
@@ -377,7 +387,7 @@ class Trainer:
                         i * eval_batch_size : (i + 1) * eval_batch_size
                     ]
                     _, _log_pfs, _log_pbs, _, _init_log_probs = self.gfn_model.get_trajectory_bwd(
-                        gt_xs_batch, gt_log_rewards_batch
+                        gt_xs_batch, gt_log_rewards_batch, subtraj_len=self.subtb_chunk_size
                     )
                     gt_log_pfs.append(_log_pfs)
                     gt_log_pbs.append(_log_pbs)
