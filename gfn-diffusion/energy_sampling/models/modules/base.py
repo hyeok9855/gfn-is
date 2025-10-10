@@ -12,6 +12,7 @@ class ParamGroups:
     forward_params: list[nn.Parameter]
     backward_params: list[nn.Parameter]
     flow_params: list[nn.Parameter]
+    logZ_params: list[nn.Parameter]
     lgv_params: list[nn.Parameter]
 
 
@@ -30,7 +31,6 @@ class BaseModule(nn.Module, ABC):
         learn_variance: bool = True,
         log_var_range: float = 4.0,
         use_checkpoint: bool = False,
-        init_log_Z: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -57,16 +57,16 @@ class BaseModule(nn.Module, ABC):
 
         self.use_checkpoint = use_checkpoint
 
-        self.init_log_Z = init_log_Z
+        self.flow_model: nn.Module | None = None
+        self.log_Z: nn.Parameter = nn.Parameter(torch.tensor(0.0))
 
     @abstractmethod
     def get_param_groups(self) -> ParamGroups:
         raise NotImplementedError
 
     def set_log_Z(self, value: float) -> None:
-        assert isinstance(self.flow_model, nn.Parameter)
         # Set the parameter value to a given value
-        self.flow_model.data.copy_(torch.tensor(value))
+        self.log_Z.data.copy_(torch.tensor(value))
 
     @abstractmethod
     def predict_forward(
@@ -100,13 +100,6 @@ class BaseModule(nn.Module, ABC):
             return self.predict_forward(s, t, grad_logr_fn)
 
     def predict_flow(self, **kwargs) -> torch.Tensor:
-        if self.conditional_flow_model:
-            return self.predict_conditional_flow(**kwargs)
-        else:
-            assert isinstance(self.flow_model, nn.Parameter)
-            return self.flow_model
-
-    def predict_conditional_flow(self, **kwargs) -> torch.Tensor:
         raise NotImplementedError
 
     def predict_backward(

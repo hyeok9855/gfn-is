@@ -91,7 +91,7 @@ def get_name(args: argparse.Namespace) -> str:
 
     name += f"_lrfwd{args.lr_fwd}"
     if args.loss_type == "tb":
-        name += f"-lrZ{args.lr_Z}"
+        name += f"-lrZ{args.lr_logZ}"
     elif args.loss_type in ["subtb", "db"]:
         name += f"-lrflow{args.lr_flow}"
         if args.learn_beta:
@@ -119,6 +119,10 @@ def get_name(args: argparse.Namespace) -> str:
         name += f"-{args.prioritization}"
         if args.prioritization in ["iw", "normalized_iw"]:
             name += f"-tgtess{args.buffer_target_ess}"
+
+        if args.smc:
+            name += f"_smc-freq{args.smc_freq}"
+            name += f"-thres{args.smc_resample_threshold}-tgtess{args.smc_target_ess}"
 
         if args.mcmc_type != "none":
             name += f"_{args.mcmc_type}-freq{args.mcmc_freq}"

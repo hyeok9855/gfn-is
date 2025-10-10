@@ -1,4 +1,4 @@
-from typing import Callable, cast
+from typing import Callable
 import torch
 from torch import nn
 
@@ -53,13 +53,24 @@ class DDSMLPModule(MLPModule):
         if self.learn_pb:  # TODO: implement backward correction
             raise NotImplementedError("Backward correction is not implemented for DDSMLPModule!")
 
-        if self.conditional_flow_model:  # TODO: implement conditional flow
-            assert self.flow_t_emb_dim == self.flow_s_emb_dim
-            assert self.share_embeddings
-            self.t_model_flow = nn.Identity()
-            self.s_model_flow = nn.Identity()
-            self.flow_model = nn.Sequential(
-                nn.Linear(self.ndim + self.t_emb_dim, self.flow_hidden_dim),
+        self.flow_timestep_phase = None
+        self.flow_time_coder_state = None
+        self.flow_state_time_net = None
+        if self.conditional_flow_model:
+            if not self.share_embeddings:
+                self.flow_timestep_phase = nn.Parameter(torch.zeros(self.flow_harmonics_dim)[None])
+                self.register_buffer(
+                    "flow_pe",
+                    torch.linspace(start=0.1, end=100, steps=self.flow_harmonics_dim)[None],
+                )
+                self.flow_time_coder_state = nn.Sequential(
+                    nn.Linear(2 * self.flow_harmonics_dim, self.flow_hidden_dim),
+                    nn.GELU(),
+                    nn.Linear(self.flow_hidden_dim, self.flow_t_emb_dim),
+                )
+
+            self.flow_state_time_net = nn.Sequential(
+                nn.Linear(self.ndim + self.flow_t_emb_dim, self.flow_hidden_dim),
                 nn.GELU(),
                 *[
                     nn.Sequential(nn.Linear(self.flow_hidden_dim, self.flow_hidden_dim), nn.GELU())
@@ -67,8 +78,6 @@ class DDSMLPModule(MLPModule):
                 ],
                 nn.Linear(self.flow_hidden_dim, 1),
             )
-        else:
-            self.flow_model = torch.nn.Parameter(torch.tensor(0.0))
 
     def get_param_groups(self) -> ParamGroups:
         forward_params = []
@@ -79,12 +88,13 @@ class DDSMLPModule(MLPModule):
         backward_params = []
 
         flow_params = []
-        if isinstance(self.flow_model, nn.Module):
-            flow_params += list(self.flow_model.parameters())
-            flow_params += list(self.t_model_flow.parameters())
-            flow_params += list(self.s_model_flow.parameters())
-        else:
-            flow_params = [self.flow_model]
+        if self.flow_state_time_net is not None:
+            if not self.share_embeddings:
+                flow_params += [self.flow_timestep_phase]
+                flow_params += list(self.flow_time_coder_state.parameters())
+            flow_params += list(self.flow_state_time_net.parameters())
+
+        logZ_params = [self.log_Z]
 
         lgv_params = []
         if self.time_coder_grad is not None:
@@ -94,6 +104,7 @@ class DDSMLPModule(MLPModule):
             forward_params=forward_params,
             backward_params=backward_params,
             flow_params=flow_params,
+            logZ_params=logZ_params,
             lgv_params=lgv_params,
         )
 
@@ -118,11 +129,24 @@ class DDSMLPModule(MLPModule):
         flow = self.predict_flow(s=s, t=t, extended_input=extended_input)
         return mean, logvar, flow
 
-    def predict_conditional_flow(
+    def predict_flow(
         self, s: torch.Tensor, t: torch.Tensor, extended_input: torch.Tensor
     ) -> torch.Tensor:
-        assert isinstance(self.flow_model, nn.Module)
-        flow = self.flow_model(extended_input).squeeze(-1)
+        if self.conditional_flow_model:
+            assert self.flow_state_time_net is not None
+            if not self.share_embeddings:
+                sin_embed_cond = (t * self.flow_pe + self.flow_timestep_phase).sin()  # type: ignore
+                cos_embed_cond = (t * self.flow_pe + self.flow_timestep_phase).cos()  # type: ignore
+                flow_time_array_emb = torch.cat([sin_embed_cond, cos_embed_cond], dim=-1)
+                flow_t_net1 = self.flow_time_coder_state(flow_time_array_emb)
+                if flow_t_net1.shape[0] == 1:
+                    flow_t_net1 = flow_t_net1.repeat(s.shape[0], 1)
+                flow_extended_input = torch.cat([s, flow_t_net1], dim=-1)
+            else:
+                flow_extended_input = extended_input
+            flow = self.flow_state_time_net(flow_extended_input).squeeze(-1)
+        else:
+            flow = torch.zeros(s.shape[0], device=s.device)
         return flow
 
     def get_lp_scaling(

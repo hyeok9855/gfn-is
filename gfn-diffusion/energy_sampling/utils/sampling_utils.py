@@ -30,10 +30,8 @@ def stratified(weights: torch.Tensor, N: int, replacement: bool = True) -> torch
         )
         return multinomial(weights, N, replacement=True)
 
-    # Normalize weights if they're not already normalized
-    weights_sum = weights.sum()
-    if not torch.isclose(weights_sum, torch.tensor(1.0, device=weights.device)):
-        weights = weights / weights_sum
+    # Normalize weights
+    weights = weights / weights.sum()
 
     cumsum = torch.cumsum(weights, dim=0)
     u = torch.arange(N, device=weights.device, dtype=torch.float32)

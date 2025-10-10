@@ -65,6 +65,7 @@ def train(args):
         lr_fwd=args.lr_fwd,
         lr_bwd=args.lr_bwd,
         lr_flow=args.lr_flow,
+        lr_logZ=args.lr_logZ,
         lr_beta=args.lr_beta,
         lr_lgv=args.lr_lgv,
         use_weight_decay=args.use_weight_decay,
@@ -109,14 +110,17 @@ def train(args):
         clip_grad_norm=args.clip_grad_norm,
         loss_type=args.loss_type,
         subtb_lambda=args.subtb_lambda,
-        subtb_n_chunks=args.subtb_n_chunks,
-        sublogvar_K=args.sublogvar_K,
+        subtb_chunk_size=args.subtb_chunk_size,
         n_epochs=args.epochs,
         bwd_to_fwd_ratio=args.bwd_to_fwd_ratio,
         buffer=buffer,
-        buffer_save_interval=args.buffer_save_interval,
         prefill_epochs=args.prefill_epochs,
         batch_size=args.batch_size,
+        smc=args.smc,
+        smc_sampling_func=get_sampling_func(args.smc_sampling),
+        smc_resample_threshold=args.smc_resample_threshold,
+        smc_target_ess=args.smc_target_ess,
+        smc_freq=args.smc_freq,
         mcmc=mcmc,
         mcmc_freq=args.mcmc_freq,
         mcmc_batch_size=args.mcmc_batch_size,
@@ -212,15 +216,15 @@ if __name__ == "__main__":
         "--loss_type",
         type=str,
         default="tb",
-        choices=("tb", "logvar", "db", "subtb", "pis", "mle"),
+        choices=("tb", "logvar", "db", "subtb", "tb-subtb", "pis", "mle"),
     )
     parser.add_argument("--subtb_lambda", type=float, default=2.0)
-    parser.add_argument("--subtb_n_chunks", type=int, default=0)
+    parser.add_argument("--subtb_chunk_size", type=int, default=4)
     parser.add_argument("--sublogvar_K", type=int, default=1)
 
     parser.add_argument("--lr_fwd", type=float, default=1e-3)
     parser.add_argument("--lr_bwd", type=float, default=None)
-    parser.add_argument("--lr_Z", type=float, default=1e-1)
+    parser.add_argument("--lr_logZ", type=float, default=1e-1)
     parser.add_argument("--lr_flow", type=float, default=1e-3)
     parser.add_argument("--lr_beta", type=float, default=1e-1)
     parser.add_argument("--lr_lgv", type=float, default=1e-3)
@@ -306,13 +310,24 @@ if __name__ == "__main__":
     parser.add_argument("--rank_k", type=float, default=1e-2)
     # logr_lb for filtering out samples with extremely low reward values for numerical stability
     parser.add_argument("--logr_lb", type=float, default=-1e5)
-    # Interval between time indices at which to save intermediate states in the buffer
-    # (0 means only save terminal states, n>0 saves states at every nth timestep)
-    parser.add_argument("--buffer_save_interval", type=int, default=0)
     # prefill to wait before starting to sample from buffer
     parser.add_argument("--prefill_epochs", type=int, default=-1)
     # Adaptive tempering for buffer
     parser.add_argument("--buffer_target_ess", type=float, default=0.0)  # 0.0 has no effect
+    ################################################################
+
+    ################################################################
+    ### For SMC
+    parser.add_argument("--smc", action="store_true", default=False)
+    parser.add_argument(
+        "--smc_sampling",
+        type=str,
+        default="systematic",
+        choices=("multinomial", "stratified", "systematic", "rank"),
+    )
+    parser.add_argument("--smc_resample_threshold", type=float, default=0.2)
+    parser.add_argument("--smc_target_ess", type=float, default=0.05)
+    parser.add_argument("--smc_freq", type=int, default=1)
     ################################################################
 
     ################################################################
@@ -354,18 +369,19 @@ if __name__ == "__main__":
     except ValueError:
         assert args.init_log_Z in ["iw_elbo", "elbo"]
 
-    args.state_remove_mean = True if args.energy_name in ["lj13", "lj55"] else False
-
     args.loss_type_str = args.loss_type
-    if args.loss_type in ["db", "subtb"]:
+    if args.loss_type in ["db", "subtb", "tb-subtb"]:
+        args.conditional_flow_model = True
         if args.partial_energy:
             args.loss_type_str = "fl-" + args.loss_type_str
         if args.loss_type == "subtb":
-            if args.subtb_n_chunks > 0:
-                args.loss_type_str += f"-nchunk{args.subtb_n_chunks}"
+            if args.subtb_chunk_size > 0:
+                assert args.num_steps % args.subtb_chunk_size == 0
+                args.loss_type_str += f"-chunksize{args.subtb_chunk_size}"
             else:
                 args.loss_type_str += f"-lambda{args.subtb_lambda}"
     else:
+        args.conditional_flow_model = False
         args.partial_energy = False
         args.learn_beta = False
 
@@ -378,17 +394,11 @@ if __name__ == "__main__":
     if args.loss_type == "mle" or args.loss_type == "pis":
         args.use_buffer = False
 
-    if args.loss_type in ["db", "subtb"]:
-        args.conditional_flow_model = True
-    else:
-        args.conditional_flow_model = False
-        args.lr_flow = args.lr_Z  # For TB
-
     if args.buffer_size == -1:
         args.buffer_size = 100 * args.batch_size
 
     if args.prefill_epochs == -1:
-        args.prefill_epochs = int(min(100, args.buffer_size / args.batch_size // 10))
+        args.prefill_epochs = int(min(100, args.buffer_size / args.batch_size))
 
     if args.full_eval_freq < 1:
         args.full_eval_freq = args.full_eval_freq * args.epochs

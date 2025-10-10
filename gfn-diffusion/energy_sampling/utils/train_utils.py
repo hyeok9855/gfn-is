@@ -11,6 +11,7 @@ def get_gfn_optimizer(
     lr_fwd: float,
     lr_bwd: float,
     lr_flow: float,
+    lr_logZ: float,
     lr_beta: float,
     lr_lgv: float,
     use_weight_decay=False,
@@ -26,6 +27,7 @@ def get_gfn_optimizer(
     param_groups.append({"params": module_param_groups.forward_params, "lr": lr_fwd})
     param_groups.append({"params": module_param_groups.backward_params, "lr": lr_bwd})
     param_groups.append({"params": module_param_groups.flow_params, "lr": lr_flow})
+    param_groups.append({"params": module_param_groups.logZ_params, "lr": lr_logZ})
     param_groups.append({"params": module_param_groups.lgv_params, "lr": lr_lgv})
 
     if gfn_model.beta_model is not None:
@@ -116,14 +118,16 @@ def binary_search_smoothing(
     target_ess: float,
     tol=1e-3,
     max_steps=1000,
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, torch.Tensor]:  # (bs, T), (1, T)
+    bs = log_weights.shape[0]
+
     search_min, search_max = get_min_max(log_weights)
     search_min = torch.tensor(search_min, device=log_weights.device).repeat(1, log_weights.shape[1])
     search_max = torch.tensor(search_max, device=log_weights.device).repeat(1, log_weights.shape[1])
     mid = (search_min + search_max) / 2  # (1, T)
     original_order = ess(log_weights / search_min) < ess(log_weights / search_max)
 
-    dones = ess(log_weights=log_weights) >= target_ess  # (T,)
+    dones = ess(log_weights=log_weights) / bs >= target_ess  # (T,)
     log_weights_smoothed = log_weights.clone()  # (bs, T)
 
     steps = 0
@@ -132,7 +136,7 @@ def binary_search_smoothing(
         mid[0, ~dones] = (search_min[0, ~dones] + search_max[0, ~dones]) / 2  # (1, T)
 
         new_log_weights = log_weights / mid  # (bs, T)
-        new_ess = ess(log_weights=new_log_weights)  # (T,)
+        new_ess = ess(log_weights=new_log_weights) / bs  # (T,)
         new_dones = (~dones) & (abs(new_ess - target_ess) / target_ess < tol)  # (T,)
         log_weights_smoothed[:, new_dones] = new_log_weights[:, new_dones]
         dones = dones | new_dones
@@ -144,7 +148,7 @@ def binary_search_smoothing(
             print(f"Warning: Binary search failed in {max_steps} steps")
             log_weights_smoothed[:, ~dones] = new_log_weights[:, ~dones]
             break
-    return log_weights_smoothed
+    return log_weights_smoothed, mid
 
 
 def get_min_max(log_weights: torch.Tensor) -> tuple[float, float]:

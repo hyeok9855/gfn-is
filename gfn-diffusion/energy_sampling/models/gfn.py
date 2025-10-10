@@ -180,6 +180,7 @@ class GFN(nn.Module):
         self,
         batch_size: int,
         pis=False,
+        subtraj_len: int = 1,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         bsz = batch_size
         s = self.sample_initial_state(bsz)
@@ -191,32 +192,34 @@ class GFN(nn.Module):
         states = torch.zeros((bsz, self.num_steps + 1, self.energy.ndim), device=self.device)
         states[:, 0] = s
 
-        for i in range(self.num_steps):
+        for i in range(self.num_steps):  # from step 0 to self.num_steps - 1
+            s = s.detach() if not pis else s
+
             t = torch.tensor([i * self.dt], device=self.device).repeat(bsz)
             pf_mean, pf_logvar, flow = self.pred_module.forward(s, t, self.energy.grad_log_reward)
 
-            if self.pred_module.conditional_flow_model or i == 0:
-                log_fs[:, i] = flow
+            if self.pred_module.conditional_flow_model and i > 0 and i % subtraj_len == 0:
+                log_fs[:, i] = flow  # for i == 0, we use log Z + init_log_probs
 
             s_, log_pfs[:, i] = self.forward_step(s, None, i, pf_mean, pf_logvar, detach=not pis)
 
             t_next = t + self.dt
             mean_correction, var_correction = self.pred_module.backward(s_, t_next)
-            if i > 0:
-                _, log_pbs[:, i] = self.backward_step(s, s_, i, mean_correction, var_correction)
+            _, log_pbs[:, i] = self.backward_step(s, s_, i, mean_correction, var_correction)
 
             s = s_
             states[:, i + 1] = s
+
+        if self.partial_energy:
+            log_fs[:, subtraj_len:-1:subtraj_len] += self.get_partial_energy(
+                states[:, subtraj_len:-1:subtraj_len],
+                torch.arange(subtraj_len, self.num_steps, subtraj_len, device=self.device),
+            )
 
         # Assign the terminal reward
         # Set terminal reward based on whether we need gradients for PIS loss
         with torch.enable_grad() if pis else torch.no_grad():
             log_fs[:, -1] = self.energy.log_reward(states[:, -1])
-
-        if self.partial_energy:
-            log_fs[:, 1:-1] += self.get_partial_energy(
-                states[:, 1:-1], torch.arange(1, self.num_steps, device=self.device)
-            )
 
         return states, log_pfs, log_pbs, log_fs, init_log_probs
 
@@ -224,6 +227,7 @@ class GFN(nn.Module):
         self,
         s: torch.Tensor,
         log_r: torch.Tensor,  # (bsz,)
+        subtraj_len: int = 1,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         bsz = s.shape[0]
 
@@ -231,8 +235,8 @@ class GFN(nn.Module):
         log_pbs = torch.zeros((bsz, self.num_steps), device=self.device)
         log_fs = torch.zeros((bsz, self.num_steps + 1), device=self.device)
         states = torch.zeros((bsz, self.num_steps + 1, self.energy.ndim), device=self.device)
+        log_fs[:, -1] = log_r
         states[:, -1] = s
-
         for i in range(self.num_steps - 1, -1, -1):  # from step T - 1 to 0
             s = s.detach()
 
@@ -243,21 +247,143 @@ class GFN(nn.Module):
             t = t_next - self.dt
             pf_mean, pf_logvar, flow = self.pred_module.forward(s_, t, self.energy.grad_log_reward)
 
-            if self.pred_module.conditional_flow_model or i == 0:
-                log_fs[:, i] = flow
+            if self.pred_module.conditional_flow_model and i > 0 and i % subtraj_len == 0:
+                log_fs[:, i] = flow  # for i == 0, we use log Z + init_log_probs
 
             _, log_pfs[:, i] = self.forward_step(s_, s, i, pf_mean, pf_logvar, detach=True)
 
             s = s_
             states[:, i] = s
 
-        log_fs[:, -1] = log_r
-
         if self.partial_energy:
-            log_fs[:, 1:-1] += self.get_partial_energy(
-                states[:, 1:-1], torch.arange(1, self.num_steps, device=self.device)
+            log_fs[:, subtraj_len:-1:subtraj_len] += self.get_partial_energy(
+                states[:, subtraj_len:-1:subtraj_len],
+                torch.arange(subtraj_len, self.num_steps, subtraj_len, device=self.device),
             )
 
         init_log_probs = self.initial_logprob(s)
 
         return states, log_pfs, log_pbs, log_fs, init_log_probs
+
+    def get_trajectory_fwd_smc(
+        self,
+        batch_size: int,
+        subtraj_len: int,
+        sampling_func: Callable[[torch.Tensor, int, bool], torch.Tensor],
+        resample_threshold: float,
+        target_ess: float,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Generates trajectories using Sequential Monte Carlo (SMC).
+        The process is broken into subtrajectories. After each subtrajectory,
+        importance weights are updated and resampling is performed if ESS is low.
+        Args:
+            batch_size (int): The number of particles (trajectories) to sample.
+            subtraj_len (int): The number of steps in each SMC segment.
+            sampling_func (Callable[[torch.Tensor, int, bool], torch.Tensor]): The sampling function to use for resampling.
+            resample_threshold (float): The normalized ESS threshold to trigger resampling.
+            target_ess (float): The target ESS.
+        Returns:
+            A tuple containing:
+            - final_states (torch.Tensor): States of particles at the final step.
+            - final_log_iws (torch.Tensor): Unnormalized log importance weights of final particles.
+            - subtraj_log_fs (torch.Tensor): Log flows for intermediate steps.
+        """
+        bsz = batch_size
+
+        # --- Initialization ---
+        assert self.pred_module.conditional_flow_model
+        assert self.num_steps % subtraj_len == 0, "num_steps must be divisible by subtraj_len"
+        num_subtrajs = self.num_steps // subtraj_len
+
+        s = self.sample_initial_state(bsz)
+        init_log_probs = self.initial_logprob(s)
+
+        # Tensors to store data in chunks
+        subtraj_states = torch.zeros(
+            (num_subtrajs, bsz, subtraj_len + 1, self.energy.ndim),
+            device=self.device,
+        )
+        subtraj_log_pfs = torch.zeros((num_subtrajs, bsz, subtraj_len), device=self.device)
+        subtraj_log_pbs = torch.zeros((num_subtrajs, bsz, subtraj_len), device=self.device)
+        subtraj_log_fs = torch.zeros((num_subtrajs, bsz, subtraj_len + 1), device=self.device)
+        subtraj_log_fs[0, :, 0] = init_log_probs
+
+        # SMC variables
+        log_iws = torch.full((bsz,), -math.log(bsz), device=self.device)
+        logZ_est = torch.tensor(0.0, device=self.device)
+
+        # --- Main Loop over Subtrajectories ---
+        for i in range(num_subtrajs):
+            start_step = i * subtraj_len
+            end_step = start_step + subtraj_len
+
+            # --- Inner Loop (Simulate one subtrajectory) ---
+            for j in range(subtraj_len):
+                s = s.detach()
+
+                step = start_step + j
+                subtraj_states[i, :, j, :] = s
+
+                t = torch.tensor([step * self.dt], device=self.device).repeat(bsz)
+                pf_mean, pf_logvar, flow = self.pred_module.forward(
+                    s, t, self.energy.grad_log_reward
+                )
+
+                if j > 0:
+                    subtraj_log_fs[i, :, j] = flow
+
+                s_next, log_pfs = self.forward_step(s, None, step, pf_mean, pf_logvar, detach=True)
+                t_next = t + self.dt
+                mean_correction, var_correction = self.pred_module.backward(s_next, t_next)
+                _, log_pbs = self.backward_step(s, s_next, step, mean_correction, var_correction)
+
+                subtraj_log_pfs[i, :, j] = log_pfs
+                subtraj_log_pbs[i, :, j] = log_pbs
+                s = s_next
+
+            subtraj_states[i, :, subtraj_len, :] = s
+            if end_step == self.num_steps:
+                next_log_f = self.energy.log_reward(s)
+            else:
+                t = torch.tensor([end_step * self.dt], device=self.device).repeat(bsz)
+                _, _, next_log_f = self.pred_module.forward(s, t, self.energy.grad_log_reward)
+                if self.partial_energy:
+                    next_log_f += self.get_partial_energy(
+                        s.unsqueeze(1),
+                        torch.tensor([end_step], device=self.device, dtype=torch.long),
+                    ).squeeze(1)
+            subtraj_log_fs[i, :, subtraj_len] = next_log_f
+
+            # --- Update Importance Weights ---
+            log_iws += (
+                subtraj_log_fs[i, :, subtraj_len]
+                + subtraj_log_pbs[i].sum(dim=1)
+                - subtraj_log_fs[i, :, 0]
+                - subtraj_log_pfs[i].sum(dim=1)
+            ).detach()
+            logZ_est += torch.logsumexp(log_iws, dim=0)
+
+            # --- Resampling ---
+            normalized_ess = ess(log_weights=log_iws.unsqueeze(1)).item() / bsz
+            if end_step < self.num_steps and normalized_ess < resample_threshold:
+                tempered_log_iws, temp = binary_search_smoothing(log_iws.unsqueeze(1), target_ess)
+                tempered_log_iws = tempered_log_iws.squeeze(1)
+                temp = temp.item()
+                log_iws = log_iws * (1 - 1 / temp)
+                indices = sampling_func(
+                    tempered_log_iws.softmax(dim=0), log_iws.shape[0], replacement=True
+                )
+            else:
+                indices = torch.arange(bsz, device=self.device)
+
+            s = s[indices]
+            log_iws = log_iws[indices]
+            if i < num_subtrajs - 1:
+                subtraj_log_fs[i + 1, :, 0] = subtraj_log_fs[i, indices, subtraj_len]
+            log_iws = log_iws.log_softmax(dim=0)  # normalise
+
+        # Final update to logZ and combine with log_iws
+        final_log_iws = log_iws + logZ_est + math.log(bsz)
+
+        return s, final_log_iws, subtraj_log_fs[-1, :, -1]

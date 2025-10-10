@@ -21,16 +21,19 @@ class Trainer:
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.MultiStepLR | None,
         clip_grad_norm: float,
-        loss_type: Literal["tb", "db", "subtb", "logvar", "pis", "mle"],
+        loss_type: Literal["tb", "logvar", "db", "subtb", "tb-subtb", "pis", "mle"],
         subtb_lambda: float,
-        subtb_n_chunks: int,
-        sublogvar_K: int,
+        subtb_chunk_size: int,
         n_epochs: int,
         bwd_to_fwd_ratio: float,
         buffer: TerminalStateBuffer | None,
-        buffer_save_interval: int,
         prefill_epochs: int,
         batch_size: int,
+        smc: bool,
+        smc_sampling_func: Callable[[torch.Tensor, int, bool], torch.Tensor],
+        smc_resample_threshold: float,
+        smc_target_ess: float,
+        smc_freq: int,
         mcmc: BaseMCMC | None,
         mcmc_freq: int,
         mcmc_batch_size: int,
@@ -53,13 +56,12 @@ class Trainer:
 
         # Loss
         self.loss_type = loss_type
-        self.subtb_n_chunks = subtb_n_chunks
+        self.subtb_chunk_size = subtb_chunk_size if self.loss_type in ["subtb", "tb-subtb"] else 1
         self.subtb_coef_matrix = None
-        if loss_type == "subtb" and subtb_n_chunks == 0:  # chunk-based subtb
+        if loss_type == "subtb" and subtb_chunk_size == 0:  # chunk-based subtb
             self.subtb_coef_matrix = cal_subtb_coef_matrix(
                 subtb_lambda, self.gfn_model.num_steps
             ).to(self.device)
-        self.sublogvar_K = sublogvar_K
 
         # Training parameters and buffer
         self.n_epochs = n_epochs
@@ -70,11 +72,18 @@ class Trainer:
             self.bwd_to_fwd_ratio = int(bwd_to_fwd_ratio)
             self.fwd_to_bwd_ratio = None
         self.buffer = buffer
-        self.buffer_save_interval = buffer_save_interval
         self.prefill_epochs = prefill_epochs if self.buffer is not None else 0
 
         # Sampling parameters
         self.batch_size = batch_size
+
+        # SMC
+        self.smc = smc
+        self.smc_sampling_func = smc_sampling_func
+        self.smc_resample_threshold = smc_resample_threshold
+        self.smc_target_ess = smc_target_ess
+        self.smc_freq = smc_freq
+        self.bwd_count = 0
 
         # MCMC
         self.mcmc = mcmc
@@ -85,14 +94,13 @@ class Trainer:
         self._invtemp = invtemp
         self.invtemp_anneal = invtemp_anneal
 
-        self.init_log_Z = self.init_log_Z_ratios = self.init_log_Z_log_rs = None
-        if loss_type == "tb":
-            if isinstance(init_log_Z, float):
-                self.gfn_model.pred_module.set_log_Z(init_log_Z)
-            else:
-                self.init_log_Z = init_log_Z
-                self.init_log_Z_ratios = torch.zeros((0,)).to(self.device)
-                self.init_log_Z_log_rs = torch.zeros((0,)).to(self.device)
+        self.init_log_Z = self.init_log_Z_pbs_over_pfs = self.init_log_Z_log_rs = None
+        if isinstance(init_log_Z, float):
+            self.gfn_model.pred_module.set_log_Z(init_log_Z)
+        else:
+            self.init_log_Z = init_log_Z
+            self.init_log_Z_pbs_over_pfs = torch.zeros((0,)).to(self.device)
+            self.init_log_Z_log_rs = torch.zeros((0,)).to(self.device)
 
         # Eval and Plot
         self.eval_batch_size = eval_batch_size
@@ -111,17 +119,27 @@ class Trainer:
         assert self.prefill_epochs > 0 and self.buffer is not None
         with torch.no_grad():
             for _ in range(self.prefill_epochs):
-                self.fwd_train_step(0)
+                if not self.smc:
+                    self.fwd_train_step(0)
+                else:
+                    xs, log_iws, log_rs = self.gfn_model.get_trajectory_fwd_smc(
+                        self.batch_size,
+                        self.subtb_chunk_size,
+                        self.smc_sampling_func,
+                        self.smc_resample_threshold,
+                        self.smc_target_ess,
+                    )
+                    self.buffer.add(xs=xs, log_rs=log_rs, log_iws=log_iws, losses=None)
 
     def initialize_log_Z(self) -> None:
-        assert self.init_log_Z_ratios is not None and self.init_log_Z_log_rs is not None
+        assert self.init_log_Z_pbs_over_pfs is not None and self.init_log_Z_log_rs is not None
 
-        if self.init_log_Z_ratios.shape[0] == 0:
+        if self.init_log_Z_pbs_over_pfs.shape[0] == 0:
             # sample one batch to initialize log_Z
             with torch.no_grad():
                 self.fwd_train_step(0)
 
-        log_iws = self.init_log_Z_ratios + (self.init_log_Z_log_rs * self.get_invtemp(1))
+        log_iws = self.init_log_Z_pbs_over_pfs + (self.init_log_Z_log_rs * self.get_invtemp(1))
         if self.init_log_Z == "iw_elbo":
             init_log_Z_val = logmeanexp(log_iws).item()
         elif self.init_log_Z == "elbo":
@@ -129,7 +147,7 @@ class Trainer:
         else:
             raise ValueError(f"Invalid init_log_Z: {self.init_log_Z}")
         self.gfn_model.pred_module.set_log_Z(init_log_Z_val)
-        del self.init_log_Z_ratios
+        del self.init_log_Z_pbs_over_pfs
         del self.init_log_Z_log_rs
         self.init_log_Z = None
 
@@ -176,7 +194,7 @@ class Trainer:
     def fwd_train_step(self, it: int) -> torch.Tensor:
         # Forward sampling
         states, log_pfs, log_pbs, log_fs, init_log_probs = self.gfn_model.get_trajectory_fwd(
-            self.batch_size, pis=self.loss_type == "pis"
+            self.batch_size, pis=self.loss_type == "pis", subtraj_len=self.subtb_chunk_size
         )
 
         # Compute losses
@@ -185,12 +203,15 @@ class Trainer:
             log_pfs,
             log_pbs,
             log_fs,
+            init_log_probs,
+            log_Z=self.gfn_model.pred_module.log_Z,
             invtemp=self.get_invtemp(it),
             subtb_coef_matrix=self.subtb_coef_matrix,
-            subtb_n_chunks=self.subtb_n_chunks,
+            subtb_chunk_size=self.subtb_chunk_size,
             ndim=self.energy.ndim,
         )
 
+        # Add data to buffer
         if self.buffer is not None:
             self.buffer.add(
                 xs=states[:, -1],
@@ -200,13 +221,10 @@ class Trainer:
             )
 
         if it == 0 and self.init_log_Z is not None:
-            assert self.init_log_Z_ratios is not None and self.init_log_Z_log_rs is not None
-            assert (
-                isinstance(self.gfn_model.pred_module.flow_model, torch.nn.Parameter)
-                and self.gfn_model.pred_module.flow_model.item() == 0.0
-            )
-            ratios = (log_pbs.sum(-1) - log_pfs.sum(-1)).detach()
-            self.init_log_Z_ratios = torch.cat([self.init_log_Z_ratios, ratios], dim=0)
+            assert self.init_log_Z_pbs_over_pfs is not None and self.init_log_Z_log_rs is not None
+            assert self.gfn_model.pred_module.log_Z.item() == 0.0
+            ratios = (log_pbs.sum(-1) - (log_pfs.sum(-1) + init_log_probs)).detach()
+            self.init_log_Z_pbs_over_pfs = torch.cat([self.init_log_Z_pbs_over_pfs, ratios], dim=0)
             self.init_log_Z_log_rs = torch.cat([self.init_log_Z_log_rs, log_fs[:, -1]], dim=0)
 
         loss = losses.mean()
@@ -215,26 +233,47 @@ class Trainer:
     def bwd_train_step(self, it: int) -> torch.Tensor:
         if self.loss_type == "mle":
             gt_xs, gt_log_rewards = self.energy.cached_sample(self.batch_size, seed=it)
-            _, log_pfs, log_pbs, log_fs = self.gfn_model.get_trajectory_bwd(gt_xs, gt_log_rewards)
+            _, log_pfs, log_pbs, log_fs, init_log_probs = self.gfn_model.get_trajectory_bwd(
+                gt_xs, gt_log_rewards, subtraj_len=self.subtb_chunk_size
+            )
             # mle over trajectories
             loss = -log_pfs.sum(-1).mean()
 
         else:  # self.loss_type != "mle"
             assert self.buffer is not None
+            assert self.subtb_chunk_size > 0
+
+            # SMC sampling and adding to buffer if smc is True
+            if self.smc and self.bwd_count % self.smc_freq == 0:
+                xs, log_iws, log_rs = self.gfn_model.get_trajectory_fwd_smc(
+                    self.batch_size,
+                    self.subtb_chunk_size,
+                    self.smc_sampling_func,
+                    self.smc_resample_threshold,
+                    self.smc_target_ess,
+                )
+                self.buffer.add(xs=xs, log_rs=log_rs, log_iws=log_iws, losses=None)
+            self.bwd_count += 1
+
+            # Buffer sampling
             buf_xs, buf_log_rs, indices = self.buffer.sample(self.batch_size)
             # each with shape (bs,)
 
             # Construct complete trajectories
-            _, log_pfs, log_pbs, log_fs, _ = self.gfn_model.get_trajectory_bwd(buf_xs, buf_log_rs)
+            _, log_pfs, log_pbs, log_fs, init_log_probs = self.gfn_model.get_trajectory_bwd(
+                buf_xs, buf_log_rs, subtraj_len=self.subtb_chunk_size
+            )
 
             losses = get_loss(
                 self.loss_type,
                 log_pfs,
                 log_pbs,
                 log_fs,
+                init_log_probs,
+                log_Z=self.gfn_model.pred_module.log_Z,
                 invtemp=self.get_invtemp(it),
                 subtb_coef_matrix=self.subtb_coef_matrix,
-                subtb_n_chunks=self.subtb_n_chunks,
+                subtb_chunk_size=self.subtb_chunk_size,
                 ndim=self.energy.ndim,
             )
 
@@ -310,26 +349,25 @@ class Trainer:
             divisible = data_size % eval_batch_size == 0
             n_epochs = data_size // eval_batch_size + (1 if not divisible else 0)
 
-            model_trajs, log_pfs, log_pbs, log_fs, log_rs, init_log_probs = [], [], [], [], [], []
+            model_trajs, log_pfs, log_pbs, log_rs, init_log_probs = [], [], [], [], []
 
             for i in range(n_epochs):
                 _model_trajs, _log_pfs, _log_pbs, _log_fs, _init_log_probs = (
                     self.gfn_model.get_trajectory_fwd(
-                        self.eval_batch_size, pis=self.loss_type == "pis"
+                        self.eval_batch_size,
+                        pis=self.loss_type == "pis",
+                        subtraj_len=self.subtb_chunk_size,
                     )
                 )
-                _log_rs = self.energy.log_reward(_model_trajs[:, -1])
                 model_trajs.append(_model_trajs)
                 log_pfs.append(_log_pfs)
                 log_pbs.append(_log_pbs)
-                log_fs.append(_log_fs)
-                log_rs.append(_log_rs)
+                log_rs.append(_log_fs[:, -1])
                 init_log_probs.append(_init_log_probs)
             model_trajs = torch.cat(model_trajs, dim=0)[:data_size]
             sample_xs = model_trajs[:, -1]
             log_pfs = torch.cat(log_pfs, dim=0)[:data_size]
             log_pbs = torch.cat(log_pbs, dim=0)[:data_size]
-            log_fs = torch.cat(log_fs, dim=0)[:data_size]
             log_rs = torch.cat(log_rs, dim=0)[:data_size]
             init_log_probs = torch.cat(init_log_probs, dim=0)[:data_size]
 
@@ -342,7 +380,7 @@ class Trainer:
                         i * eval_batch_size : (i + 1) * eval_batch_size
                     ]
                     _, _log_pfs, _log_pbs, _, _init_log_probs = self.gfn_model.get_trajectory_bwd(
-                        gt_xs_batch, gt_log_rewards_batch
+                        gt_xs_batch, gt_log_rewards_batch, subtraj_len=self.subtb_chunk_size
                     )
                     gt_log_pfs.append(_log_pfs)
                     gt_log_pbs.append(_log_pbs)
@@ -362,14 +400,14 @@ class Trainer:
             density_metrics(
                 log_pfs,
                 log_pbs,
-                log_fs,
                 log_rs,
-                # TODO: add init_log_probs
+                init_log_probs,
+                log_Z=self.gfn_model.pred_module.log_Z,
                 gt_log_pfs=gt_log_pfs,
                 gt_log_pbs=gt_log_pbs,
                 gt_log_rewards=gt_log_rs,
+                gt_init_log_probs=gt_init_log_probs,
                 gt_log_Z=gt_log_Z,
-                # TODO: add gt_init_log_probs
             )
         )
 

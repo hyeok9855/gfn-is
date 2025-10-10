@@ -110,8 +110,6 @@ class MLPModule(BaseModule):
             self.flow_model = FlowModel(
                 self.flow_s_emb_dim, self.flow_t_emb_dim, self.hidden_dim, 1, self.flow_layers
             )
-        else:
-            self.flow_model = torch.nn.Parameter(torch.tensor(0.0))
 
         self.lp_scaling_model = None
         if self.lp:
@@ -140,11 +138,11 @@ class MLPModule(BaseModule):
 
         flow_params = []
         if isinstance(self.flow_model, torch.nn.Module):
-            flow_params += list(self.flow_model.parameters())
             flow_params += list(self.t_model_flow.parameters())
             flow_params += list(self.s_model_flow.parameters())
-        else:
-            flow_params += [self.flow_model]
+            flow_params += list(self.flow_model.parameters())
+
+        logZ_params = [self.log_Z]
 
         lgv_params = []
         if self.lp_scaling_model is not None:
@@ -154,6 +152,7 @@ class MLPModule(BaseModule):
             forward_params=forward_params,
             backward_params=backward_params,
             flow_params=flow_params,
+            logZ_params=logZ_params,
             lgv_params=lgv_params,
         )
 
@@ -177,13 +176,16 @@ class MLPModule(BaseModule):
         assert self.lp_scaling_model is not None
         return self.lp_scaling_model(s_emb, t_emb)
 
-    def predict_conditional_flow(
+    def predict_flow(
         self, s: torch.Tensor, t: torch.Tensor, s_emb: torch.Tensor, t_emb: torch.Tensor
     ) -> torch.Tensor:
-        assert isinstance(self.flow_model, nn.Module)
-        s_emb_flow = self.s_model_flow(s_emb if self.share_embeddings else s)
-        t_emb_flow = self.t_model_flow(t_emb if self.share_embeddings else t)
-        flow = self.flow_model(s_emb_flow, t_emb_flow).squeeze(-1)
+        if self.conditional_flow_model:
+            assert isinstance(self.flow_model, nn.Module)
+            s_emb_flow = self.s_model_flow(s_emb if self.share_embeddings else s)
+            t_emb_flow = self.t_model_flow(t_emb if self.share_embeddings else t)
+            flow = self.flow_model(s_emb_flow, t_emb_flow).squeeze(-1)
+        else:
+            flow = torch.zeros(s.shape[0], device=s.device)
         return flow
 
     def predict_backward_correction(

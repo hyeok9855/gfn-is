@@ -39,8 +39,6 @@ class PISMLPModule(MLPModule):
             self.flow_model = FlowModelPIS(
                 self.flow_s_emb_dim, self.flow_hidden_dim, 1, self.flow_layers
             )
-        else:
-            self.flow_model = torch.nn.Parameter(torch.tensor(0.0))
 
         self.lp_scaling_model = None
         if self.lp:
