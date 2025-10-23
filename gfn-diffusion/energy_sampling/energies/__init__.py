@@ -4,8 +4,7 @@ import torch
 
 from .base import BaseEnergy
 
-from .aldp import ALDP
-from .aldp_fab import ALDPFAB
+from .aldp_fab import ALDP
 from .funnel import Funnel
 from .gmm40 import GMM40
 from .lennard_jones import LJ13, LJ55, LennardJones
@@ -41,8 +40,6 @@ def get_energy(args: argparse.Namespace, device: torch.device, seed: int = 0) ->
         energy = LJ55(device=device, seed=seed)
     elif energy_name == "aldp":
         energy = ALDP(device=device, seed=seed)
-    elif energy_name == "aldp_fab":
-        energy = ALDPFAB(device=device, seed=seed)
     else:
         raise ValueError(f"Unknown energy: {energy_name}")
     return energy

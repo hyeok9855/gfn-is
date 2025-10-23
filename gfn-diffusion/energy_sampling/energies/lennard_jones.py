@@ -1,4 +1,5 @@
 from pathlib import Path
+import warnings
 
 import numpy as np
 import torch
@@ -6,7 +7,7 @@ import torch
 from energies.base import BaseEnergy
 from utils.misc_utils import temp_seed
 from utils.particle_system import interatomic_distance, remove_mean
-
+from utils.plot_utils import viz_interatomic_dist_hist, viz_energy_hist
 
 DATA_PATH = Path(__file__).parent / "data"
 
@@ -17,6 +18,8 @@ def lennard_jones_energy(r, eps=1.0, rm=1.0):
 
 
 class LennardJones(BaseEnergy):
+    is_particle_system = True
+
     def __init__(
         self,
         spatial_dim: int,
@@ -68,6 +71,19 @@ class LennardJones(BaseEnergy):
         with temp_seed(seed or self.seed):
             perm_idx = torch.randperm(self.approx_sample.shape[0])[:batch_size]
         return self.approx_sample[perm_idx].to(self.device)
+
+    def visualize(
+        self, samples: torch.Tensor, weights: torch.Tensor | None = None, **kwargs
+    ) -> dict:
+        if weights is not None:
+            warnings.warn(
+                "Can't visualize weighted samples for Lennard-Jones energy. Ignoring them..."
+            )
+            return {}
+        out_dict = {}
+        out_dict.update(viz_interatomic_dist_hist(self, samples))
+        out_dict.update(viz_energy_hist(self, samples))
+        return out_dict
 
 
 class LJ13(LennardJones):

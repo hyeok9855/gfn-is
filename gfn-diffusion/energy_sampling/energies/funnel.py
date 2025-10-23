@@ -4,6 +4,7 @@ import torch.distributions as D
 
 from energies.base import BaseEnergy
 from utils.misc_utils import temp_seed
+from utils.plot_utils import viz_2d_slice, viz_energy_hist
 
 
 class Funnel(BaseEnergy):
@@ -35,7 +36,7 @@ class Funnel(BaseEnergy):
     def sample(self, batch_size: int, seed: int | None = None) -> torch.Tensor:
         with temp_seed(seed or self.seed):
             dominant_x = self.dist_dominant.sample((batch_size,)).to(self.device)  # (B, 1)
-        x_others = self._dist_other(dominant_x).sample()  # (B, dim-1)
+            x_others = self._dist_other(dominant_x).sample()  # (B, dim-1)
         samples = torch.hstack([dominant_x, x_others])
         samples = samples.to(self.device)
         return samples
@@ -60,3 +61,11 @@ class Funnel(BaseEnergy):
         cov_other = variance_other.view(-1, 1, 1) * self.cov_eye
         # use covariance matrix, not std
         return D.multivariate_normal.MultivariateNormal(self.mean_other, cov_other)
+
+    def visualize(self, samples, weights: torch.Tensor | None = None, **kwargs):
+        lim = self.plot_bound
+        out_dict = {}
+        for i in range(1, 3):
+            out_dict.update(viz_2d_slice(self, (0, i), samples, weights=weights, lim=lim))
+        out_dict.update(viz_energy_hist(self, samples))
+        return out_dict

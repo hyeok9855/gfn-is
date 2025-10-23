@@ -4,6 +4,7 @@ import torch.distributions as D
 
 from energies.base import BaseEnergy
 from utils.misc_utils import temp_seed
+from utils.plot_utils import viz_2d_slice, viz_energy_hist
 
 
 class GMM40(BaseEnergy):
@@ -55,3 +56,18 @@ class GMM40(BaseEnergy):
             log_prob = log_prob.squeeze(0)
 
         return log_prob
+
+    def visualize(
+        self, samples: torch.Tensor, weights: torch.Tensor | None = None, **kwargs
+    ) -> dict:
+        lim = self.plot_bound
+        out_dict = {}
+        for i in range(1, min(self.ndim, 4), 2):
+            out_dict.update(
+                viz_2d_slice(
+                    self, (i - 1, i), samples, weights=weights, lim=lim, n_contour_levels=100
+                )
+            )
+
+        out_dict.update(viz_energy_hist(self, samples))
+        return out_dict

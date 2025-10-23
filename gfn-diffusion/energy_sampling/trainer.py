@@ -4,7 +4,7 @@ import warnings
 import torch
 
 from buffers import TerminalStateBuffer
-from energies import ALDPFAB, BaseEnergy, IntermediateEnergy
+from energies import ALDP, BaseEnergy, IntermediateEnergy
 from losses import cal_subtb_coef_matrix, get_loss
 from mcmcs import BaseMCMC
 from models import GFN
@@ -300,7 +300,7 @@ class Trainer:
         mcmc_log_rs = mcmc_log_rs.reshape(-1)
         indices = indices.reshape(-1)
 
-        if isinstance(self.energy, ALDPFAB):
+        if isinstance(self.energy, ALDP):
             ind_L = self.energy.get_lform_indices(mcmc_xs)
             mcmc_xs = mcmc_xs[ind_L]
             mcmc_log_rs = mcmc_log_rs[ind_L]

@@ -3,14 +3,14 @@ import math
 import torch
 from tqdm import trange
 
-from energies import ALDPFAB
+from energies import ALDP
 from mcmcs.base import BaseMCMC
 
 
 class MD(BaseMCMC):
     def __init__(
         self,
-        energy: "ALDPFAB",
+        energy: ALDP,
         gamma: float = 1.0,
         n_steps: int = 1000,
         burn_in: int = 100,
@@ -20,7 +20,6 @@ class MD(BaseMCMC):
         **kwargs,
     ) -> None:
         super().__init__(energy)
-        assert isinstance(self.energy, ALDPFAB)
         self.gamma = gamma
         self.n_steps = n_steps
         self.burn_in = burn_in

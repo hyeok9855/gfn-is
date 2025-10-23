@@ -37,3 +37,7 @@ class IntermediateEnergy(BaseEnergy):
                     torch.tensor([self.step], device=self.device, dtype=torch.long),
                 ).squeeze(1)
         return log_fs
+
+    def visualize(self, samples: torch.Tensor, **kwargs) -> dict:
+        # TODO: Implement visualization for intermediate energy and samples
+        raise NotImplementedError

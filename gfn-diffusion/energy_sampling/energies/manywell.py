@@ -6,6 +6,7 @@ import torch.distributions as D
 
 from energies.base import BaseEnergy
 from utils.misc_utils import temp_seed
+from utils.plot_utils import viz_2d_slice, viz_energy_hist
 
 
 def rejection_sampling(
@@ -93,3 +94,14 @@ class ManyWell(BaseEnergy):
     def _target_unnormed_logp_x2(x: torch.Tensor) -> torch.Tensor:
         assert x.ndim == 1
         return -(1 / 2) * (x**2)
+
+    def visualize(
+        self, samples: torch.Tensor, weights: torch.Tensor | None = None, **kwargs
+    ) -> dict:
+        lim = self.plot_bound
+        out_dict = {}
+        for idx1, idx2 in [(0, 2), (1, 2)]:
+            out_dict.update(viz_2d_slice(self, (idx1, idx2), samples, weights=weights, lim=lim))
+
+        out_dict.update(viz_energy_hist(self, samples))
+        return out_dict

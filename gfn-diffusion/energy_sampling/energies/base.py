@@ -4,6 +4,8 @@ import torch
 
 
 class BaseEnergy(abc.ABC):
+    is_particle_system = False
+
     def __init__(
         self,
         device: str | torch.device,
@@ -50,3 +52,6 @@ class BaseEnergy(abc.ABC):
             self.gt_xs_log_rewards = self.log_reward(self.gt_xs)
         assert self.gt_xs_log_rewards is not None
         return self.gt_xs, self.gt_xs_log_rewards
+
+    def visualize(self, samples: torch.Tensor, **kwargs) -> dict:
+        raise NotImplementedError
