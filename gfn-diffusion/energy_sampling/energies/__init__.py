@@ -4,7 +4,7 @@ import torch
 
 from .base import BaseEnergy
 
-from .aldp_fab import ALDP
+from .aldp import ALDP
 from .funnel import Funnel
 from .gmm40 import GMM40
 from .lennard_jones import LJ13, LJ55, LennardJones

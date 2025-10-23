@@ -204,7 +204,6 @@ if __name__ == "__main__":
             "lj13",
             "lj55",
             "aldp",
-            "aldp_fab",
         ),
     )
     parser.add_argument("--ndim", type=int, default=2)
