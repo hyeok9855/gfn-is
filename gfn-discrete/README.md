@@ -1,5 +1,8 @@
-# Biochemical Discovery Tasks
+# Biochemical sequence design tasks
 
+TBU
+
+<!-- 
 ## Overview
 The `gfn-discrete/` folder provides code for four biochemical discovery tasks, showcasing how our adaptive Teacher-Student approach can improve mode coverage and sample efficiency in real-world discovery scenarios. For the results, see section 5.3 of [our paper](https://arxiv.org/abs/2410.01432).
 
@@ -32,4 +35,4 @@ python runexpwb.py --setting qm9str --model teacher --prioritization reward
 
 # With PER
 python runexpwb.py --setting qm9str --model teacher --prioritization teacher_reward
-~~~
+~~~ -->
